@@ -40,9 +40,11 @@ type Permission struct {
 
 // RolePermission links roles to permissions
 type RolePermission struct {
-	ID           uint `json:"id"`
-	RoleID       uint `json:"role_id"`
-	PermissionID uint `json:"permission_id"`
+	ID           uint      `json:"id"`
+	RoleID       uint      `json:"role_id"`
+	PermissionID uint      `json:"permission_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // UserTenant links users to tenants with roles
@@ -54,6 +56,10 @@ type UserTenant struct {
 	IsActive bool `json:"is_active"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	
+	// Populated by joins
+	Tenant *Tenant `json:"tenant,omitempty"`
+	Role   *Role   `json:"role,omitempty"`
 }
 
 // UserPermissionCheck represents a user's permission in a specific tenant context
@@ -103,6 +109,8 @@ type RolePermissionColumnMapping struct {
 	ID           string `json:"id"`
 	RoleID       string `json:"role_id"`
 	PermissionID string `json:"permission_id"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 // UserTenantColumnMapping maps logical user_tenant fields to actual database column names
@@ -180,6 +188,8 @@ func DefaultMultiTenantConfig() MultiTenantConfig {
 			ID:           "id",
 			RoleID:       "role_id",
 			PermissionID: "permission_id",
+			CreatedAt:    "created_at",
+			UpdatedAt:    "updated_at",
 		},
 		UserTenantColumns: UserTenantColumnMapping{
 			ID:        "id",

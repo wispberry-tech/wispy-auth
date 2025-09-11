@@ -25,15 +25,96 @@ var (
 )
 
 type User struct {
-	ID           uint      `gorm:"primaryKey" json:"id"`
-	Email        string    `gorm:"uniqueIndex" json:"email"`
+	ID           uint      `json:"id"`
+	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"` // Hide password from JSON
 	Name         string    `json:"name"`
 	AvatarURL    string    `json:"avatar_url,omitempty"`
 	Provider     string    `json:"provider"` // "email", "google", "github", "discord"
-	ProviderID   string    `json:"provider_id" gorm:"index"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ProviderID   string    `json:"provider_id"`
+	
+	// Email Security
+	EmailVerified     bool       `json:"email_verified"`
+	EmailVerifiedAt   *time.Time `json:"email_verified_at,omitempty"`
+	VerificationToken string     `json:"-"` // Hidden from JSON
+	
+	// Password Security
+	PasswordResetToken     string     `json:"-"`
+	PasswordResetExpiresAt *time.Time `json:"-"`
+	PasswordChangedAt      *time.Time `json:"password_changed_at,omitempty"`
+	
+	// Login Security
+	LoginAttempts     int        `json:"-"`
+	LastFailedLoginAt *time.Time `json:"-"`
+	LockedUntil       *time.Time `json:"-"`
+	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+	
+	// Location & Device Tracking
+	LastKnownIP       string `json:"-"`
+	LastLoginLocation string `json:"last_login_location,omitempty"`
+	
+	// Two-Factor Authentication
+	TwoFactorEnabled bool   `json:"two_factor_enabled"`
+	TwoFactorSecret  string `json:"-"`
+	BackupCodes      string `json:"-"` // JSON array stored as string
+	
+	// Account Security
+	IsActive      bool       `json:"is_active"`
+	IsSuspended   bool       `json:"is_suspended"`
+	SuspendedAt   *time.Time `json:"suspended_at,omitempty"`
+	SuspendReason string     `json:"suspend_reason,omitempty"`
+	
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SecurityEvent represents a security-related event for audit logging
+type SecurityEvent struct {
+	ID          uint      `json:"id"`
+	UserID      *uint     `json:"user_id,omitempty"`
+	TenantID    *uint     `json:"tenant_id,omitempty"`
+	EventType   string    `json:"event_type"` // login_success, login_failed, password_reset, etc.
+	Description string    `json:"description"`
+	IPAddress   string    `json:"ip_address"`
+	UserAgent   string    `json:"user_agent"`
+	Location    string    `json:"location,omitempty"`
+	Metadata    string    `json:"metadata,omitempty"` // JSON for additional context
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// SecurityConfig holds security-related configuration options
+type SecurityConfig struct {
+	// Password Policy
+	MinPasswordLength   int  `json:"min_password_length"`
+	RequireUppercase    bool `json:"require_uppercase"`
+	RequireLowercase    bool `json:"require_lowercase"`
+	RequireNumbers      bool `json:"require_numbers"`
+	RequireSpecialChars bool `json:"require_special_chars"`
+	
+	// Login Protection
+	MaxLoginAttempts     int           `json:"max_login_attempts"`
+	LoginLockoutDuration time.Duration `json:"login_lockout_duration"`
+	
+	// Session Security
+	SessionTimeout              time.Duration `json:"session_timeout"`
+	MaxActiveSessions           int           `json:"max_active_sessions"`
+	RequireDeviceVerification   bool          `json:"require_device_verification"`
+	
+	// Two-Factor Authentication
+	Force2FA       bool `json:"force_2fa"`
+	Allow2FABypass bool `json:"allow_2fa_bypass"`
+	
+	// Email Security
+	RequireEmailVerification bool          `json:"require_email_verification"`
+	EmailVerificationExpiry  time.Duration `json:"email_verification_expiry"`
+	
+	// Password Reset
+	PasswordResetExpiry time.Duration `json:"password_reset_expiry"`
+	
+	// Rate Limiting
+	EnableRateLimiting   bool          `json:"enable_rate_limiting"`
+	RateLimitWindow      time.Duration `json:"rate_limit_window"`
+	RateLimitMaxRequests int           `json:"rate_limit_max_requests"`
 }
 
 type OAuthProviderConfig struct {
@@ -43,17 +124,56 @@ type OAuthProviderConfig struct {
 }
 
 type AuthService struct {
-	storage       StorageInterface
-	jwtSecret     []byte
-	oauthConfigs  map[string]*oauth2.Config
-	storageConfig StorageConfig
+	storage        StorageInterface
+	jwtSecret      []byte
+	oauthConfigs   map[string]*oauth2.Config
+	storageConfig  StorageConfig
+	securityConfig SecurityConfig
 }
 
 type Config struct {
-	DatabaseDSN     string
-	JWTSecret       string
-	OAuthProviders  map[string]OAuthProviderConfig
-	StorageConfig   StorageConfig
+	DatabaseDSN    string
+	JWTSecret      string
+	OAuthProviders map[string]OAuthProviderConfig
+	StorageConfig  StorageConfig
+	SecurityConfig SecurityConfig
+}
+
+// DefaultSecurityConfig returns a default security configuration with reasonable defaults
+func DefaultSecurityConfig() SecurityConfig {
+	return SecurityConfig{
+		// Password Policy
+		MinPasswordLength:   8,
+		RequireUppercase:    true,
+		RequireLowercase:    true,
+		RequireNumbers:      true,
+		RequireSpecialChars: false,
+		
+		// Login Protection
+		MaxLoginAttempts:     5,
+		LoginLockoutDuration: 15 * time.Minute,
+		
+		// Session Security
+		SessionTimeout:              24 * time.Hour,
+		MaxActiveSessions:           5,
+		RequireDeviceVerification:   false,
+		
+		// Two-Factor Authentication
+		Force2FA:       false,
+		Allow2FABypass: true,
+		
+		// Email Security
+		RequireEmailVerification: true,
+		EmailVerificationExpiry:  24 * time.Hour,
+		
+		// Password Reset
+		PasswordResetExpiry: 1 * time.Hour,
+		
+		// Rate Limiting
+		EnableRateLimiting:   true,
+		RateLimitWindow:      1 * time.Minute,
+		RateLimitMaxRequests: 60,
+	}
 }
 
 func NewAuthService(cfg Config) (*AuthService, error) {
@@ -97,10 +217,11 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 	}
 
 	return &AuthService{
-		storage:       storage,
-		jwtSecret:     []byte(cfg.JWTSecret),
-		oauthConfigs:  oauthConfigs,
-		storageConfig: cfg.StorageConfig,
+		storage:        storage,
+		jwtSecret:      []byte(cfg.JWTSecret),
+		oauthConfigs:   oauthConfigs,
+		storageConfig:  cfg.StorageConfig,
+		securityConfig: cfg.SecurityConfig,
 	}, nil
 }
 
@@ -109,6 +230,16 @@ func (a *AuthService) SignUp(email, password, name string) (*User, error) {
 }
 
 func (a *AuthService) SignUpWithTenant(email, password, name string, tenantID uint) (*User, error) {
+	// Validate email format
+	if !isValidEmail(email) {
+		return nil, fmt.Errorf("invalid email format")
+	}
+	
+	// Validate password strength
+	if err := validatePasswordStrength(password, a.securityConfig); err != nil {
+		return nil, err
+	}
+	
 	// Check if user already exists
 	_, err := a.storage.GetUserByEmail(email, "email")
 	if err == nil {
@@ -123,11 +254,33 @@ func (a *AuthService) SignUpWithTenant(email, password, name string, tenantID ui
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
+	// Generate verification token if email verification is required
+	var verificationToken string
+	if a.securityConfig.RequireEmailVerification {
+		verificationToken, err = generateVerificationToken()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate verification token: %w", err)
+		}
+	}
+
+	now := time.Now()
 	user := User{
-		Email:        email,
-		PasswordHash: hashedPassword,
-		Name:         name,
-		Provider:     "email",
+		Email:             email,
+		PasswordHash:      hashedPassword,
+		Name:              name,
+		Provider:          "email",
+		EmailVerified:     !a.securityConfig.RequireEmailVerification, // Auto-verify if not required
+		VerificationToken: verificationToken,
+		PasswordChangedAt: &now,
+		IsActive:          true,
+		IsSuspended:       false,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	
+	// Set email as verified if verification is not required
+	if !a.securityConfig.RequireEmailVerification {
+		user.EmailVerifiedAt = &now
 	}
 
 	if err := a.storage.CreateUser(&user); err != nil {
@@ -143,6 +296,10 @@ func (a *AuthService) SignUpWithTenant(email, password, name string, tenantID ui
 }
 
 func (a *AuthService) SignIn(email, password string) (*User, error) {
+	return a.SignInWithContext(email, password, "", "", "")
+}
+
+func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location string) (*User, error) {
 	user, err := a.storage.GetUserByEmail(email, "email")
 	if err != nil {
 		if err == ErrUserNotFound {
@@ -150,9 +307,47 @@ func (a *AuthService) SignIn(email, password string) (*User, error) {
 		}
 		return nil, fmt.Errorf("database error: %w", err)
 	}
-
+	
+	// Check if account is suspended
+	if user.IsSuspended {
+		a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
+			"Login attempt on suspended account", ip, userAgent, location)
+		return nil, fmt.Errorf("account is suspended: %s", user.SuspendReason)
+	}
+	
+	// Check if account is inactive
+	if !user.IsActive {
+		a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
+			"Login attempt on inactive account", ip, userAgent, location)
+		return nil, fmt.Errorf("account is inactive")
+	}
+	
+	// Check if email verification is required and not verified
+	if a.securityConfig.RequireEmailVerification && !user.EmailVerified {
+		return nil, fmt.Errorf("email not verified")
+	}
+	
+	// Check if account is locked
+	if a.isAccountLocked(user) {
+		a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
+			"Login attempt on locked account", ip, userAgent, location)
+		return nil, fmt.Errorf("account is locked until %v", user.LockedUntil.Format(time.RFC3339))
+	}
+	
+	// Verify password
 	if !checkPasswordHash(password, user.PasswordHash) {
+		// Record failed login attempt
+		if err := a.recordFailedLogin(user, ip, userAgent); err != nil {
+			// Log error but don't block the response
+			fmt.Printf("Failed to record failed login: %v\n", err)
+		}
 		return nil, ErrInvalidCredentials
+	}
+	
+	// Password is correct, record successful login
+	if err := a.recordSuccessfulLogin(user, ip, userAgent, location); err != nil {
+		// Log error but don't block the response
+		fmt.Printf("Failed to record successful login: %v\n", err)
 	}
 
 	return user, nil
@@ -199,6 +394,99 @@ func (a *AuthService) GetOAuthURL(provider, state string) (string, error) {
 		return "", ErrInvalidProvider
 	}
 	return config.AuthCodeURL(state), nil
+}
+
+// Security helper methods
+func (a *AuthService) logSecurityEvent(userID *uint, tenantID *uint, eventType, description, ip, userAgent, location string) {
+	event := &SecurityEvent{
+		UserID:      userID,
+		TenantID:    tenantID,
+		EventType:   eventType,
+		Description: description,
+		IPAddress:   ip,
+		UserAgent:   userAgent,
+		Location:    location,
+		CreatedAt:   time.Now(),
+	}
+	
+	// Log security event (ignore errors to avoid blocking auth flow)
+	a.storage.CreateSecurityEvent(event)
+}
+
+func (a *AuthService) isAccountLocked(user *User) bool {
+	if user.LockedUntil == nil {
+		return false
+	}
+	return time.Now().Before(*user.LockedUntil)
+}
+
+func (a *AuthService) shouldLockAccount(user *User) bool {
+	return user.LoginAttempts >= a.securityConfig.MaxLoginAttempts
+}
+
+func (a *AuthService) lockAccount(user *User) error {
+	lockUntil := time.Now().Add(a.securityConfig.LoginLockoutDuration)
+	user.LockedUntil = &lockUntil
+	
+	if err := a.storage.UpdateUser(user); err != nil {
+		return err
+	}
+	
+	a.logSecurityEvent(&user.ID, nil, EventAccountLocked, 
+		fmt.Sprintf("Account locked due to %d failed login attempts", user.LoginAttempts),
+		user.LastKnownIP, "", user.LastLoginLocation)
+	
+	return nil
+}
+
+func (a *AuthService) resetLoginAttempts(user *User) error {
+	user.LoginAttempts = 0
+	user.LastFailedLoginAt = nil
+	user.LockedUntil = nil
+	return a.storage.UpdateUser(user)
+}
+
+func (a *AuthService) recordFailedLogin(user *User, ip, userAgent string) error {
+	user.LoginAttempts++
+	now := time.Now()
+	user.LastFailedLoginAt = &now
+	user.LastKnownIP = ip
+	
+	if err := a.storage.UpdateUser(user); err != nil {
+		return err
+	}
+	
+	a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
+		fmt.Sprintf("Failed login attempt (%d/%d)", user.LoginAttempts, a.securityConfig.MaxLoginAttempts),
+		ip, userAgent, "")
+	
+	// Lock account if too many attempts
+	if a.shouldLockAccount(user) {
+		return a.lockAccount(user)
+	}
+	
+	return nil
+}
+
+func (a *AuthService) recordSuccessfulLogin(user *User, ip, userAgent, location string) error {
+	now := time.Now()
+	user.LastLoginAt = &now
+	user.LastKnownIP = ip
+	user.LastLoginLocation = location
+	
+	// Reset login attempts on successful login
+	user.LoginAttempts = 0
+	user.LastFailedLoginAt = nil
+	user.LockedUntil = nil
+	
+	if err := a.storage.UpdateUser(user); err != nil {
+		return err
+	}
+	
+	a.logSecurityEvent(&user.ID, nil, EventLoginSuccess,
+		"Successful login", ip, userAgent, location)
+	
+	return nil
 }
 
 // Multi-tenant helper methods
@@ -314,4 +602,191 @@ func (a *AuthService) UserHasPermission(userID, tenantID uint, permission string
 // GetUserPermissionsInTenant gets all permissions for a user in a specific tenant
 func (a *AuthService) GetUserPermissionsInTenant(userID, tenantID uint) ([]*Permission, error) {
 	return a.storage.GetUserPermissionsInTenant(userID, tenantID)
+}
+
+// Password Reset functionality
+func (a *AuthService) InitiatePasswordReset(email string) error {
+	user, err := a.storage.GetUserByEmail(email, "email")
+	if err != nil {
+		// Don't reveal if email exists
+		return nil
+	}
+	
+	token, err := generatePasswordResetToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate reset token: %w", err)
+	}
+	
+	expiresAt := time.Now().Add(a.securityConfig.PasswordResetExpiry)
+	user.PasswordResetToken = token
+	user.PasswordResetExpiresAt = &expiresAt
+	
+	if err := a.storage.UpdateUser(user); err != nil {
+		return fmt.Errorf("failed to save reset token: %w", err)
+	}
+	
+	a.logSecurityEvent(&user.ID, nil, EventPasswordReset,
+		"Password reset initiated", "", "", "")
+	
+	return nil
+}
+
+func (a *AuthService) ResetPassword(token, newPassword string) error {
+	user, err := a.storage.GetUserByPasswordResetToken(token)
+	if err != nil {
+		return fmt.Errorf("invalid reset token")
+	}
+	
+	// Check if token is expired
+	if user.PasswordResetExpiresAt == nil || time.Now().After(*user.PasswordResetExpiresAt) {
+		return fmt.Errorf("reset token has expired")
+	}
+	
+	// Validate new password
+	if err := validatePasswordStrength(newPassword, a.securityConfig); err != nil {
+		return err
+	}
+	
+	// Hash new password
+	hashedPassword, err := hashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+	
+	// Update user
+	user.PasswordHash = hashedPassword
+	now := time.Now()
+	user.PasswordChangedAt = &now
+	user.PasswordResetToken = ""
+	user.PasswordResetExpiresAt = nil
+	
+	if err := a.storage.UpdateUser(user); err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+	
+	a.logSecurityEvent(&user.ID, nil, EventPasswordChanged,
+		"Password reset completed", "", "", "")
+	
+	return nil
+}
+
+// Email Verification functionality
+func (a *AuthService) SendEmailVerification(userID uint) error {
+	user, err := a.storage.GetUserByID(userID)
+	if err != nil {
+		return fmt.Errorf("user not found: %w", err)
+	}
+	
+	if user.EmailVerified {
+		return fmt.Errorf("email already verified")
+	}
+	
+	token, err := generateVerificationToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate verification token: %w", err)
+	}
+	
+	user.VerificationToken = token
+	
+	if err := a.storage.UpdateUser(user); err != nil {
+		return fmt.Errorf("failed to save verification token: %w", err)
+	}
+	
+	return nil
+}
+
+func (a *AuthService) VerifyEmail(token string) error {
+	user, err := a.storage.GetUserByVerificationToken(token)
+	if err != nil {
+		return fmt.Errorf("invalid verification token")
+	}
+	
+	user.EmailVerified = true
+	now := time.Now()
+	user.EmailVerifiedAt = &now
+	user.VerificationToken = ""
+	
+	if err := a.storage.UpdateUser(user); err != nil {
+		return fmt.Errorf("failed to verify email: %w", err)
+	}
+	
+	a.logSecurityEvent(&user.ID, nil, EventEmailVerified,
+		"Email verification completed", "", "", "")
+	
+	return nil
+}
+
+// Session Management
+func (a *AuthService) CreateSession(userID uint, ip, userAgent, location string) (*Session, error) {
+	// Check if user has too many active sessions
+	activeCount, err := a.storage.CountActiveSessions(userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count active sessions: %w", err)
+	}
+	
+	if activeCount >= a.securityConfig.MaxActiveSessions {
+		return nil, fmt.Errorf("maximum number of active sessions reached")
+	}
+	
+	token, err := generateSecureToken(48)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate session token: %w", err)
+	}
+	
+	session := &Session{
+		ID:                fmt.Sprintf("%d_%d", userID, time.Now().Unix()),
+		UserID:            userID,
+		Token:             token,
+		ExpiresAt:         calculateSessionExpiry(a.securityConfig),
+		DeviceFingerprint: generateDeviceFingerprint(userAgent, ip),
+		UserAgent:         userAgent,
+		IPAddress:         ip,
+		Location:          location,
+		IsActive:          true,
+		LastActivity:      time.Now(),
+		RequiresTwoFactor: a.securityConfig.Force2FA,
+		TwoFactorVerified: !a.securityConfig.Force2FA,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	
+	if err := a.storage.CreateSession(session); err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+	
+	a.logSecurityEvent(&userID, nil, EventSessionCreated,
+		"New session created", ip, userAgent, location)
+	
+	return session, nil
+}
+
+func (a *AuthService) GetUserSessions(userID uint) ([]*Session, error) {
+	return a.storage.GetUserSessions(userID)
+}
+
+func (a *AuthService) RevokeSession(sessionID string) error {
+	session, err := a.storage.GetSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+	
+	if err := a.storage.DeleteSession(sessionID); err != nil {
+		return fmt.Errorf("failed to revoke session: %w", err)
+	}
+	
+	a.logSecurityEvent(&session.UserID, nil, EventSessionTerminated,
+		"Session manually revoked", session.IPAddress, session.UserAgent, session.Location)
+	
+	return nil
+}
+
+func (a *AuthService) RevokeAllUserSessions(userID uint) error {
+	if err := a.storage.DeleteUserSessions(userID); err != nil {
+		return fmt.Errorf("failed to revoke user sessions: %w", err)
+	}
+	
+	a.logSecurityEvent(&userID, nil, EventSessionTerminated,
+		"All user sessions revoked", "", "", "")
+	
+	return nil
 }

@@ -1,30 +1,52 @@
-# Auth Library
+# Nucleus Auth
 
-A minimal, production-ready Go authentication library supporting email/password and multiple OAuth providers (Google, GitHub, Discord).
+A production-ready Go authentication library with comprehensive security features, flexible architecture, and multi-tenant support. Built with pure SQL (PostgreSQL) for maximum performance and compatibility.
 
-## Features
+## 🚀 Features
 
-- ✅ Email/Password authentication
-- ✅ Google OAuth2
-- ✅ GitHub OAuth2  
-- ✅ Discord OAuth2
-- ✅ JWT token generation & validation
-- ✅ PostgreSQL database with flexible schema support
-- ✅ Password hashing with bcrypt
-- ✅ Multiple provider support per user
-- ✅ **Multi-tenant support with roles & permissions**
-- ✅ **Flexible database schema configuration**
+### Core Authentication
+- ✅ **Email/Password authentication** with advanced security
+- ✅ **Multiple OAuth2 providers** (Google, GitHub, Discord)
+- ✅ **JWT token generation & validation**
+- ✅ **Password hashing with bcrypt**
+- ✅ **Multiple provider support per user**
+
+### 🔒 Advanced Security Features
+- ✅ **Password reset flow** with secure token generation
+- ✅ **Email verification system** with customizable expiry
+- ✅ **Account lockout mechanism** with configurable attempts
+- ✅ **Login attempt tracking** and security audit logging
+- ✅ **Session management** with device tracking
+- ✅ **IP address logging** and location tracking
+- ✅ **Device fingerprinting** for enhanced security
+- ✅ **Security event auditing** for comprehensive logging
+- ✅ **Configurable security policies** (password strength, lockout duration, etc.)
+- ✅ **Two-factor authentication ready** (infrastructure in place)
+
+### 🏢 Multi-Tenant Architecture
+- ✅ **Complete multi-tenant support** with roles & permissions
 - ✅ **Role-based access control (RBAC)**
-- ✅ **Permission system**
+- ✅ **Granular permission system**
+- ✅ **Tenant isolation** and management
+- ✅ **Flexible tenant assignment**
 
-## Installation
+### 🛠 Developer Experience
+- ✅ **Pure SQL implementation** (no ORM dependencies)
+- ✅ **Flexible database schema support**
+- ✅ **Clean response-based handlers** (no HTTP coupling in library)
+- ✅ **Configurable table and column names**
+- ✅ **Comprehensive error handling**
+- ✅ **Production-ready defaults**
+
+## 📦 Installation
 
 ```bash
-go mod init your-module-name
-go mod tidy
+go get github.com/wispberry-tech/nucleus-auth
 ```
 
-## Environment Variables
+## 🔧 Configuration
+
+### Environment Variables
 
 Create a `.env` file:
 
@@ -48,77 +70,64 @@ DISCORD_CLIENT_ID=your-discord-oauth-client-id
 DISCORD_CLIENT_SECRET=your-discord-oauth-client-secret
 ```
 
-## Quick Start
+## 🚦 Quick Start
 
 ```go
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 
-	"github.com/your-username/auth-library/auth"
+	"github.com/wispberry-tech/nucleus-auth"
 )
 
 func main() {
-	// Configuration with flexible table names and schema
+	// Initialize with security-enhanced configuration
 	cfg := auth.Config{
 		DatabaseDSN: os.Getenv("DATABASE_URL"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
-		StorageConfig: auth.StorageConfig{
-			UsersTable:    "users",           // Your table name
-			SessionsTable: "user_sessions",   // Your session table name
-			UserColumns: auth.UserColumnMapping{
-				ID:           "id",
-				Email:        "email",
-				PasswordHash: "password_hash",
-				Name:         "name",
-				AvatarURL:    "avatar_url",
-				Provider:     "provider",
-				ProviderID:   "provider_id",
-				CreatedAt:    "created_at",
-				UpdatedAt:    "updated_at",
-			},
-			SessionColumns: auth.SessionColumnMapping{
-				ID:        "id",
-				UserID:    "user_id",
-				Token:     "token",
-				ExpiresAt: "expires_at",
-				CreatedAt: "created_at",
-				UpdatedAt: "updated_at",
-			},
+		
+		// Storage configuration with flexible schema
+		StorageConfig: auth.DefaultStorageConfig(),
+		
+		// Enhanced security configuration
+		SecurityConfig: auth.SecurityConfig{
+			// Password policy
+			MinPasswordLength:   8,
+			RequireUppercase:    true,
+			RequireLowercase:    true,
+			RequireNumbers:      true,
+			RequireSpecialChars: false,
+			
+			// Login protection
+			MaxLoginAttempts:     5,
+			LoginLockoutDuration: 15 * time.Minute,
+			
+			// Session security
+			SessionTimeout:       24 * time.Hour,
+			MaxActiveSessions:    5,
+			
+			// Email verification
+			RequireEmailVerification: true,
+			EmailVerificationExpiry:  24 * time.Hour,
+			
+			// Password reset
+			PasswordResetExpiry: 1 * time.Hour,
 		},
+		
+		// OAuth providers
 		OAuthProviders: map[string]auth.OAuthProviderConfig{
 			"google": {
 				ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 				ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 				RedirectURL:  "http://localhost:8080/auth/oauth/callback?provider=google",
 			},
-			"github": {
-				ClientID:     os.Getenv("GITHUB_CLIENT_ID"),
-				ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-				RedirectURL:  "http://localhost:8080/auth/oauth/callback?provider=github",
-			},
-			"discord": {
-				ClientID:     os.Getenv("DISCORD_CLIENT_ID"),
-				ClientSecret: os.Getenv("DISCORD_CLIENT_SECRET"),
-				RedirectURL:  "http://localhost:8080/auth/oauth/callback?provider=discord",
-			},
+			// Add other providers as needed...
 		},
 	}
-
-	// Or use default configuration (single-tenant mode):
-	// cfg := auth.Config{
-	//     DatabaseDSN: os.Getenv("DATABASE_URL"),
-	//     JWTSecret:   os.Getenv("JWT_SECRET"),
-	//     StorageConfig: auth.DefaultStorageConfig(),
-	//     OAuthProviders: map[string]auth.OAuthProviderConfig{...},
-	// }
-
-	// For multi-tenant setup:
-	// cfg.StorageConfig.MultiTenant.Enabled = true
-	// cfg.StorageConfig.MultiTenant.DefaultTenantID = 1
 
 	// Initialize auth service
 	authService, err := auth.NewAuthService(cfg)
@@ -126,503 +135,409 @@ func main() {
 		log.Fatalf("Failed to initialize auth service: %v", err)
 	}
 
-	// Set up routes
-	http.HandleFunc("/auth/signup", authService.SignUpHandler)
-	http.HandleFunc("/auth/signin", authService.SignInHandler)
-	http.HandleFunc("/auth/validate", authService.ValidateHandler)
-	http.HandleFunc("/auth/oauth", authService.OAuthHandler)
-	http.HandleFunc("/auth/oauth/callback", authService.OAuthCallbackHandler)
-	http.HandleFunc("/auth/providers", func(w http.ResponseWriter, r *http.Request) {
-		providers := []string{"google", "github", "discord"}
+	// Set up routes with new handler pattern
+	http.HandleFunc("/auth/signup", func(w http.ResponseWriter, r *http.Request) {
+		var req auth.SignUpRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		
+		// Extract security context
+		ip := extractIP(r)
+		userAgent := r.Header.Get("User-Agent")
+		
+		// Call handler - returns structured response
+		response := authService.HandleSignUp(req, ip, userAgent)
+		
+		// Handle response
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"providers": providers,
-		})
+		w.WriteHeader(response.StatusCode)
+		
+		if response.Error != "" {
+			json.NewEncoder(w).Encode(map[string]string{"error": response.Error})
+			return
+		}
+		
+		// Send verification email if needed
+		if response.RequiresEmailVerification {
+			// Your email sending logic here
+			sendVerificationEmail(response.User.Email, response.User.VerificationToken)
+		}
+		
+		json.NewEncoder(w).Encode(response)
 	})
 
-	// Health check
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	// Other routes following the same pattern...
+	setupAuthRoutes(authService)
 
 	log.Println("Server starting on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
-```
 
-## API Endpoints
-
-### 1. Email/Password Sign Up
-**POST** `/auth/signup`
-
-```json
-{
-  "email": "user@example.com",
-  "password": "securepassword123",
-  "name": "John Doe"
+func extractIP(r *http.Request) string {
+	// Extract IP from X-Forwarded-For, X-Real-IP, or RemoteAddr
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		return strings.Split(forwarded, ",")[0]
+	}
+	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+		return realIP
+	}
+	return strings.Split(r.RemoteAddr, ":")[0]
 }
 ```
 
-Response:
-```json
-{
-  "token": "123|valid-token",
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "John Doe",
-    "provider": "email",
-    "created_at": "2023-01-01T00:00:00Z",
-    "updated_at": "2023-01-01T00:00:00Z"
-  }
+## 🎯 Handler Architecture
+
+The library uses a clean response-based architecture that separates authentication logic from HTTP handling:
+
+### Before (Old HTTP-coupled handlers):
+```go
+// ❌ Old way - tightly coupled to HTTP
+authService.SignUpHandler(w, r) // Handles HTTP directly
+```
+
+### After (New response-based handlers):
+```go
+// ✅ New way - returns structured responses
+response := authService.HandleSignUp(request, ip, userAgent)
+
+// You handle HTTP response and additional logic
+w.WriteHeader(response.StatusCode)
+if response.RequiresEmailVerification {
+    sendVerificationEmail(response.User.Email) // Your email logic
 }
+json.NewEncoder(w).Encode(response)
 ```
 
-### 2. Email/Password Sign In
-**POST** `/auth/signin`
+### Available Handlers
 
-```json
-{
-  "email": "user@example.com",
-  "password": "securepassword123"
+```go
+// Authentication
+response := authService.HandleSignUp(signUpRequest, ip, userAgent)
+response := authService.HandleSignIn(signInRequest, ip, userAgent)
+response := authService.HandleValidate(token)
+
+// Password Management
+response := authService.HandleForgotPassword(forgotRequest)
+response := authService.HandleResetPassword(resetRequest)
+
+// Email Verification
+response := authService.HandleResendVerification(token)
+response := authService.HandleVerifyEmail(verifyRequest)
+
+// Session Management
+response := authService.HandleGetSessions(token)
+response := authService.HandleRevokeSession(sessionID)
+response := authService.HandleRevokeAllSessions(token)
+
+// OAuth
+response := authService.HandleGetOAuth(provider)
+response := authService.HandleOAuthCallbackRequest(provider, code)
+```
+
+## 🔒 Security Features
+
+### Password Reset Flow
+```go
+// 1. Initiate password reset
+response := authService.HandleForgotPassword(auth.ForgotPasswordRequest{
+    Email: "user@example.com",
+})
+
+// 2. Send reset email (your implementation)
+if response.StatusCode == 200 {
+    sendPasswordResetEmail(email, resetToken) // Your email logic
 }
+
+// 3. Reset password with token
+response := authService.HandleResetPassword(auth.ResetPasswordRequest{
+    Token:       "reset-token-from-email",
+    NewPassword: "newSecurePassword123",
+})
 ```
 
-Response: Same as signup response
+### Email Verification
+```go
+// 1. Send verification email
+response := authService.HandleResendVerification(userToken)
 
-### 3. Validate Token
-**GET** `/auth/validate`
-
-Headers:
-```
-Authorization: Bearer 123|valid-token
-```
-
-Response:
-```json
-{
-  "id": 1,
-  "email": "user@example.com",
-  "name": "John Doe",
-  "provider": "email",
-  "created_at": "2023-01-01T00:00:00Z",
-  "updated_at": "2023-01-01T00:00:00Z"
-}
+// 2. Verify email with token
+response := authService.HandleVerifyEmail(auth.VerifyEmailRequest{
+    Token: "verification-token-from-email",
+})
 ```
 
-### 4. OAuth Initiation
-**GET** `/auth/oauth?provider=google`
+### Session Management
+```go
+// Get all user sessions
+response := authService.HandleGetSessions(userToken)
 
-Redirects to OAuth provider's login page.
+// Revoke specific session
+response := authService.HandleRevokeSession("session-id")
 
-### 5. OAuth Callback
-**GET** `/auth/oauth/callback?provider=google&code=AUTH_CODE`
-
-Returns same response as signup/signin with user data and JWT token.
-
-### 6. List Providers
-**GET** `/auth/providers`
-
-```json
-{
-  "providers": ["google", "github", "discord"]
-}
+// Revoke all sessions (logout everywhere)
+response := authService.HandleRevokeAllSessions(userToken)
 ```
 
-### 7. Health Check
-**GET** `/health`
+### Security Event Logging
+All security-related events are automatically logged:
+- Login attempts (successful/failed)
+- Account lockouts
+- Password resets
+- Email verifications
+- Session creation/termination
 
-```
-OK
-```
+## 🗄 Database Schema
 
-## OAuth Setup Instructions
-
-### Google OAuth
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing one
-3. Enable Google+ API
-4. Create OAuth 2.0 credentials
-5. Add authorized redirect URI: `http://localhost:8080/auth/oauth/callback?provider=google`
-
-### GitHub OAuth
-1. Go to [GitHub Settings → Developer settings → OAuth Apps](https://github.com/settings/developers)
-2. Create New OAuth App
-3. Add authorization callback URL: `http://localhost:8080/auth/oauth/callback?provider=github`
-
-### Discord OAuth
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Create a New Application
-3. Go to OAuth2 → General
-4. Add redirect: `http://localhost:8080/auth/oauth/callback?provider=discord`
-
-## Flexible Database Schema
-
-The library now supports flexible database schemas! You can use existing tables with different names and column structures as long as they have the required columns.
-
-### Default Schema
+### Enhanced Users Table
 ```sql
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
-    email VARCHAR(255) UNIQUE,
+    email VARCHAR(255) UNIQUE NOT NULL,
     password_hash TEXT,
     name VARCHAR(255),
     avatar_url TEXT,
     provider VARCHAR(50),
     provider_id VARCHAR(255),
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
+    
+    -- Email Security
+    email_verified BOOLEAN DEFAULT false,
+    email_verified_at TIMESTAMP,
+    verification_token TEXT,
+    
+    -- Password Security
+    password_reset_token TEXT,
+    password_reset_expires_at TIMESTAMP,
+    password_changed_at TIMESTAMP,
+    
+    -- Login Security
+    login_attempts INTEGER DEFAULT 0,
+    last_failed_login_at TIMESTAMP,
+    locked_until TIMESTAMP,
+    last_login_at TIMESTAMP,
+    
+    -- Location & Device Tracking
+    last_known_ip VARCHAR(45),
+    last_login_location VARCHAR(255),
+    
+    -- Two-Factor Authentication (ready)
+    two_factor_enabled BOOLEAN DEFAULT false,
+    two_factor_secret TEXT,
+    backup_codes TEXT, -- JSON array
+    
+    -- Account Security
+    is_active BOOLEAN DEFAULT true,
+    is_suspended BOOLEAN DEFAULT false,
+    suspended_at TIMESTAMP,
+    suspend_reason TEXT,
+    
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
+```
 
+### Enhanced Sessions Table
+```sql
 CREATE TABLE sessions (
     id VARCHAR(255) PRIMARY KEY,
     user_id INTEGER REFERENCES users(id),
     token VARCHAR(255) UNIQUE,
     expires_at TIMESTAMP,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
+    
+    -- Device & Location Tracking
+    device_fingerprint VARCHAR(255),
+    user_agent TEXT,
+    ip_address VARCHAR(45),
+    location VARCHAR(255),
+    
+    -- Security Features
+    is_active BOOLEAN DEFAULT true,
+    last_activity TIMESTAMP,
+    requires_two_factor BOOLEAN DEFAULT false,
+    two_factor_verified BOOLEAN DEFAULT false,
+    
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
-
-CREATE INDEX idx_users_provider_id ON users(provider_id);
-CREATE INDEX idx_sessions_token ON sessions(token);
 ```
 
-### Custom Schema Configuration
-You can configure the library to work with your existing database schema:
-
-```go
-cfg := auth.Config{
-    DatabaseDSN: os.Getenv("DATABASE_URL"),
-    JWTSecret:   os.Getenv("JWT_SECRET"),
-    StorageConfig: auth.StorageConfig{
-        UsersTable:    "members",           // Your existing user table
-        SessionsTable: "auth_sessions",     // Your session table
-        UserColumns: auth.UserColumnMapping{
-            ID:           "member_id",      // Your primary key column
-            Email:        "email_address",  // Your email column
-            PasswordHash: "pwd_hash",       // Your password column
-            Name:         "full_name",      // Your name column
-            AvatarURL:    "profile_pic",    // Your avatar column
-            Provider:     "auth_provider",  // Your provider column
-            ProviderID:   "external_id",    // Your provider ID column
-            CreatedAt:    "created_on",     // Your created timestamp
-            UpdatedAt:    "modified_on",    // Your updated timestamp
-        },
-        SessionColumns: auth.SessionColumnMapping{
-            ID:        "session_id",
-            UserID:    "member_id",
-            Token:     "access_token",
-            ExpiresAt: "expiry_time",
-            CreatedAt: "created_on",
-            UpdatedAt: "modified_on",
-        },
-    },
-    OAuthProviders: map[string]auth.OAuthProviderConfig{
-        // ... your OAuth providers
-    },
-}
-```
-
-### Required Columns
-Your database tables must have columns that map to these logical fields:
-
-**Users Table:**
-- `ID` (integer, primary key)
-- `Email` (string, for email address)
-- `PasswordHash` (string, for hashed passwords)
-- `Name` (string, for user's display name)
-- `AvatarURL` (string, for profile picture URL)
-- `Provider` (string, for auth provider: "email", "google", etc.)
-- `ProviderID` (string, for external provider user ID)
-- `CreatedAt` (timestamp)
-- `UpdatedAt` (timestamp)
-
-**Sessions Table:**
-- `ID` (string, primary key)
-- `UserID` (integer, foreign key to users)
-- `Token` (string, unique session token)
-- `ExpiresAt` (timestamp)
-- `CreatedAt` (timestamp)
-- `UpdatedAt` (timestamp)
-
-## Multi-Tenant Support
-
-The library includes comprehensive multi-tenant support with roles and permissions. You can use it in single-tenant mode (default) or enable multi-tenant functionality.
-
-### Single-Tenant Mode (Default)
-By default, the library operates in single-tenant mode where all users belong to a single organization.
-
-### Multi-Tenant Mode
-Enable multi-tenant support for SaaS applications where multiple organizations share the same system.
-
-### Configuration
-
-```go
-cfg := auth.Config{
-    DatabaseDSN: os.Getenv("DATABASE_URL"),
-    JWTSecret:   os.Getenv("JWT_SECRET"),
-    StorageConfig: auth.StorageConfig{
-        // ... table and column configurations
-        MultiTenant: auth.MultiTenantConfig{
-            Enabled:         true,  // Enable multi-tenant mode
-            DefaultTenantID: 1,     // Default tenant for new signups
-            
-            // Customize table names if needed
-            TenantsTable:         "organizations",
-            RolesTable:          "org_roles", 
-            PermissionsTable:    "permissions",
-            RolePermissionsTable: "role_permissions",
-            UserTenantsTable:    "user_organizations",
-            
-            // Column mappings (use defaults or customize)
-            TenantColumns: auth.DefaultMultiTenantConfig().TenantColumns,
-            // ... other column mappings
-        },
-    },
-    OAuthProviders: map[string]auth.OAuthProviderConfig{...},
-}
-
-authService, err := auth.NewAuthService(cfg)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Set up default tenant and roles
-if err := authService.SetupDefaultTenant(); err != nil {
-    log.Fatal(err)
-}
-```
-
-### Multi-Tenant Database Schema
-
-The multi-tenant functionality adds these tables:
-
+### Security Events Table
 ```sql
--- Tenants/Organizations
-CREATE TABLE tenants (
+CREATE TABLE security_events (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    slug VARCHAR(100) UNIQUE NOT NULL,
-    domain VARCHAR(255),
-    is_active BOOLEAN DEFAULT true,
-    settings JSONB DEFAULT '{}',
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- Roles (per tenant)
-CREATE TABLE roles (
-    id SERIAL PRIMARY KEY,
-    tenant_id INTEGER REFERENCES tenants(id),
-    name VARCHAR(100) NOT NULL,
+    user_id INTEGER REFERENCES users(id),
+    tenant_id INTEGER, -- For multi-tenant setups
+    event_type VARCHAR(50) NOT NULL, -- login_success, login_failed, etc.
     description TEXT,
-    is_system BOOLEAN DEFAULT false,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(tenant_id, name)
-);
-
--- Global permissions
-CREATE TABLE permissions (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) UNIQUE NOT NULL,
-    resource VARCHAR(100) NOT NULL,
-    action VARCHAR(100) NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- Role-Permission mapping
-CREATE TABLE role_permissions (
-    id SERIAL PRIMARY KEY,
-    role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
-    permission_id INTEGER REFERENCES permissions(id) ON DELETE CASCADE,
-    UNIQUE(role_id, permission_id)
-);
-
--- User-Tenant mapping with roles
-CREATE TABLE user_tenants (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
-    role_id INTEGER REFERENCES roles(id),
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(user_id, tenant_id)
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    location VARCHAR(255),
+    metadata JSONB, -- Additional context
+    created_at TIMESTAMP DEFAULT NOW()
 );
 ```
 
-### Usage Examples
+## 🏢 Multi-Tenant Support
 
-#### Creating Tenants and Roles
-
+### Enable Multi-Tenant Mode
 ```go
-// Create a new tenant
-tenant, err := authService.CreateTenant("Acme Corp", "acme", "acme.example.com")
-if err != nil {
-    log.Fatal(err)
+cfg.StorageConfig.MultiTenant = auth.MultiTenantConfig{
+    Enabled:         true,
+    DefaultTenantID: 1,
+    
+    // Customize table names if needed
+    TenantsTable:         "organizations",
+    RolesTable:          "roles",
+    PermissionsTable:    "permissions",
+    RolePermissionsTable: "role_permissions",
+    UserTenantsTable:    "user_tenants",
 }
+```
 
-// Create custom roles for the tenant
+### Multi-Tenant Operations
+```go
+// Create tenant
+tenant, err := authService.CreateTenant("Acme Corp", "acme", "acme.example.com")
+
+// Create roles
 adminRole, err := authService.CreateRole(tenant.ID, "admin", "Administrator", false)
 memberRole, err := authService.CreateRole(tenant.ID, "member", "Team Member", false)
 
 // Create permissions
-userReadPerm, err := authService.CreatePermission("users.read", "users", "read", "Read user data")
-userWritePerm, err := authService.CreatePermission("users.write", "users", "write", "Create/update users")
+userReadPerm, err := authService.CreatePermission("users.read", "users", "read", "Read users")
+userWritePerm, err := authService.CreatePermission("users.write", "users", "write", "Manage users")
 
 // Assign permissions to roles
 authService.AssignPermissionToRole(adminRole.ID, userReadPerm.ID)
 authService.AssignPermissionToRole(adminRole.ID, userWritePerm.ID)
-authService.AssignPermissionToRole(memberRole.ID, userReadPerm.ID)
+
+// Assign user to tenant with role
+authService.AssignUserToTenant(userID, tenant.ID, adminRole.ID)
+
+// Check permissions
+hasPermission, err := authService.UserHasPermission(userID, tenant.ID, "users.write")
 ```
 
-#### Managing User-Tenant Relationships
+## 📊 Response Types
+
+All handlers return structured response types:
 
 ```go
-// Assign user to a tenant with a role
-err := authService.AssignUserToTenant(userID, tenantID, roleID)
-
-// Get all tenants for a user
-userTenants, err := authService.GetUserTenants(userID)
-
-// Check user permissions in a tenant
-hasPermission, err := authService.UserHasPermission(userID, tenantID, "users.write")
-if hasPermission {
-    // User can perform the action
+type SignUpResponse struct {
+    Token                      string `json:"token"`
+    User                       *User  `json:"user"`
+    RequiresEmailVerification bool   `json:"requires_email_verification"`
+    StatusCode                int    `json:"-"`
+    Error                     string `json:"error,omitempty"`
 }
 
-// Get all permissions for a user in a tenant
-permissions, err := authService.GetUserPermissionsInTenant(userID, tenantID)
-```
-
-#### Multi-Tenant Sign Up
-
-```go
-// Sign up user to specific tenant
-user, err := authService.SignUpWithTenant("user@example.com", "password", "John Doe", tenantID)
-
-// Regular signup assigns to default tenant
-user, err := authService.SignUp("user@example.com", "password", "John Doe")
-```
-
-### Permission System
-
-The library uses a resource-action based permission system:
-
-- **Resource**: The entity being accessed (e.g., "users", "projects", "billing")
-- **Action**: The operation being performed (e.g., "read", "write", "delete")
-- **Permission**: Combination of resource and action (e.g., "users.read", "projects.write")
-
-#### Common Permission Patterns
-
-```go
-// CRUD permissions for a resource
-"users.read"    // View users
-"users.write"   // Create/update users  
-"users.delete"  // Delete users
-
-// Administrative permissions
-"tenants.read"     // View tenant info
-"tenants.write"    // Manage tenant settings
-"roles.write"      // Manage roles
-"permissions.read" // View available permissions
-```
-
-### Middleware and Authorization
-
-```go
-// Example middleware for HTTP handlers (pseudo-code)
-func AuthRequired(permission string) func(http.HandlerFunc) http.HandlerFunc {
-    return func(next http.HandlerFunc) http.HandlerFunc {
-        return func(w http.ResponseWriter, r *http.Request) {
-            // Extract user and tenant from token/headers
-            userID := getUserFromToken(r)
-            tenantID := getTenantFromHeader(r)
-            
-            // Check permission
-            hasPermission, err := authService.UserHasPermission(userID, tenantID, permission)
-            if err != nil || !hasPermission {
-                http.Error(w, "Forbidden", http.StatusForbidden)
-                return
-            }
-            
-            next(w, r)
-        }
-    }
+type SignInResponse struct {
+    Token            string     `json:"token"`
+    User             *User      `json:"user"`
+    SessionID        string     `json:"session_id"`
+    Requires2FA      bool       `json:"requires_2fa"`
+    SessionExpiresAt time.Time  `json:"session_expires_at"`
+    StatusCode       int        `json:"-"`
+    Error            string     `json:"error,omitempty"`
 }
-
-// Usage
-http.HandleFunc("/users", AuthRequired("users.read")(listUsersHandler))
-http.HandleFunc("/users/create", AuthRequired("users.write")(createUserHandler))
 ```
 
-### Best Practices
+## ⚙️ Configuration Options
 
-1. **Default Tenant**: Always assign new users to a default tenant for backward compatibility
-2. **System Roles**: Mark core roles as `is_system: true` to prevent accidental deletion
-3. **Permission Naming**: Use consistent naming patterns like `resource.action`
-4. **Tenant Isolation**: Always include tenant context in authorization checks
-5. **Role Inheritance**: Consider implementing role hierarchies for complex permission models
+### Security Configuration
+```go
+type SecurityConfig struct {
+    // Password Policy
+    MinPasswordLength   int
+    RequireUppercase    bool
+    RequireLowercase    bool
+    RequireNumbers      bool
+    RequireSpecialChars bool
+    
+    // Login Protection
+    MaxLoginAttempts     int
+    LoginLockoutDuration time.Duration
+    
+    // Session Security
+    SessionTimeout              time.Duration
+    MaxActiveSessions           int
+    RequireDeviceVerification   bool
+    
+    // Two-Factor Authentication
+    Force2FA       bool
+    Allow2FABypass bool
+    
+    // Email Security
+    RequireEmailVerification bool
+    EmailVerificationExpiry  time.Duration
+    
+    // Password Reset
+    PasswordResetExpiry time.Duration
+    
+    // Rate Limiting
+    EnableRateLimiting   bool
+    RateLimitWindow      time.Duration
+    RateLimitMaxRequests int
+}
+```
 
-## Error Handling
+### Flexible Schema Configuration
+```go
+cfg.StorageConfig = auth.StorageConfig{
+    UsersTable:    "members",           // Your existing user table
+    SessionsTable: "auth_sessions",     // Your session table
+    SecurityEventsTable: "audit_log",  // Your security events table
+    
+    UserColumns: auth.UserColumnMapping{
+        ID:           "member_id",      // Your primary key column
+        Email:        "email_address",  // Your email column
+        PasswordHash: "pwd_hash",       // Your password column
+        Name:         "full_name",      // Your name column
+        // ... map all required fields to your schema
+    },
+    // ... other column mappings
+}
+```
 
-The API returns appropriate HTTP status codes:
+## 🔐 Security Best Practices
 
-- `200` - Success
-- `400` - Bad Request (invalid input)
-- `401` - Unauthorized (invalid credentials/token)
-- `409` - Conflict (user already exists)
-- `500` - Internal Server Error
+1. **Always use HTTPS** in production
+2. **Rotate JWT secrets** regularly
+3. **Monitor security events** for suspicious activity
+4. **Implement rate limiting** at the application level
+5. **Use strong password policies**
+6. **Enable email verification** for new accounts
+7. **Set appropriate session timeouts**
+8. **Implement proper logging and monitoring**
 
-## Security Notes
+## 🚀 Production Recommendations
 
-- 🔒 Passwords are hashed using bcrypt
-- 🔑 JWT tokens should be properly validated in production
-- 🌐 Use HTTPS in production environments
-- 🔄 Rotate JWT secrets regularly
-- ⚠️ The current token implementation is simplified - replace with proper JWT in production
+1. **Database**: Use connection pooling and read replicas
+2. **Caching**: Implement Redis for session storage
+3. **Monitoring**: Set up security event alerts
+4. **Backup**: Regular database backups with encryption
+5. **Updates**: Keep dependencies updated
+6. **Testing**: Comprehensive security testing
 
-## Dependencies
+## 📚 Dependencies
 
 ```go
 require (
-    golang.org/x/crypto v0.17.0
-    golang.org/x/oauth2 v0.15.0
-    gorm.io/driver/postgres v1.5.4
-    gorm.io/gorm v1.25.5
+    github.com/jackc/pgx/v5 v5.6.0
+    golang.org/x/crypto v0.42.0
+    golang.org/x/oauth2 v0.31.0
 )
 ```
 
-## Running the Server
+## 🤝 Contributing
 
-```bash
-# Set environment variables
-export DATABASE_URL="postgresql://user:password@localhost:5432/auth_db"
-export JWT_SECRET="your-super-secret-key"
-export GOOGLE_CLIENT_ID="your-id"
-export GOOGLE_CLIENT_SECRET="your-secret"
-export GITHUB_CLIENT_ID="your-id" 
-export GITHUB_CLIENT_SECRET="your-secret"
-export DISCORD_CLIENT_ID="your-id"
-export DISCORD_CLIENT_SECRET="your-secret"
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-# Run the server
-go run main.go
-```
+## 📄 License
 
-## Production Recommendations
+This project is licensed under the MIT License.
 
-1. **Use proper JWT implementation** with expiration and refresh tokens
-2. **Add rate limiting** to prevent abuse
-3. **Implement proper logging** for security auditing
-4. **Use environment-specific configurations**
-5. **Add database connection pooling**
-6. **Implement proper error handling and monitoring**
-7. **Add CORS support** for web applications
-8. **Use HTTPS** in production environments
+---
 
-This library provides a solid foundation for authentication that can be extended based on your specific requirements!# wispy-auth
+**Nucleus Auth** - Production-ready authentication with security at its core. 🛡️
