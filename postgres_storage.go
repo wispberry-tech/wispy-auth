@@ -15,6 +15,61 @@ type PostgresStorage struct {
 	config StorageConfig
 }
 
+// OAuth State storage methods
+func (p *PostgresStorage) StoreOAuthState(state *OAuthState) error {
+	query := `INSERT INTO oauth_states (state_id, csrf_token, created_at, expires_at) 
+			  VALUES ($1, $2, $3, $4)`
+
+	_, err := p.db.Exec(query, state.State, state.CSRF, state.CreatedAt, state.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("failed to store OAuth state: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) GetOAuthState(stateID string) (*OAuthState, error) {
+	query := `SELECT state_id, csrf_token, created_at, expires_at 
+			  FROM oauth_states WHERE state_id = $1`
+
+	var state OAuthState
+	err := p.db.QueryRow(query, stateID).Scan(
+		&state.State,
+		&state.CSRF,
+		&state.CreatedAt,
+		&state.ExpiresAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("OAuth state not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get OAuth state: %w", err)
+	}
+
+	return &state, nil
+}
+
+func (p *PostgresStorage) DeleteOAuthState(stateID string) error {
+	query := `DELETE FROM oauth_states WHERE state_id = $1`
+
+	result, err := p.db.Exec(query, stateID)
+	if err != nil {
+		return fmt.Errorf("failed to delete OAuth state: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("OAuth state not found")
+	}
+
+	return nil
+}
+
 // NewPostgresStorage creates a new PostgreSQL storage instance
 func NewPostgresStorage(dsn string, config StorageConfig) (StorageInterface, error) {
 	// Parse the connection string and convert to pgx config
@@ -687,7 +742,7 @@ func (p *PostgresStorage) UpdateSession(session *Session) error {
 		p.config.SessionColumns.IPAddress,
 		// Timestamp
 		p.config.SessionColumns.UpdatedAt,
-		// WHERE condition  
+		// WHERE condition
 		p.config.SessionColumns.ID,
 	)
 

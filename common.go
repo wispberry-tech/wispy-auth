@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -112,18 +113,29 @@ func extractIPFromRequest(remoteAddr, xForwardedFor, xRealIP string) string {
 	return host
 }
 
-// Session utilities
-func isSessionExpired(expiresAt time.Time) bool {
-	return time.Now().After(expiresAt)
-}
-
+// calculateSessionExpiry calculates when a session should expire
 func calculateSessionExpiry(config SecurityConfig) time.Time {
 	return time.Now().Add(config.SessionTimeout)
 }
 
-// Rate limiting key generation
-func generateRateLimitKey(ip, endpoint string) string {
-	return fmt.Sprintf("rate_limit:%s:%s", ip, endpoint)
+// extractTokenFromRequest extracts JWT token from Authorization header
+func extractTokenFromRequest(r *http.Request) string {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		return ""
+	}
+
+	// Remove "Bearer " prefix if present
+	if len(token) > 7 && token[:7] == "Bearer " {
+		return token[7:]
+	}
+
+	return token
+}
+
+// extractIP extracts client IP from HTTP request
+func extractIP(r *http.Request) string {
+	return extractIPFromRequest(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), r.Header.Get("X-Real-IP"))
 }
 
 // Security event types

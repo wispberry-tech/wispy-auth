@@ -2,13 +2,14 @@ module nucleus-auth-example
 
 go 1.24.6
 
+replace github.com/wispberry-tech/wispy-auth => ../
+
 require (
 	github.com/go-chi/chi/v5 v5.0.12
 	github.com/go-chi/cors v1.2.1
-	github.com/go-playground/validator/v10 v10.27.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
-	github.com/wispberry-tech/wispy-auth v0.0.0
+	github.com/wispberry-tech/wispy-auth v0.0.0-20250911110314-2fe497b7873f
 )
 
 require (
@@ -16,6 +17,7 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-playground/validator/v10 v10.27.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.6.0 // indirect
@@ -28,5 +30,3 @@ require (
 	golang.org/x/sys v0.36.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )
-
-replace github.com/wispberry-tech/wispy-auth => ../

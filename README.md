@@ -80,7 +80,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/wispberry-tech/nucleus-auth"
 )
 
@@ -135,105 +138,262 @@ func main() {
 		log.Fatalf("Failed to initialize auth service: %v", err)
 	}
 
-	// Set up routes with new handler pattern
-	http.HandleFunc("/auth/signup", func(w http.ResponseWriter, r *http.Request) {
-		var req auth.SignUpRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
+	// Initialize Chi router
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	// 🎉 Create route helpers - mount routes exactly where you want!
+	helpers := authService.NewRouteHelpers(&YourEmailService{})
+
+	// Mount auth routes with perfect flexibility
+	r.Route("/api/auth", func(r chi.Router) {
+		// Simple pattern: get result, control response
+		r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
+			result := helpers.SignUp(r)                    // ✅ Returns structured response
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
 		
-		// Extract security context
-		ip := extractIP(r)
-		userAgent := r.Header.Get("User-Agent")
+		r.Post("/signin", func(w http.ResponseWriter, r *http.Request) {
+			result := helpers.SignIn(r)                    // ✅ Complete login flow
+			w.Header().Set("Content-Type", "application/json") 
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
 		
-		// Call handler - returns structured response
-		response := authService.HandleSignUp(req, ip, userAgent)
+		r.Get("/validate", func(w http.ResponseWriter, r *http.Request) {
+			result := helpers.Validate(r)                  // ✅ Token validation
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
 		
-		// Handle response
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(response.StatusCode)
-		
-		if response.Error != "" {
-			json.NewEncoder(w).Encode(map[string]string{"error": response.Error})
-			return
-		}
-		
-		// Send verification email if needed
-		if response.RequiresEmailVerification {
-			// Your email sending logic here
-			sendVerificationEmail(response.User.Email, response.User.VerificationToken)
-		}
-		
-		json.NewEncoder(w).Encode(response)
+		// OAuth with custom redirect handling  
+		r.Get("/oauth", func(w http.ResponseWriter, r *http.Request) {
+			provider := r.URL.Query().Get("provider")
+			result := helpers.OAuth(r, provider)
+			if result.URL != "" {
+				http.Redirect(w, r, result.URL, http.StatusTemporaryRedirect)
+				return
+			}
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
+
+		// ... other routes follow the same pattern
 	})
 
-	// Other routes following the same pattern...
-	setupAuthRoutes(authService)
+	// Your protected app routes
+	r.Group(func(r chi.Router) {
+		r.Use(authService.RequireAuth())
+		
+		r.Get("/api/profile", func(w http.ResponseWriter, r *http.Request) {
+			user := auth.MustGetUserFromContext(r)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(user)
+		})
+		
+		// Admin routes with role protection
+		r.Group(func(r chi.Router) {
+			r.Use(authService.RequireRole("admin"))
+			
+			r.Get("/api/admin/users", func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]string{
+					"message": "Admin access granted!",
+				})
+			})
+		})
+	})
 
-	log.Println("Server starting on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Println("🚀 Server starting on :8080")
+	log.Println("📍 Auth endpoints: http://localhost:8080/auth/*")
+	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
-func extractIP(r *http.Request) string {
-	// Extract IP from X-Forwarded-For, X-Real-IP, or RemoteAddr
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		return strings.Split(forwarded, ",")[0]
-	}
-	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-		return realIP
-	}
-	return strings.Split(r.RemoteAddr, ":")[0]
+// Implement your email service
+type YourEmailService struct{}
+
+func (e *YourEmailService) SendVerificationEmail(email, token string) error {
+	// Send verification email
+	log.Printf("📧 Sending verification email to %s", email)
+	return nil
+}
+
+func (e *YourEmailService) SendPasswordResetEmail(email, token string) error {
+	// Send password reset email
+	log.Printf("📧 Sending password reset email to %s", email)
+	return nil
+}
+
+func (e *YourEmailService) SendWelcomeEmail(email, name string) error {
+	// Send welcome email
+	log.Printf("📧 Sending welcome email to %s", email)
+	return nil
 }
 ```
 
-## 🎯 Handler Architecture
+**Perfect! Your authentication system is ready with the best developer experience:**
 
-The library uses a clean response-based architecture that separates authentication logic from HTTP handling:
+✅ **Flexible Route Mounting** - Mount routes exactly where you want them  
+✅ **One Line Per Endpoint** - `r.Post("/signup", helpers.SignUp)` and you're done!  
+✅ **Full Control** - Choose your URL structure, middleware, and custom logic  
+✅ **Zero Boilerplate** - Each helper handles validation, emails, errors automatically  
+✅ **Enterprise Security** - Built-in protection, audit logging, and compliance features  
+✅ **Production Ready** - OAuth, sessions, multi-tenant, RBAC out of the box
 
-### Before (Old HTTP-coupled handlers):
+### Available Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/auth/signup` | User registration |
+| POST | `/auth/signin` | User login |
+| GET | `/auth/validate` | Validate JWT token |
+| POST | `/auth/forgot-password` | Request password reset |
+| POST | `/auth/reset-password` | Reset password with token |
+| POST | `/auth/verify-email` | Verify email address |
+| GET | `/auth/oauth?provider=X` | OAuth redirect |
+| GET | `/auth/oauth/callback` | OAuth callback |
+| GET | `/auth/providers` | List available OAuth providers |
+| POST | `/auth/resend-verification` | Resend verification email (protected) |
+| GET | `/auth/sessions` | List user sessions (protected) |
+| DELETE | `/auth/sessions/{id}` | Revoke specific session (protected) |
+| POST | `/auth/logout-all` | Revoke all sessions (protected) |
+
+## 🎯 Flexible & Simple Route Mounting
+
+### 🚀 Perfect Balance: Control + Simplicity
+
+Mount auth routes exactly where you want them with **perfect control**:
+
 ```go
-// ❌ Old way - tightly coupled to HTTP
-authService.SignUpHandler(w, r) // Handles HTTP directly
+// Create route helpers with email integration
+helpers := authService.NewRouteHelpers(emailService)
+
+// Mount routes exactly where you want them - super flexible!
+r.Route("/api/auth", func(r chi.Router) {
+    // Public routes - perfect balance of control and simplicity!
+    r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
+        result := helpers.SignUp(r)                    // ✅ Returns structured response
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(result.StatusCode)               // ✅ You control the HTTP response
+        json.NewEncoder(w).Encode(result)              // ✅ You choose how to encode
+    })
+    
+    r.Post("/signin", func(w http.ResponseWriter, r *http.Request) {
+        result := helpers.SignIn(r)                    // ✅ Complete login logic
+        w.Header().Set("Content-Type", "application/json") 
+        w.WriteHeader(result.StatusCode)
+        json.NewEncoder(w).Encode(result)
+    })
+    
+    r.Post("/forgot-password", func(w http.ResponseWriter, r *http.Request) {
+        result := helpers.ForgotPassword(r)            // ✅ Handles validation + emails
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(result.StatusCode) 
+        json.NewEncoder(w).Encode(result)
+    })
+    
+    // OAuth with redirect handling  
+    r.Get("/oauth", func(w http.ResponseWriter, r *http.Request) {
+        provider := r.URL.Query().Get("provider")
+        result := helpers.OAuth(r, provider)
+        if result.URL != "" {
+            http.Redirect(w, r, result.URL, http.StatusTemporaryRedirect) // ✅ You control redirects
+            return
+        }
+        w.WriteHeader(result.StatusCode)
+        json.NewEncoder(w).Encode(result)
+    })
+})
+
+// Or mount them anywhere in your existing API structure!
+r.Post("/auth/register", func(w http.ResponseWriter, r *http.Request) {
+    result := helpers.SignUp(r)
+    // Add custom business logic here
+    if result.User != nil {
+        createUserProfile(result.User.ID)           // ✅ Your custom logic
+        trackSignupEvent(result.User.Email)         // ✅ Your analytics
+    }
+    w.WriteHeader(result.StatusCode)
+    json.NewEncoder(w).Encode(result)
+})
 ```
 
-### After (New response-based handlers):
-```go
-// ✅ New way - returns structured responses
-response := authService.HandleSignUp(request, ip, userAgent)
+### 🛡️ Built-in Middleware Protection
 
-// You handle HTTP response and additional logic
-w.WriteHeader(response.StatusCode)
-if response.RequiresEmailVerification {
-    sendVerificationEmail(response.User.Email) // Your email logic
-}
-json.NewEncoder(w).Encode(response)
+Create protected routes with role/permission-based access:
+
+```go
+// Your app routes with auth protection
+r.Group(func(r chi.Router) {
+    r.Use(authService.RequireAuth())  // Basic authentication
+    
+    r.Get("/profile", func(w http.ResponseWriter, r *http.Request) {
+        user := auth.MustGetUserFromContext(r)  // Get authenticated user
+        json.NewEncoder(w).Encode(user)
+    })
+    
+    // Admin-only routes
+    r.Group(func(r chi.Router) {
+        r.Use(authService.RequireRole("admin"))
+        
+        r.Get("/admin/users", adminUsersHandler)
+        r.Delete("/admin/users/{id}", deleteUserHandler)
+    })
+    
+    // Permission-based routes
+    r.Group(func(r chi.Router) {
+        r.Use(authService.RequirePermission("billing.manage"))
+        
+        r.Get("/billing", billingHandler)
+        r.Post("/billing/invoice", createInvoiceHandler)
+    })
+})
 ```
 
-### Available Handlers
+### 🎨 Every Helper Includes
+
+Each helper method automatically handles:
+
+- ✅ **Input validation** using `go-playground/validator`
+- ✅ **JSON request/response** parsing and formatting
+- ✅ **Error handling** with proper HTTP status codes
+- ✅ **Email integration** (verification, password reset, welcome)
+- ✅ **Security features** (IP tracking, rate limiting, etc.)
+- ✅ **Async email sending** to prevent blocking
+
+### 🔧 Custom Integration
+
+Need custom logic? Easy - access the underlying handlers:
 
 ```go
-// Authentication
-response := authService.HandleSignUp(signUpRequest, ip, userAgent)
-response := authService.HandleSignIn(signInRequest, ip, userAgent)
-response := authService.HandleValidate(token)
-
-// Password Management
-response := authService.HandleForgotPassword(forgotRequest)
-response := authService.HandleResetPassword(resetRequest)
-
-// Email Verification
-response := authService.HandleResendVerification(token)
-response := authService.HandleVerifyEmail(verifyRequest)
-
-// Session Management
-response := authService.HandleGetSessions(token)
-response := authService.HandleRevokeSession(sessionID)
-response := authService.HandleRevokeAllSessions(token)
-
-// OAuth
-response := authService.HandleGetOAuth(provider)
-response := authService.HandleOAuthCallbackRequest(provider, code)
+// Custom signup with your own business logic
+r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
+    // Parse request however you want
+    var req MyCustomSignUpRequest
+    json.NewDecoder(r.Body).Decode(&req)
+    
+    // Call the auth service directly
+    response := authService.HandleSignUp(auth.SignUpRequest{
+        Email:    req.Email,
+        Password: req.Password,
+        Name:     req.Name,
+    }, getIP(r), r.Header.Get("User-Agent"))
+    
+    // Handle response with your custom logic
+    if response.Error != "" {
+        // Your custom error handling
+        return
+    }
+    
+    // Your custom success logic
+    createUserProfile(response.User.ID, req.AdditionalData)
+    sendWelcomeSlackMessage(req.Email)
+    
+    json.NewEncoder(w).Encode(response)
+})
 ```
 
 ## 🔒 Security Features
@@ -519,6 +679,239 @@ cfg.StorageConfig = auth.StorageConfig{
 4. **Backup**: Regular database backups with encryption
 5. **Updates**: Keep dependencies updated
 6. **Testing**: Comprehensive security testing
+
+## 🛡️ Chi Middleware Support
+
+The library includes comprehensive middleware for the [Chi router](https://github.com/go-chi/chi) with authentication, role-based, permission-based, and tenant-based protection.
+
+### Basic Authentication Middleware
+
+```go
+package main
+
+import (
+    "github.com/go-chi/chi/v5"
+    "github.com/wispberry-tech/nucleus-auth"
+)
+
+func main() {
+    r := chi.NewRouter()
+    
+    // Initialize auth service
+    authService, err := auth.NewAuthService(cfg)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Protected routes requiring authentication
+    r.Group(func(r chi.Router) {
+        r.Use(authService.RequireAuth())
+        
+        r.Get("/profile", getUserProfile)
+        r.Put("/profile", updateUserProfile)
+        r.Get("/dashboard", getDashboard)
+    })
+}
+```
+
+### Role-Based Protection
+
+```go
+// Protect routes requiring specific roles
+r.Group(func(r chi.Router) {
+    r.Use(authService.RequireAuthAndRole("admin", "moderator"))
+    
+    r.Get("/admin", adminDashboard)
+    r.Delete("/users/{userID}", deleteUser)
+})
+
+// Role-based protection in specific tenant
+r.Group(func(r chi.Router) {
+    r.Use(authService.RequireAuthRoleAndTenant(tenantID, "admin"))
+    
+    r.Get("/tenant/{tenantID}/settings", getTenantSettings)
+    r.Put("/tenant/{tenantID}/settings", updateTenantSettings)
+})
+```
+
+### Permission-Based Protection
+
+```go
+// Protect routes requiring specific permissions
+r.Group(func(r chi.Router) {
+    r.Use(authService.RequireAuthAndPermission("users.read", "users.write"))
+    
+    r.Get("/users", listUsers)
+    r.Post("/users", createUser)
+})
+
+// Permission-based protection in specific tenant
+r.Group(func(r chi.Router) {
+    r.Use(authService.RequireAuthPermissionAndTenant(tenantID, "billing.manage"))
+    
+    r.Get("/tenant/{tenantID}/billing", getBilling)
+    r.Post("/tenant/{tenantID}/billing/invoice", createInvoice)
+})
+```
+
+### Tenant-Based Protection
+
+```go
+// Ensure user belongs to a specific tenant
+r.Group(func(r chi.Router) {
+    r.Use(authService.RequireAuthAndTenant(tenantID))
+    
+    r.Get("/tenant/{tenantID}/data", getTenantData)
+    r.Post("/tenant/{tenantID}/resources", createResource)
+})
+
+// Dynamic tenant extraction from URL or headers
+r.Group(func(r chi.Router) {
+    r.Use(authService.RequireAuth())
+    r.Use(authService.RequireTenant()) // Extracts from X-Tenant-ID header or URL params
+    
+    r.Get("/data", getTenantSpecificData)
+})
+```
+
+### Custom Middleware Configuration
+
+```go
+// Custom token extraction and error handling
+config := auth.MiddlewareConfig{
+    TokenExtractor: func(r *http.Request) string {
+        // Custom logic: check cookie, query param, etc.
+        if token := r.Header.Get("X-API-Key"); token != "" {
+            return token
+        }
+        return r.URL.Query().Get("token")
+    },
+    
+    TenantExtractor: func(r *http.Request) uint {
+        // Extract tenant from subdomain
+        host := r.Host
+        if strings.Contains(host, ".") {
+            subdomain := strings.Split(host, ".")[0]
+            return getTenantIDBySubdomain(subdomain)
+        }
+        return 0
+    },
+    
+    ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error, statusCode int) {
+        // Custom error response format
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(statusCode)
+        json.NewEncoder(w).Encode(map[string]interface{}{
+            "success": false,
+            "error": err.Error(),
+            "code": statusCode,
+            "timestamp": time.Now().UTC(),
+        })
+    },
+    
+    SkipAuth: func(r *http.Request) bool {
+        // Skip auth for health checks, webhooks, etc.
+        return r.URL.Path == "/health" || 
+               r.URL.Path == "/webhooks/stripe" ||
+               strings.HasPrefix(r.URL.Path, "/public/")
+    },
+}
+
+r.Use(authService.RequireAuth(config))
+```
+
+### Context Helper Functions
+
+Extract authenticated user and tenant data from request context:
+
+```go
+func getUserProfile(w http.ResponseWriter, r *http.Request) {
+    // Get authenticated user from context
+    user, ok := auth.GetUserFromContext(r)
+    if !ok {
+        http.Error(w, "User not found in context", http.StatusInternalServerError)
+        return
+    }
+    
+    // Get tenant from context (if using tenant middleware)
+    tenant, ok := auth.GetTenantFromContext(r)
+    if ok {
+        log.Printf("User %d accessing tenant %s", user.ID, tenant.Name)
+    }
+    
+    // Or just get tenant ID
+    if tenantID, ok := auth.GetTenantIDFromContext(r); ok {
+        log.Printf("User %d in tenant %d", user.ID, tenantID)
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(user)
+}
+
+// Panic-style helpers for when you're certain context is set
+func adminDashboard(w http.ResponseWriter, r *http.Request) {
+    user := auth.MustGetUserFromContext(r)    // Panics if not found
+    tenant := auth.MustGetTenantFromContext(r) // Panics if not found
+    
+    // Handle admin dashboard logic...
+}
+```
+
+### Middleware Chaining
+
+```go
+// Chain multiple middleware together
+r.Group(func(r chi.Router) {
+    r.Use(authService.Chain(
+        authService.RequireAuth(),
+        authService.RequireTenant(),
+        authService.RequireRole("admin", "manager"),
+    ))
+    
+    r.Get("/management", managementPanel)
+})
+
+// Or use convenience combinations
+r.Group(func(r chi.Router) {
+    // Combines auth + role checking
+    r.Use(authService.RequireAuthAndRole("admin"))
+    r.Get("/admin", adminPanel)
+})
+
+r.Group(func(r chi.Router) {
+    // Combines auth + permission checking
+    r.Use(authService.RequireAuthAndPermission("reports.view"))
+    r.Get("/reports", viewReports)
+})
+
+r.Group(func(r chi.Router) {
+    // Combines auth + tenant checking
+    r.Use(authService.RequireAuthAndTenant(tenantID))
+    r.Get("/tenant-data", getTenantData)
+})
+```
+
+### Available Middleware Functions
+
+| Middleware | Purpose | Usage |
+|------------|---------|-------|
+| `RequireAuth()` | Basic authentication | Validates JWT token |
+| `RequireRole(roles...)` | Role-based protection | Check user has any of the specified roles |
+| `RequireRoleInTenant(tenantID, roles...)` | Tenant-specific role protection | Check role in specific tenant |
+| `RequirePermission(permissions...)` | Permission-based protection | Check user has all specified permissions |
+| `RequirePermissionInTenant(tenantID, permissions...)` | Tenant-specific permission protection | Check permissions in specific tenant |
+| `RequireTenant(tenantID...)` | Tenant membership validation | Ensure user belongs to tenant |
+| `Chain(middlewares...)` | Combine multiple middleware | Execute middleware in sequence |
+
+### Convenience Combinations
+
+| Middleware | Combines |
+|------------|----------|
+| `RequireAuthAndRole(roles...)` | `RequireAuth()` + `RequireRole()` |
+| `RequireAuthAndPermission(permissions...)` | `RequireAuth()` + `RequirePermission()` |
+| `RequireAuthAndTenant(tenantID...)` | `RequireAuth()` + `RequireTenant()` |
+| `RequireAuthRoleAndTenant(tenantID, roles...)` | `RequireAuth()` + `RequireRoleInTenant()` |
+| `RequireAuthPermissionAndTenant(tenantID, permissions...)` | `RequireAuth()` + `RequirePermissionInTenant()` |
 
 ## 📚 Dependencies
 

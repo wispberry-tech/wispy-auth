@@ -166,32 +166,3 @@ func (a *AuthService) AssignDefaultPermissions(tenantID uint) error {
 	return nil
 }
 
-// MiddlewareConfig holds configuration for auth middleware
-type MiddlewareConfig struct {
-	RequiredPermission string
-	TenantIDHeader     string // Header to get tenant ID from (e.g., "X-Tenant-ID")
-	TenantSlugHeader   string // Header to get tenant slug from (e.g., "X-Tenant-Slug")
-	DefaultTenantID    uint   // Fallback tenant ID if not found in headers
-}
-
-// AuthMiddleware creates a middleware function that checks user permissions
-func (a *AuthService) AuthMiddleware(config MiddlewareConfig) func(next func(userID, tenantID uint)) func(userID uint) {
-	return func(next func(userID, tenantID uint)) func(userID uint) {
-		return func(userID uint) {
-			tenantID := config.DefaultTenantID
-			
-			// In a real HTTP handler, you would extract tenant ID from request headers
-			// This is a simplified example
-			
-			if config.RequiredPermission != "" {
-				hasPermission, err := a.storage.UserHasPermission(userID, tenantID, config.RequiredPermission)
-				if err != nil || !hasPermission {
-					// Handle permission denied
-					return
-				}
-			}
-			
-			next(userID, tenantID)
-		}
-	}
-}

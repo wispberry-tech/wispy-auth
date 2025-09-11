@@ -1,13 +1,10 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -27,14 +24,17 @@ func main() {
 	// Initialize email service
 	emailService := NewEmailService()
 
-	// Initialize auth service with enhanced security
+	// Initialize auth service with enhanced security and built-in email integration
 	cfg := auth.Config{
 		DatabaseDSN: os.Getenv("DATABASE_URL"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
-		
+
+		// Built-in email service integration - configured once, works everywhere!
+		EmailService: emailService,
+
 		// Use default storage configuration
 		StorageConfig: auth.DefaultStorageConfig(),
-		
+
 		// Enhanced security configuration
 		SecurityConfig: auth.SecurityConfig{
 			// Password policy
@@ -43,28 +43,28 @@ func main() {
 			RequireLowercase:    true,
 			RequireNumbers:      true,
 			RequireSpecialChars: false,
-			
+
 			// Login protection
-			MaxLoginAttempts:     5,
-			LoginLockoutDuration: 15 * time.Minute,
-			
+			MaxLoginAttempts:     7,
+			LoginLockoutDuration: 60 * time.Minute,
+
 			// Session security
-			SessionTimeout:       24 * time.Hour,
-			MaxActiveSessions:    5,
-			
+			SessionTimeout:    24 * time.Hour,
+			MaxActiveSessions: 5,
+
 			// Email verification
 			RequireEmailVerification: true,
 			EmailVerificationExpiry:  24 * time.Hour,
-			
+
 			// Password reset
 			PasswordResetExpiry: 1 * time.Hour,
-			
+
 			// Rate limiting
 			EnableRateLimiting:   true,
 			RateLimitWindow:      1 * time.Minute,
 			RateLimitMaxRequests: 60,
 		},
-		
+
 		// OAuth providers
 		OAuthProviders: map[string]auth.OAuthProviderConfig{
 			"google": {
@@ -98,7 +98,7 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
-	
+
 	// CORS configuration
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:3001"}, // Add your frontend URLs
@@ -109,30 +109,135 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	// Auth routes
-	r.Route("/auth", func(r chi.Router) {
-		r.Post("/signup", handleSignUp(authService, emailService))
-		r.Post("/signin", handleSignIn(authService, emailService))
-		r.Get("/validate", handleValidate(authService))
-		r.Post("/forgot-password", handleForgotPassword(authService, emailService))
-		r.Post("/reset-password", handleResetPassword(authService))
-		r.Post("/verify-email", handleVerifyEmail(authService))
-		
-		// Protected routes
-		r.Group(func(r chi.Router) {
-			r.Use(authMiddleware(authService))
-			r.Post("/resend-verification", handleResendVerification(authService, emailService))
-			r.Get("/sessions", handleGetSessions(authService))
-			r.Delete("/sessions/{sessionID}", handleRevokeSession(authService))
-			r.Post("/logout-all", handleRevokeAllSessions(authService))
+	// Mount auth routes with the new simplified API - maximum control & DX!
+	r.Route("/api/auth", func(r chi.Router) {
+		// Public routes - single API, maximum simplicity!
+		r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
+			result := authService.SignUpHandler(r)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
 		})
 		
-		// OAuth routes
-		r.Get("/oauth", handleOAuth(authService))
-		r.Get("/oauth/callback", handleOAuthCallback(authService))
+		r.Post("/signin", func(w http.ResponseWriter, r *http.Request) {
+			result := authService.SignInHandler(r)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
 		
-		// Utility routes
-		r.Get("/providers", handleGetProviders())
+		r.Get("/validate", func(w http.ResponseWriter, r *http.Request) {
+			result := authService.ValidateHandler(r)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
+		
+		r.Post("/forgot-password", func(w http.ResponseWriter, r *http.Request) {
+			result := authService.ForgotPasswordHandler(r)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
+		
+		r.Post("/reset-password", func(w http.ResponseWriter, r *http.Request) {
+			result := authService.ResetPasswordHandler(r)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
+		
+		r.Post("/verify-email", func(w http.ResponseWriter, r *http.Request) {
+			result := authService.VerifyEmailHandler(r)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
+
+		// OAuth routes
+		r.Get("/oauth", func(w http.ResponseWriter, r *http.Request) {
+			provider := r.URL.Query().Get("provider")
+			result := authService.OAuthHandler(r, provider)
+			if result.URL != "" {
+				http.Redirect(w, r, result.URL, http.StatusTemporaryRedirect)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
+		
+		r.Get("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+			provider := r.URL.Query().Get("provider")
+			code := r.URL.Query().Get("code")
+			result := authService.OAuthCallbackHandler(r, provider, code)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(result.StatusCode)
+			json.NewEncoder(w).Encode(result)
+		})
+		
+		r.Get("/providers", func(w http.ResponseWriter, r *http.Request) {
+			result := authService.GetProvidersHandler(r)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(result)
+		})
+
+		// Protected routes - use auth middleware
+		r.Group(func(r chi.Router) {
+			r.Use(authService.RequireAuth())
+			
+			r.Post("/resend-verification", func(w http.ResponseWriter, r *http.Request) {
+				result := authService.ResendVerificationHandler(r)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(result.StatusCode)
+				json.NewEncoder(w).Encode(result)
+			})
+			
+			r.Get("/sessions", func(w http.ResponseWriter, r *http.Request) {
+				result := authService.GetSessionsHandler(r)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(result.StatusCode)
+				json.NewEncoder(w).Encode(result)
+			})
+			
+			r.Delete("/sessions/{sessionID}", func(w http.ResponseWriter, r *http.Request) {
+				sessionID := chi.URLParam(r, "sessionID")
+				result := authService.RevokeSessionHandler(r, sessionID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(result.StatusCode)
+				json.NewEncoder(w).Encode(result)
+			})
+			
+			r.Post("/logout-all", func(w http.ResponseWriter, r *http.Request) {
+				result := authService.RevokeAllSessionsHandler(r)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(result.StatusCode)
+				json.NewEncoder(w).Encode(result)
+			})
+		})
+	})
+
+	// Example of custom routes with middleware
+	r.Group(func(r chi.Router) {
+		r.Use(authService.RequireAuth())
+		
+		r.Get("/api/profile", func(w http.ResponseWriter, r *http.Request) {
+			user := auth.MustGetUserFromContext(r)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(user)
+		})
+
+		// Admin only routes
+		r.Group(func(r chi.Router) {
+			r.Use(authService.RequireRole("admin"))
+			
+			r.Get("/api/admin/users", func(w http.ResponseWriter, r *http.Request) {
+				// Admin functionality here
+				json.NewEncoder(w).Encode(map[string]string{
+					"message": "Admin access granted!",
+				})
+			})
+		})
 	})
 
 	// Health check
@@ -153,65 +258,8 @@ func main() {
 	log.Printf("Server starting on :%s", port)
 	log.Printf("Health check: http://localhost:%s/health", port)
 	log.Printf("Auth endpoints: http://localhost:%s/auth/*", port)
-	
+
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }
 
-// Helper function to extract IP address
-func extractIP(r *http.Request) string {
-	// Check X-Forwarded-For header first
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		// X-Forwarded-For can contain multiple IPs, take the first one
-		ips := strings.Split(forwarded, ",")
-		return strings.TrimSpace(ips[0])
-	}
-	
-	// Check X-Real-IP header
-	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-		return realIP
-	}
-	
-	// Fall back to RemoteAddr
-	ip := r.RemoteAddr
-	if colon := strings.LastIndex(ip, ":"); colon != -1 {
-		ip = ip[:colon]
-	}
-	return ip
-}
 
-// Helper function to extract user from token
-func extractUserFromToken(authService *auth.AuthService, token string) (*auth.User, error) {
-	response := authService.HandleValidate(token)
-	if response.Error != "" {
-		return nil, errors.New(response.Error)
-	}
-	return response.User, nil
-}
-
-// Middleware for authentication
-func authMiddleware(authService *auth.AuthService) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := r.Header.Get("Authorization")
-			if token == "" {
-				http.Error(w, "Authorization header required", http.StatusUnauthorized)
-				return
-			}
-
-			// Remove Bearer prefix if present
-			if strings.HasPrefix(token, "Bearer ") {
-				token = token[7:]
-			}
-
-			response := authService.HandleValidate(token)
-			if response.Error != "" {
-				http.Error(w, response.Error, response.StatusCode)
-				return
-			}
-
-			// Add user to request context (optional)
-			ctx := context.WithValue(r.Context(), userContextKey, response.User)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
-	}
-}

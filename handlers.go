@@ -1,109 +1,177 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 )
 
 // Request and Response Types
+
+// SignUpRequest represents a user registration request with required fields
 type SignUpRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
+	Email    string `json:"email"`    // User's email address
+	Password string `json:"password"` // User's password (plaintext)
+	Name     string `json:"name"`     // User's display name
 }
 
+// SignUpResponse represents the response for user registration
 type SignUpResponse struct {
-	Token                      string `json:"token"`
-	User                       *User  `json:"user"`
-	RequiresEmailVerification bool   `json:"requires_email_verification"`
-	StatusCode                int    `json:"-"`
-	Error                     string `json:"error,omitempty"`
+	Token                     string `json:"token"`                       // JWT token for authentication
+	User                      *User  `json:"user"`                        // Created user information
+	RequiresEmailVerification bool   `json:"requires_email_verification"` // Whether email verification is required
+	StatusCode                int    `json:"-"`                           // HTTP status code (not serialized)
+	Error                     string `json:"error,omitempty"`             // Error message if any
 }
 
+// SignInRequest represents a user login request
 type SignInRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string `json:"email"`    // User's email address
+	Password string `json:"password"` // User's password (plaintext)
 }
 
+// SignInResponse represents the response for user authentication
 type SignInResponse struct {
-	Token            string     `json:"token"`
-	User             *User      `json:"user"`
-	SessionID        string     `json:"session_id"`
-	Requires2FA      bool       `json:"requires_2fa"`
-	SessionExpiresAt time.Time  `json:"session_expires_at"`
-	StatusCode       int        `json:"-"`
-	Error            string     `json:"error,omitempty"`
+	Token            string    `json:"token"`              // JWT token for authentication
+	User             *User     `json:"user"`               // Authenticated user information
+	SessionID        string    `json:"session_id"`         // Session identifier
+	Requires2FA      bool      `json:"requires_2fa"`       // Whether two-factor authentication is required
+	SessionExpiresAt time.Time `json:"session_expires_at"` // When the session expires
+	StatusCode       int       `json:"-"`                  // HTTP status code (not serialized)
+	Error            string    `json:"error,omitempty"`    // Error message if any
 }
 
+// ValidateResponse represents the response for token validation
 type ValidateResponse struct {
-	User       *User  `json:"user"`
-	StatusCode int    `json:"-"`
-	Error      string `json:"error,omitempty"`
+	User       *User  `json:"user"`            // Validated user information
+	StatusCode int    `json:"-"`               // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"` // Error message if any
 }
 
+// OAuthResponse represents the response for OAuth operations
 type OAuthResponse struct {
-	URL        string `json:"url,omitempty"`
-	Token      string `json:"token,omitempty"`
-	User       *User  `json:"user,omitempty"`
-	StatusCode int    `json:"-"`
-	Error      string `json:"error,omitempty"`
+	URL        string `json:"url,omitempty"`         // OAuth authorization URL (for initial request)
+	Token      string `json:"token,omitempty"`       // JWT token (for callback)
+	User       *User  `json:"user,omitempty"`        // User information (for callback)
+	IsNewUser  bool   `json:"is_new_user,omitempty"` // Whether this is a new user registration
+	StatusCode int    `json:"-"`                     // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"`       // Error message if any
 }
 
+// ForgotPasswordRequest represents a password reset request
 type ForgotPasswordRequest struct {
-	Email string `json:"email"`
+	Email string `json:"email"` // User's email address
 }
 
+// ForgotPasswordResponse represents the response for password reset initiation
 type ForgotPasswordResponse struct {
-	Message    string `json:"message"`
-	StatusCode int    `json:"-"`
-	Error      string `json:"error,omitempty"`
+	Message    string `json:"message"`         // Success message
+	StatusCode int    `json:"-"`               // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"` // Error message if any
 }
 
+// ResetPasswordRequest represents a password reset confirmation request
 type ResetPasswordRequest struct {
-	Token       string `json:"token"`
-	NewPassword string `json:"new_password"`
+	Token       string `json:"token"`        // Password reset token
+	NewPassword string `json:"new_password"` // New password (plaintext)
 }
 
+// ResetPasswordResponse represents the response for password reset completion
 type ResetPasswordResponse struct {
-	Message    string `json:"message"`
-	StatusCode int    `json:"-"`
-	Error      string `json:"error,omitempty"`
+	Message    string `json:"message"`         // Success message
+	StatusCode int    `json:"-"`               // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"` // Error message if any
 }
 
+// EmailVerificationResponse represents the response for email verification operations
 type EmailVerificationResponse struct {
-	Message    string `json:"message"`
-	StatusCode int    `json:"-"`
-	Error      string `json:"error,omitempty"`
+	Message    string `json:"message"`         // Success message
+	StatusCode int    `json:"-"`               // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"` // Error message if any
 }
 
+// VerifyEmailRequest represents an email verification request
 type VerifyEmailRequest struct {
-	Token string `json:"token"`
+	Token string `json:"token"` // Email verification token
 }
 
+// SessionsResponse represents the response for user session listing
 type SessionsResponse struct {
-	Sessions   []*Session `json:"sessions"`
-	StatusCode int        `json:"-"`
-	Error      string     `json:"error,omitempty"`
+	Sessions   []*Session `json:"sessions"`        // List of user sessions
+	StatusCode int        `json:"-"`               // HTTP status code (not serialized)
+	Error      string     `json:"error,omitempty"` // Error message if any
 }
 
+// RevokeSessionResponse represents the response for session revocation operations
 type RevokeSessionResponse struct {
-	Message    string `json:"message"`
-	StatusCode int    `json:"-"`
-	Error      string `json:"error,omitempty"`
+	Message    string `json:"message"`         // Success message
+	StatusCode int    `json:"-"`               // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"` // Error message if any
 }
 
-// Handler Methods that return response types
-func (a *AuthService) HandleSignUp(request SignUpRequest, ip, userAgent string) SignUpResponse {
-	// Validate required fields
-	if request.Email == "" || request.Password == "" || request.Name == "" {
+// HTTP request types with validation
+type SignUpRequestHTTP struct {
+	Email    string `json:"email" validate:"required,email,max=255"`
+	Password string `json:"password" validate:"required,min=8,max=128"`
+	Name     string `json:"name" validate:"required,min=2,max=100"`
+}
+
+type SignInRequestHTTP struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
+}
+
+type ForgotPasswordRequestHTTP struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+type ResetPasswordRequestHTTP struct {
+	Token       string `json:"token" validate:"required"`
+	NewPassword string `json:"new_password" validate:"required,min=8,max=128"`
+}
+
+type VerifyEmailRequestHTTP struct {
+	Token string `json:"token" validate:"required"`
+}
+
+// SignUp processes user registration from HTTP request and returns a structured response.
+// It parses and validates the request body, creates the user account, establishes a session,
+// sends verification/welcome emails if configured, and returns the result.
+//
+// Usage:
+//
+//	r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.SignUp(r)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Request body should contain: {"email": "...", "password": "...", "name": "..."}
+// Returns SignUpResponse with token, user data, verification status, and any errors
+func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
+	var req SignUpRequestHTTP
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return SignUpResponse{
-			StatusCode: 400,
-			Error:      "Email, password, and name are required",
+			Error:      "Invalid request body",
+			StatusCode: http.StatusBadRequest,
 		}
 	}
 
-	user, err := a.SignUpWithTenant(request.Email, request.Password, request.Name, 0)
+	if err := a.validator.Struct(req); err != nil {
+		return SignUpResponse{
+			Error:      "Validation failed",
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+
+	// Extract client information
+	ip := extractIP(r)
+	userAgent := r.Header.Get("User-Agent")
+
+	// Create user account
+	user, err := a.SignUpWithTenant(req.Email, req.Password, req.Name, 0)
 	if err != nil {
 		if errors.Is(err, ErrUserExists) {
 			return SignUpResponse{
@@ -132,24 +200,62 @@ func (a *AuthService) HandleSignUp(request SignUpRequest, ip, userAgent string) 
 		}
 	}
 
-	return SignUpResponse{
+	// Build response
+	response := SignUpResponse{
 		Token:                     session.Token,
 		User:                      user,
 		RequiresEmailVerification: a.securityConfig.RequireEmailVerification && !user.EmailVerified,
 		StatusCode:                200,
 	}
+
+	// Send verification email if needed
+	if response.RequiresEmailVerification && a.emailService != nil {
+		go a.emailService.SendVerificationEmail(response.User.Email, response.User.VerificationToken)
+	}
+
+	// Send welcome email
+	if a.emailService != nil {
+		go a.emailService.SendWelcomeEmail(response.User.Email, response.User.Name)
+	}
+
+	return response
 }
 
-func (a *AuthService) HandleSignIn(request SignInRequest, ip, userAgent string) SignInResponse {
-	// Validate required fields
-	if request.Email == "" || request.Password == "" {
+// SignInHandler processes user authentication from HTTP request and returns a structured response.
+// It parses the request body, validates credentials, checks account status (locked, suspended),
+// creates a new session, and returns authentication tokens with session details.
+//
+// Usage:
+//
+//	r.Post("/signin", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.SignInHandler(r)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Request body should contain: {"email": "...", "password": "..."}
+// Returns SignInResponse with token, user data, session info, 2FA status, and any errors
+func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
+	var req SignInRequestHTTP
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return SignInResponse{
-			StatusCode: 400,
-			Error:      "Email and password are required",
+			Error:      "Invalid request body",
+			StatusCode: http.StatusBadRequest,
 		}
 	}
 
-	user, err := a.SignInWithContext(request.Email, request.Password, ip, userAgent, "")
+	if err := a.validator.Struct(req); err != nil {
+		return SignInResponse{
+			Error:      "Validation failed",
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+
+	// Extract client information
+	ip := extractIP(r)
+	userAgent := r.Header.Get("User-Agent")
+
+	user, err := a.SignInWithContext(req.Email, req.Password, ip, userAgent, "")
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrInvalidCredentials) {
 			return SignInResponse{
@@ -161,8 +267,8 @@ func (a *AuthService) HandleSignIn(request SignInRequest, ip, userAgent string) 
 				StatusCode: 423,
 				Error:      err.Error(),
 			}
-		} else if strings.Contains(err.Error(), "account is suspended") || 
-			     strings.Contains(err.Error(), "account is inactive") {
+		} else if strings.Contains(err.Error(), "account is suspended") ||
+			strings.Contains(err.Error(), "account is inactive") {
 			return SignInResponse{
 				StatusCode: 403,
 				Error:      err.Error(),
@@ -199,17 +305,27 @@ func (a *AuthService) HandleSignIn(request SignInRequest, ip, userAgent string) 
 	}
 }
 
-func (a *AuthService) HandleValidate(token string) ValidateResponse {
+// ValidateHandler validates a JWT token from HTTP request and returns user information.
+// It extracts the token from Authorization header, removes Bearer prefix if present,
+// and validates the user session to ensure the token is still valid.
+//
+// Usage:
+//
+//	r.Get("/validate", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.ValidateHandler(r)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Expects Authorization header: "Bearer <jwt-token>"
+// Returns ValidateResponse with user data and any validation errors
+func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
+	token := extractTokenFromRequest(r)
 	if token == "" {
 		return ValidateResponse{
 			StatusCode: 401,
-			Error:      "Authorization token required",
+			Error:      "Authorization header required",
 		}
-	}
-
-	// Remove "Bearer " prefix if present
-	if after, ok := strings.CutPrefix(token, "Bearer "); ok {
-		token = after
 	}
 
 	user, err := a.ValidateUser(token)
@@ -226,103 +342,85 @@ func (a *AuthService) HandleValidate(token string) ValidateResponse {
 	}
 }
 
-func (a *AuthService) HandleGetOAuth(provider string) OAuthResponse {
-	if provider == "" {
-		return OAuthResponse{
-			StatusCode: 400,
-			Error:      "Provider parameter required",
-		}
-	}
-
-	state := generateRandomPassword()
-	url, err := a.GetOAuthURL(provider, state)
-	if err != nil {
-		return OAuthResponse{
-			StatusCode: 400,
-			Error:      "Invalid OAuth provider",
-		}
-	}
-
-	return OAuthResponse{
-		URL:        url,
-		StatusCode: 307, // Temporary Redirect
-	}
-}
-
-func (a *AuthService) HandleOAuthCallbackRequest(provider, code string) OAuthResponse {
-	if provider == "" {
-		return OAuthResponse{
-			StatusCode: 400,
-			Error:      "Provider parameter required",
-		}
-	}
-
-	if code == "" {
-		return OAuthResponse{
-			StatusCode: 400,
-			Error:      "Code not provided",
-		}
-	}
-
-	user, err := a.processOAuthCallback(provider, code)
-	if err != nil {
-		return OAuthResponse{
-			StatusCode: 500,
-			Error:      "OAuth failed: " + err.Error(),
-		}
-	}
-
-	token, err := a.GenerateToken(user)
-	if err != nil {
-		return OAuthResponse{
-			StatusCode: 500,
-			Error:      "Failed to generate token",
-		}
-	}
-
-	return OAuthResponse{
-		Token:      token,
-		User:       user,
-		StatusCode: 200,
-	}
-}
-
-// processOAuthCallback is the internal method to handle OAuth callback
-func (a *AuthService) processOAuthCallback(provider, code string) (*User, error) {
-	// This would contain the actual OAuth processing logic
-	// For now, returning an error as this needs to be implemented
-	return nil, errors.New("OAuth callback processing not implemented")
-}
-
-// Password Reset Handlers
-func (a *AuthService) HandleForgotPassword(request ForgotPasswordRequest) ForgotPasswordResponse {
-	if request.Email == "" {
+// ForgotPasswordHandler initiates password reset process from HTTP request with email enumeration protection.
+// It always returns success regardless of whether the email exists to prevent
+// information disclosure attacks while still processing valid reset requests.
+//
+// Usage:
+//
+//	r.Post("/forgot-password", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.ForgotPasswordHandler(r)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Request body should contain: {"email": "..."}
+// Returns ForgotPasswordResponse with success message (always success for security)
+func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordResponse {
+	var req ForgotPasswordRequestHTTP
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return ForgotPasswordResponse{
-			StatusCode: 400,
-			Error:      "Email is required",
+			Error:      "Invalid request body",
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+
+	if err := a.validator.Struct(req); err != nil {
+		return ForgotPasswordResponse{
+			Error:      "Validation failed",
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+
+	// Process request and send email if configured
+	err := a.InitiatePasswordReset(req.Email)
+
+	// Send reset email if successful and user exists
+	if err == nil && a.emailService != nil {
+		user, getUserErr := a.storage.GetUserByEmailAnyProvider(req.Email)
+		if getUserErr == nil && user != nil && user.PasswordResetToken != "" {
+			go a.emailService.SendPasswordResetEmail(user.Email, user.PasswordResetToken)
 		}
 	}
 
 	// Always return success to prevent email enumeration
-	if err := a.InitiatePasswordReset(request.Email); err != nil {
-		// Log error but don't expose it to prevent information leakage
-	}
-
 	return ForgotPasswordResponse{
-		Message:    "If the email exists, a password reset link has been sent",
-		StatusCode: 200,
+		Message:    "If your email is registered, you will receive a password reset link.",
+		StatusCode: http.StatusOK,
 	}
 }
 
-func (a *AuthService) HandleResetPassword(request ResetPasswordRequest) ResetPasswordResponse {
-	if request.Token == "" || request.NewPassword == "" {
+// ResetPasswordHandler completes password reset from HTTP request using a valid token.
+// It validates the reset token, checks password strength requirements,
+// and updates the user's password if all validations pass.
+//
+// Usage:
+//
+//	r.Post("/reset-password", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.ResetPasswordHandler(r)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Request body should contain: {"token": "...", "new_password": "..."}
+// Returns ResetPasswordResponse with success message and any validation errors
+func (a *AuthService) ResetPasswordHandler(r *http.Request) ResetPasswordResponse {
+	var req ResetPasswordRequestHTTP
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return ResetPasswordResponse{
-			StatusCode: 400,
-			Error:      "Token and new password are required",
+			Error:      "Invalid request body",
+			StatusCode: http.StatusBadRequest,
 		}
 	}
 
-	if err := a.ResetPassword(request.Token, request.NewPassword); err != nil {
+	if err := a.validator.Struct(req); err != nil {
+		return ResetPasswordResponse{
+			Error:      "Validation failed",
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+
+	if err := a.ResetPassword(req.Token, req.NewPassword); err != nil {
 		if strings.Contains(err.Error(), "invalid reset token") || strings.Contains(err.Error(), "expired") {
 			return ResetPasswordResponse{
 				StatusCode: 400,
@@ -347,18 +445,70 @@ func (a *AuthService) HandleResetPassword(request ResetPasswordRequest) ResetPas
 	}
 }
 
-// Email Verification Handlers
-func (a *AuthService) HandleResendVerification(token string) EmailVerificationResponse {
-	if token == "" {
+// VerifyEmailHandler processes email verification from HTTP request using a verification token.
+// It validates the verification token and marks the user's email as verified
+// if the token is valid and not expired.
+//
+// Usage:
+//
+//	r.Post("/verify-email", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.VerifyEmailHandler(r)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Request body should contain: {"token": "..."}
+// Returns EmailVerificationResponse with success message and any validation errors
+func (a *AuthService) VerifyEmailHandler(r *http.Request) EmailVerificationResponse {
+	var req VerifyEmailRequestHTTP
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return EmailVerificationResponse{
-			StatusCode: 401,
-			Error:      "Authorization token required",
+			Error:      "Invalid request body",
+			StatusCode: http.StatusBadRequest,
 		}
 	}
 
-	// Remove "Bearer " prefix if present
-	if after, ok := strings.CutPrefix(token, "Bearer "); ok {
-		token = after
+	if err := a.validator.Struct(req); err != nil {
+		return EmailVerificationResponse{
+			Error:      "Validation failed",
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+
+	if err := a.VerifyEmail(req.Token); err != nil {
+		return EmailVerificationResponse{
+			StatusCode: 400,
+			Error:      "Invalid verification token",
+		}
+	}
+
+	return EmailVerificationResponse{
+		Message:    "Email verified successfully",
+		StatusCode: 200,
+	}
+}
+
+// ResendVerificationHandler resends email verification for authenticated users from HTTP request.
+// It validates the user's session token, checks if email is already verified,
+// and triggers a new verification email if needed.
+//
+// Usage:
+//
+//	r.Post("/resend-verification", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.ResendVerificationHandler(r)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Expects Authorization header: "Bearer <jwt-token>"
+// Returns EmailVerificationResponse with success message and any errors
+func (a *AuthService) ResendVerificationHandler(r *http.Request) EmailVerificationResponse {
+	token := extractTokenFromRequest(r)
+	if token == "" {
+		return EmailVerificationResponse{
+			StatusCode: 401,
+			Error:      "Authorization header required",
+		}
 	}
 
 	// Get session from token
@@ -384,45 +534,46 @@ func (a *AuthService) HandleResendVerification(token string) EmailVerificationRe
 		}
 	}
 
+	// Send verification email if configured
+	if a.emailService != nil {
+		user, ok := GetUserFromContext(r)
+		if !ok {
+			// Get user from session if not in context
+			if user, err := a.storage.GetUserByID(session.UserID); err == nil && user.VerificationToken != "" {
+				go a.emailService.SendVerificationEmail(user.Email, user.VerificationToken)
+			}
+		} else if user.VerificationToken != "" {
+			go a.emailService.SendVerificationEmail(user.Email, user.VerificationToken)
+		}
+	}
+
 	return EmailVerificationResponse{
 		Message:    "Verification email sent",
 		StatusCode: 200,
 	}
 }
 
-func (a *AuthService) HandleVerifyEmail(request VerifyEmailRequest) EmailVerificationResponse {
-	if request.Token == "" {
-		return EmailVerificationResponse{
-			StatusCode: 400,
-			Error:      "Verification token is required",
-		}
-	}
-
-	if err := a.VerifyEmail(request.Token); err != nil {
-		return EmailVerificationResponse{
-			StatusCode: 400,
-			Error:      "Invalid verification token",
-		}
-	}
-
-	return EmailVerificationResponse{
-		Message:    "Email verified successfully",
-		StatusCode: 200,
-	}
-}
-
-// Session Management Handlers
-func (a *AuthService) HandleGetSessions(token string) SessionsResponse {
+// GetSessionsHandler retrieves all active sessions for the authenticated user from HTTP request.
+// It validates the user's token, extracts the user ID from the session,
+// and returns a list of all active sessions with device and location information.
+//
+// Usage:
+//
+//	r.Get("/sessions", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.GetSessionsHandler(r)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Expects Authorization header: "Bearer <jwt-token>"
+// Returns SessionsResponse with list of sessions and any errors
+func (a *AuthService) GetSessionsHandler(r *http.Request) SessionsResponse {
+	token := extractTokenFromRequest(r)
 	if token == "" {
 		return SessionsResponse{
 			StatusCode: 401,
-			Error:      "Authorization token required",
+			Error:      "Authorization header required",
 		}
-	}
-
-	// Remove "Bearer " prefix if present
-	if after, ok := strings.CutPrefix(token, "Bearer "); ok {
-		token = after
 	}
 
 	// Get session from token
@@ -448,7 +599,21 @@ func (a *AuthService) HandleGetSessions(token string) SessionsResponse {
 	}
 }
 
-func (a *AuthService) HandleRevokeSession(sessionID string) RevokeSessionResponse {
+// RevokeSessionHandler revokes a specific user session by ID from HTTP request.
+// It terminates the specified session, making the associated token invalid.
+// This is useful for logging out from specific devices or browsers.
+//
+// Usage:
+//
+//	r.Delete("/sessions/{sessionID}", func(w http.ResponseWriter, r *http.Request) {
+//	    sessionID := chi.URLParam(r, "sessionID")
+//	    result := authService.RevokeSessionHandler(r, sessionID)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Returns RevokeSessionResponse with success message and any errors
+func (a *AuthService) RevokeSessionHandler(r *http.Request, sessionID string) RevokeSessionResponse {
 	if sessionID == "" {
 		return RevokeSessionResponse{
 			StatusCode: 400,
@@ -476,17 +641,27 @@ func (a *AuthService) HandleRevokeSession(sessionID string) RevokeSessionRespons
 	}
 }
 
-func (a *AuthService) HandleRevokeAllSessions(token string) RevokeSessionResponse {
+// RevokeAllSessionsHandler revokes all sessions for the authenticated user from HTTP request.
+// It validates the user's token, extracts the user ID, and terminates all
+// active sessions for that user. This is useful for "log out everywhere" functionality.
+//
+// Usage:
+//
+//	r.Delete("/sessions", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.RevokeAllSessionsHandler(r)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Expects Authorization header: "Bearer <jwt-token>"
+// Returns RevokeSessionResponse with success message and any errors
+func (a *AuthService) RevokeAllSessionsHandler(r *http.Request) RevokeSessionResponse {
+	token := extractTokenFromRequest(r)
 	if token == "" {
 		return RevokeSessionResponse{
 			StatusCode: 401,
-			Error:      "Authorization token required",
+			Error:      "Authorization header required",
 		}
-	}
-
-	// Remove "Bearer " prefix if present
-	if after, ok := strings.CutPrefix(token, "Bearer "); ok {
-		token = after
 	}
 
 	// Get session from token
@@ -509,4 +684,144 @@ func (a *AuthService) HandleRevokeAllSessions(token string) RevokeSessionRespons
 		Message:    "All sessions revoked successfully",
 		StatusCode: 200,
 	}
+}
+
+// OAuthHandler initiates OAuth flow by generating authorization URL from HTTP request.
+// It creates a state parameter for security and returns the OAuth provider's
+// authorization URL for redirecting the user to complete authentication.
+//
+// Usage:
+//
+//	r.Get("/oauth/{provider}", func(w http.ResponseWriter, r *http.Request) {
+//	    provider := chi.URLParam(r, "provider")
+//	    result := authService.OAuthHandler(r, provider)
+//	    if result.URL != "" {
+//	        http.Redirect(w, r, result.URL, http.StatusTemporaryRedirect)
+//	    } else {
+//	        w.WriteHeader(result.StatusCode)
+//	        json.NewEncoder(w).Encode(result)
+//	    }
+//	})
+//
+// Returns OAuthResponse with authorization URL and redirect status
+func (a *AuthService) OAuthHandler(w http.ResponseWriter, r *http.Request, provider string) OAuthResponse {
+	if provider == "" {
+		return OAuthResponse{
+			StatusCode: 400,
+			Error:      "Provider parameter required",
+		}
+	}
+
+	url, csrfToken, err := a.GetOAuthURL(provider, r)
+	if err != nil {
+		return OAuthResponse{
+			StatusCode: 400,
+			Error:      "Invalid OAuth provider",
+		}
+	}
+
+	// Set CSRF cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "_csrf",
+		Value:    csrfToken,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		Path:     "/",
+		MaxAge:   900, // 15 minutes
+	})
+
+	return OAuthResponse{
+		URL:        url,
+		StatusCode: 307, // Temporary Redirect
+	}
+}
+
+// OAuthCallbackHandler processes OAuth callback from HTTP request with authorization code.
+// It exchanges the authorization code for user information, creates or updates
+// the user account, generates authentication tokens, and determines if the user is new.
+//
+// Usage:
+//
+//	r.Get("/oauth/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
+//	    provider := chi.URLParam(r, "provider")
+//	    code := r.URL.Query().Get("code")
+//	    result := authService.OAuthCallbackHandler(r, provider, code)
+//	    w.WriteHeader(result.StatusCode)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Returns OAuthResponse with token, user data, new user status, and any errors
+func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, state string) OAuthResponse {
+	if provider == "" || code == "" || state == "" {
+		return OAuthResponse{
+			StatusCode: 400,
+			Error:      "Provider, code and state parameters required",
+		}
+	}
+
+	// Get CSRF token from cookie
+	csrfCookie, err := r.Cookie("_csrf")
+	if err != nil {
+		return OAuthResponse{
+			StatusCode: 400,
+			Error:      "CSRF cookie not found",
+		}
+	}
+
+	// Validate state and CSRF token
+	if err := a.ValidateOAuthState(state, csrfCookie.Value); err != nil {
+		return OAuthResponse{
+			StatusCode: 400,
+			Error:      err.Error(),
+		}
+	}
+
+	user, err := a.HandleOAuthCallback(provider, code)
+	if err != nil {
+		return OAuthResponse{
+			StatusCode: 500,
+			Error:      "OAuth failed: " + err.Error(),
+		}
+	}
+
+	// Check if user already exists to determine if they're new
+	// We'll consider a user new if they haven't logged in before or recently created
+	isNewUser := user.LastLoginAt == nil || user.CreatedAt.After(user.LastLoginAt.Add(-time.Minute))
+
+	token, err := a.GenerateToken(user)
+	if err != nil {
+		return OAuthResponse{
+			StatusCode: 500,
+			Error:      "Failed to generate token",
+		}
+	}
+
+	// Send welcome email for new users
+	if isNewUser && a.emailService != nil {
+		go a.emailService.SendWelcomeEmail(user.Email, user.Name)
+	}
+
+	return OAuthResponse{
+		Token:      token,
+		User:       user,
+		IsNewUser:  isNewUser,
+		StatusCode: 200,
+	}
+}
+
+// GetProvidersHandler returns the list of configured OAuth providers from HTTP request.
+//
+// Usage:
+//
+//	r.Get("/providers", func(w http.ResponseWriter, r *http.Request) {
+//	    result := authService.GetProvidersHandler(r)
+//	    w.WriteHeader(200)
+//	    json.NewEncoder(w).Encode(result)
+//	})
+//
+// Returns map with available providers list
+func (a *AuthService) GetProvidersHandler(r *http.Request) map[string][]string {
+	providers := a.GetAvailableProviders()
+	return map[string][]string{"providers": providers}
 }

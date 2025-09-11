@@ -21,36 +21,34 @@ services:
       retries: 5
 
   # Auth service
-  auth-service:
-    build: .
-    container_name: nucleus-auth-service
-    ports:
-      - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db?sslmode=disable
-      JWT_SECRET: development-jwt-secret-change-in-production
-      PORT: 8080
-      # Add your OAuth credentials here or use .env file
-      # GOOGLE_CLIENT_ID: your-google-client-id
-      # GOOGLE_CLIENT_SECRET: your-google-client-secret
-    env_file:
-      - .env
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  # auth-service:
+  #   build: .
+  #   container_name: nucleus-auth-service
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     DATABASE_URL: postgresql://auth_user:auth_password@postgres:5432/auth_db?sslmode=disable
+  #     JWT_SECRET: development-jwt-secret-change-in-production
+  #     PORT: 8080
+  #     # Add your OAuth credentials here or use .env file
+  #     # GOOGLE_CLIENT_ID: your-google-client-id
+  #     # GOOGLE_CLIENT_SECRET: your-google-client-secret
+  #   env_file:
+  #     - .env
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
 
 volumes:
   postgres_data:
     driver: local
-  redis_data:
-    driver: local
 
-networks:
-  default:
-    name: nucleus-auth-network
+# networks:
+#   default:
+#     name: nucleus-auth-network

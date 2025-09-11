@@ -14,9 +14,11 @@ import (
 )
 
 func main() {
-	// Load environment variables
+	// Load environment variables from parent directory
 	if err := godotenv.Load("../.env"); err != nil {
-		log.Println("No .env file found, using system environment variables")
+		if err := godotenv.Load("./.env"); err != nil {
+			log.Println("No .env file found, using system environment variables")
+		}
 	}
 
 	dbURL := os.Getenv("DATABASE_URL")
@@ -63,60 +65,78 @@ func createMigrationsTable(db *sql.DB) error {
 }
 
 func runMigrations(db *sql.DB) error {
+	// Get current directory to find SQL files
+	currentDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
 	// Get list of migration files
-	files, err := filepath.Glob("*.sql")
+	pattern := filepath.Join(currentDir, "*.sql")
+	files, err := filepath.Glob(pattern)
 	if err != nil {
 		return fmt.Errorf("failed to list migration files: %w", err)
 	}
 
-	// Sort files to ensure correct execution order
-	sort.Strings(files)
-
+	// Create a map of filename to full path
+	fileMap := make(map[string]string)
+	var filenames []string
 	for _, file := range files {
+		filename := filepath.Base(file)
+		filenames = append(filenames, filename)
+		fileMap[filename] = file
+	}
+
+	// Sort files to ensure correct execution order
+	sort.Strings(filenames)
+
+	for _, filename := range filenames {
+		fullPath := fileMap[filename]
+		
 		// Check if migration has already been run
 		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM migrations WHERE filename = $1", file).Scan(&count)
+		err := db.QueryRow("SELECT COUNT(*) FROM migrations WHERE filename = $1", filename).Scan(&count)
 		if err != nil {
-			return fmt.Errorf("failed to check migration status for %s: %w", file, err)
+			return fmt.Errorf("failed to check migration status for %s: %w", filename, err)
 		}
 
 		if count > 0 {
-			log.Printf("Skipping %s (already executed)", file)
+			log.Printf("Skipping %s (already executed)", filename)
 			continue
 		}
 
 		// Read migration file
-		content, err := ioutil.ReadFile(file)
+		content, err := ioutil.ReadFile(fullPath)
 		if err != nil {
-			return fmt.Errorf("failed to read migration file %s: %w", file, err)
+			return fmt.Errorf("failed to read migration file %s: %w", fullPath, err)
 		}
 
-		log.Printf("Executing migration: %s", file)
+		log.Printf("Executing migration: %s", filename)
 
 		// Execute migration in a transaction
 		tx, err := db.Begin()
 		if err != nil {
-			return fmt.Errorf("failed to begin transaction for %s: %w", file, err)
+			return fmt.Errorf("failed to begin transaction for %s: %w", filename, err)
 		}
 
 		// Execute the migration
 		if _, err := tx.Exec(string(content)); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("failed to execute migration %s: %w", file, err)
+			return fmt.Errorf("failed to execute migration %s: %w", filename, err)
 		}
 
 		// Record the migration as completed
-		if _, err := tx.Exec("INSERT INTO migrations (filename) VALUES ($1)", file); err != nil {
+		if _, err := tx.Exec("INSERT INTO migrations (filename) VALUES ($1)", filename); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("failed to record migration %s: %w", file, err)
+			return fmt.Errorf("failed to record migration %s: %w", filename, err)
 		}
 
 		// Commit the transaction
 		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("failed to commit migration %s: %w", file, err)
+			return fmt.Errorf("failed to commit migration %s: %w", filename, err)
 		}
 
-		log.Printf("Successfully executed: %s", file)
+		log.Printf("Successfully executed: %s", filename)
 	}
 
 	return nil
