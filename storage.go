@@ -146,6 +146,9 @@ type UserColumnMapping struct {
 	ID           string `json:"id"`
 	Email        string `json:"email"`
 	PasswordHash string `json:"password_hash"`
+	Username     string `json:"username"`
+	FirstName    string `json:"first_name"`
+	LastName     string `json:"last_name"`
 	Name         string `json:"name"`
 	AvatarURL    string `json:"avatar_url"`
 	Provider     string `json:"provider"`

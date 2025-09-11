@@ -95,7 +95,7 @@ func (a *AuthService) HandleOAuthCallback(provider, code string) (*User, error) 
 		// Create new user
 		newUser := User{
 			Email:      userEmail,
-			Name:       userName,
+			Username:   userName,
 			Provider:   provider,
 			ProviderID: userInfo.ID,
 			AvatarURL:  avatarURL,
@@ -103,18 +103,18 @@ func (a *AuthService) HandleOAuthCallback(provider, code string) (*User, error) 
 		if err := a.storage.CreateUser(&newUser); err != nil {
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
-		
+
 		// Assign user to default tenant if multi-tenant is enabled
 		if err := a.assignUserToDefaultTenant(&newUser, 0); err != nil {
 			return nil, fmt.Errorf("failed to assign user to tenant: %w", err)
 		}
-		
+
 		user = &newUser
 	} else if err != nil {
 		return nil, fmt.Errorf("database error: %w", err)
 	} else {
 		// Update existing user's info
-		user.Name = userName
+		user.Username = userName // Only updating username since that's what OAuth providers typically give us
 		user.AvatarURL = avatarURL
 		if err := a.storage.UpdateUser(user); err != nil {
 			return nil, fmt.Errorf("failed to update user: %w", err)

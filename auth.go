@@ -12,7 +12,6 @@
 //   - Chi router middleware and simplified HTTP handlers
 //
 // ## Key Features:
-//   - Single API surface - no duplicate code or confusion
 //   - Built-in email integration - configure once, works everywhere
 //   - Return-based handlers - maximum control over HTTP responses
 //   - Enterprise-grade security with 25+ security fields per user
@@ -51,10 +50,11 @@ import (
 	"net/http"
 	"time"
 
+	"crypto/subtle"
+
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
-	"crypto/subtle"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 	"golang.org/x/oauth2/google"
@@ -85,10 +85,13 @@ var (
 // email verification, password reset, login tracking, multi-factor authentication,
 // and account security controls.
 type User struct {
-	ID           uint   `json:"id"`
-	Email        string `json:"email"`
+	ID        uint   `json:"id"`
+	Email     string `json:"email"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+
 	PasswordHash string `json:"-"` // Hide password from JSON
-	Name         string `json:"name"`
 	AvatarURL    string `json:"avatar_url,omitempty"`
 	Provider     string `json:"provider"` // "email", "google", "github", "discord"
 	ProviderID   string `json:"provider_id"`
@@ -161,15 +164,6 @@ type SecurityConfig struct {
 	LockoutDuration  time.Duration // How long accounts remain locked
 	SessionLifetime  time.Duration // How long sessions remain valid
 	RequireTwoFactor bool          // Whether 2FA is required for all users
-
-	// Rate limiting
-	RateLimit    int           // Maximum requests per time window
-	RateWindow   time.Duration // Time window for rate limiting
-	IPRateLimit  int           // Maximum requests per IP
-	IPRateWindow time.Duration // Time window for IP rate limiting
-}
-	RateLimitWindow      time.Duration `json:"rate_limit_window"`
-	RateLimitMaxRequests int           `json:"rate_limit_max_requests"`
 }
 
 type OAuthProviderConfig struct {
@@ -232,12 +226,6 @@ func DefaultSecurityConfig() SecurityConfig {
 		LockoutDuration:  15 * time.Minute,
 		SessionLifetime:  24 * time.Hour,
 		RequireTwoFactor: false,
-
-		// Rate limiting
-		RateLimit:    60,
-		RateWindow:   1 * time.Minute,
-		IPRateLimit:  1000,
-		IPRateWindow: 24 * time.Hour,
 	}
 }
 
@@ -324,23 +312,31 @@ func (a *AuthService) GetAvailableProviders() []string {
 	return providers
 }
 
-func (a *AuthService) SignUp(email, password, name string) (*User, error) {
-	return a.SignUpWithTenant(email, password, name, 0) // Use default tenant
+func (a *AuthService) SignUp(req SignUpRequest) (*User, error) {
+	return a.SignUpWithTenant(req, 0) // Use default tenant
 }
 
-func (a *AuthService) SignUpWithTenant(email, password, name string, tenantID uint) (*User, error) {
+type SignUpRequest struct {
+	Email     string `json:"email" validate:"required,email"`
+	Password  string `json:"password" validate:"required,min=8"`
+	Username  string `json:"username" validate:"required"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+}
+
+func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User, error) {
 	// Validate email format
-	if !isValidEmail(email) {
+	if !isValidEmail(req.Email) {
 		return nil, fmt.Errorf("invalid email format")
 	}
 
 	// Validate password strength
-	if err := validatePasswordStrength(password, a.securityConfig); err != nil {
+	if err := validatePasswordStrength(req.Password, a.securityConfig); err != nil {
 		return nil, err
 	}
 
 	// Check if user already exists
-	_, err := a.storage.GetUserByEmail(email, "email")
+	_, err := a.storage.GetUserByEmail(req.Email, "email")
 	if err == nil {
 		return nil, ErrUserExists
 	}
@@ -348,7 +344,7 @@ func (a *AuthService) SignUpWithTenant(email, password, name string, tenantID ui
 		return nil, fmt.Errorf("failed to check existing user: %w", err)
 	}
 
-	hashedPassword, err := hashPassword(password)
+	hashedPassword, err := hashPassword(req.Password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
@@ -364,9 +360,11 @@ func (a *AuthService) SignUpWithTenant(email, password, name string, tenantID ui
 
 	now := time.Now()
 	user := User{
-		Email:             email,
+		Email:             req.Email,
+		Username:          req.Username,
+		FirstName:         req.FirstName,
+		LastName:          req.LastName,
 		PasswordHash:      hashedPassword,
-		Name:              name,
 		Provider:          "email",
 		EmailVerified:     !a.securityConfig.RequireEmailVerification, // Auto-verify if not required
 		VerificationToken: verificationToken,
@@ -375,9 +373,7 @@ func (a *AuthService) SignUpWithTenant(email, password, name string, tenantID ui
 		IsSuspended:       false,
 		CreatedAt:         now,
 		UpdatedAt:         now,
-	}
-
-	// Set email as verified if verification is not required
+	} // Set email as verified if verification is not required
 	if !a.securityConfig.RequireEmailVerification {
 		user.EmailVerifiedAt = &now
 	}
@@ -895,34 +891,6 @@ func (a *AuthService) VerifyEmail(token string) error {
 	// Log the verification
 	a.logSecurityEvent(&user.ID, nil, EventEmailVerified,
 		"Email verification completed", "", "", "")
-
-	return nil
-}
-
-func (a *AuthService) SendEmailVerification(userID uint) error {
-	user, err := a.storage.GetUserByID(userID)
-	if err != nil {
-		return fmt.Errorf("user not found: %w", err)
-	}
-
-	if user.EmailVerified {
-		return fmt.Errorf("email already verified")
-	}
-
-	// Generate secure verification token
-	token := generateSecureRandomString(32)
-	user.VerificationToken = token
-
-	if err := a.storage.UpdateUser(user); err != nil {
-		return fmt.Errorf("failed to save verification token: %w", err)
-	}
-
-	// Send verification email if email service is configured
-	if a.emailService != nil {
-		if err := a.emailService.SendVerificationEmail(user.Email, user.Name, token); err != nil {
-			return fmt.Errorf("failed to send verification email: %w", err)
-		}
-	}
 
 	return nil
 }

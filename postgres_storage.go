@@ -98,7 +98,7 @@ func NewPostgresStorage(dsn string, config StorageConfig) (StorageInterface, err
 func (p *PostgresStorage) CreateUser(user *User) error {
 	query := fmt.Sprintf(`
 		INSERT INTO %s (
-			%s, %s, %s, %s, %s, %s, 
+			%s, %s, %s, %s, %s, %s, %s, %s, 
 			%s, %s, %s, 
 			%s, %s, %s, 
 			%s, %s, %s, %s,
@@ -107,20 +107,22 @@ func (p *PostgresStorage) CreateUser(user *User) error {
 			%s, %s, %s, %s,
 			%s, %s
 		) VALUES (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9,
-			$10, $11, $12,
-			$13, $14, $15, $16,
-			$17, $18,
-			$19, $20, $21,
-			$22, $23, $24, $25,
-			$26, $27
+			$1, $2, $3, $4, $5, $6, $7, $8,
+			$9, $10, $11,
+			$12, $13, $14,
+			$15, $16, $17, $18,
+			$19, $20,
+			$21, $22, $23,
+			$24, $25, $26, $27,
+			$28, $29
 		) RETURNING %s`,
 		p.config.UsersTable,
 		// Basic fields
 		p.config.UserColumns.Email,
 		p.config.UserColumns.PasswordHash,
-		p.config.UserColumns.Name,
+		p.config.UserColumns.Username,
+		p.config.UserColumns.FirstName,
+		p.config.UserColumns.LastName,
 		p.config.UserColumns.AvatarURL,
 		p.config.UserColumns.Provider,
 		p.config.UserColumns.ProviderID,
@@ -161,7 +163,7 @@ func (p *PostgresStorage) CreateUser(user *User) error {
 	user.UpdatedAt = now
 
 	err := p.db.QueryRow(query,
-		user.Email, user.PasswordHash, user.Name, user.AvatarURL, user.Provider, user.ProviderID,
+		user.Email, user.PasswordHash, user.Username, user.FirstName, user.LastName, user.AvatarURL, user.Provider, user.ProviderID,
 		user.EmailVerified, user.EmailVerifiedAt, user.VerificationToken,
 		user.PasswordResetToken, user.PasswordResetExpiresAt, user.PasswordChangedAt,
 		user.LoginAttempts, user.LastFailedLoginAt, user.LockedUntil, user.LastLoginAt,
@@ -178,7 +180,7 @@ func (p *PostgresStorage) CreateUser(user *User) error {
 func (p *PostgresStorage) GetUserByEmail(email, provider string) (*User, error) {
 	query := fmt.Sprintf(`
 		SELECT 
-			%s, %s, %s, %s, %s, %s, %s,
+			%s, %s, %s, %s, %s, %s, %s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s, %s,
@@ -192,7 +194,9 @@ func (p *PostgresStorage) GetUserByEmail(email, provider string) (*User, error) 
 		p.config.UserColumns.ID,
 		p.config.UserColumns.Email,
 		p.config.UserColumns.PasswordHash,
-		p.config.UserColumns.Name,
+		p.config.UserColumns.Username,
+		p.config.UserColumns.FirstName,
+		p.config.UserColumns.LastName,
 		p.config.UserColumns.AvatarURL,
 		p.config.UserColumns.Provider,
 		p.config.UserColumns.ProviderID,
@@ -232,7 +236,7 @@ func (p *PostgresStorage) GetUserByEmail(email, provider string) (*User, error) 
 
 	var user User
 	err := p.db.QueryRow(query, email, provider).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.AvatarURL, &user.Provider, &user.ProviderID,
+		&user.ID, &user.Email, &user.PasswordHash, &user.Username, &user.FirstName, &user.LastName, &user.AvatarURL, &user.Provider, &user.ProviderID,
 		&user.EmailVerified, &user.EmailVerifiedAt, &user.VerificationToken,
 		&user.PasswordResetToken, &user.PasswordResetExpiresAt, &user.PasswordChangedAt,
 		&user.LoginAttempts, &user.LastFailedLoginAt, &user.LockedUntil, &user.LastLoginAt,
@@ -256,7 +260,7 @@ func (p *PostgresStorage) GetUserByEmail(email, provider string) (*User, error) 
 func (p *PostgresStorage) GetUserByEmailAnyProvider(email string) (*User, error) {
 	query := fmt.Sprintf(`
 		SELECT 
-			%s, %s, %s, %s, %s, %s, %s,
+			%s, %s, %s, %s, %s, %s, %s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s, %s,
@@ -270,7 +274,9 @@ func (p *PostgresStorage) GetUserByEmailAnyProvider(email string) (*User, error)
 		p.config.UserColumns.ID,
 		p.config.UserColumns.Email,
 		p.config.UserColumns.PasswordHash,
-		p.config.UserColumns.Name,
+		p.config.UserColumns.Username,
+		p.config.UserColumns.FirstName,
+		p.config.UserColumns.LastName,
 		p.config.UserColumns.AvatarURL,
 		p.config.UserColumns.Provider,
 		p.config.UserColumns.ProviderID,
@@ -309,7 +315,7 @@ func (p *PostgresStorage) GetUserByEmailAnyProvider(email string) (*User, error)
 
 	var user User
 	err := p.db.QueryRow(query, email).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.AvatarURL, &user.Provider, &user.ProviderID,
+		&user.ID, &user.Email, &user.PasswordHash, &user.Username, &user.FirstName, &user.LastName, &user.AvatarURL, &user.Provider, &user.ProviderID,
 		&user.EmailVerified, &user.EmailVerifiedAt, &user.VerificationToken,
 		&user.PasswordResetToken, &user.PasswordResetExpiresAt, &user.PasswordChangedAt,
 		&user.LoginAttempts, &user.LastFailedLoginAt, &user.LockedUntil, &user.LastLoginAt,
@@ -333,7 +339,7 @@ func (p *PostgresStorage) GetUserByEmailAnyProvider(email string) (*User, error)
 func (p *PostgresStorage) GetUserByProviderID(provider, providerID string) (*User, error) {
 	query := fmt.Sprintf(`
 		SELECT 
-			%s, %s, %s, %s, %s, %s, %s,
+			%s, %s, %s, %s, %s, %s, %s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s, %s,
@@ -347,7 +353,9 @@ func (p *PostgresStorage) GetUserByProviderID(provider, providerID string) (*Use
 		p.config.UserColumns.ID,
 		p.config.UserColumns.Email,
 		p.config.UserColumns.PasswordHash,
-		p.config.UserColumns.Name,
+		p.config.UserColumns.Username,
+		p.config.UserColumns.FirstName,
+		p.config.UserColumns.LastName,
 		p.config.UserColumns.AvatarURL,
 		p.config.UserColumns.Provider,
 		p.config.UserColumns.ProviderID,
@@ -387,7 +395,7 @@ func (p *PostgresStorage) GetUserByProviderID(provider, providerID string) (*Use
 
 	var user User
 	err := p.db.QueryRow(query, provider, providerID).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.AvatarURL, &user.Provider, &user.ProviderID,
+		&user.ID, &user.Email, &user.PasswordHash, &user.Username, &user.FirstName, &user.LastName, &user.AvatarURL, &user.Provider, &user.ProviderID,
 		&user.EmailVerified, &user.EmailVerifiedAt, &user.VerificationToken,
 		&user.PasswordResetToken, &user.PasswordResetExpiresAt, &user.PasswordChangedAt,
 		&user.LoginAttempts, &user.LastFailedLoginAt, &user.LockedUntil, &user.LastLoginAt,
@@ -411,7 +419,7 @@ func (p *PostgresStorage) GetUserByProviderID(provider, providerID string) (*Use
 func (p *PostgresStorage) GetUserByID(id uint) (*User, error) {
 	query := fmt.Sprintf(`
 		SELECT 
-			%s, %s, %s, %s, %s, %s, %s,
+			%s, %s, %s, %s, %s, %s, %s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s, %s,
@@ -425,7 +433,9 @@ func (p *PostgresStorage) GetUserByID(id uint) (*User, error) {
 		p.config.UserColumns.ID,
 		p.config.UserColumns.Email,
 		p.config.UserColumns.PasswordHash,
-		p.config.UserColumns.Name,
+		p.config.UserColumns.Username,
+		p.config.UserColumns.FirstName,
+		p.config.UserColumns.LastName,
 		p.config.UserColumns.AvatarURL,
 		p.config.UserColumns.Provider,
 		p.config.UserColumns.ProviderID,
@@ -464,7 +474,7 @@ func (p *PostgresStorage) GetUserByID(id uint) (*User, error) {
 
 	var user User
 	err := p.db.QueryRow(query, id).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.AvatarURL, &user.Provider, &user.ProviderID,
+		&user.ID, &user.Email, &user.PasswordHash, &user.Username, &user.FirstName, &user.LastName, &user.AvatarURL, &user.Provider, &user.ProviderID,
 		&user.EmailVerified, &user.EmailVerifiedAt, &user.VerificationToken,
 		&user.PasswordResetToken, &user.PasswordResetExpiresAt, &user.PasswordChangedAt,
 		&user.LoginAttempts, &user.LastFailedLoginAt, &user.LockedUntil, &user.LastLoginAt,
@@ -501,7 +511,9 @@ func (p *PostgresStorage) UpdateUser(user *User) error {
 		// Basic fields
 		p.config.UserColumns.Email,
 		p.config.UserColumns.PasswordHash,
-		p.config.UserColumns.Name,
+		p.config.UserColumns.Username,
+		p.config.UserColumns.FirstName,
+		p.config.UserColumns.LastName,
 		p.config.UserColumns.AvatarURL,
 		p.config.UserColumns.Provider,
 		p.config.UserColumns.ProviderID,
@@ -539,7 +551,7 @@ func (p *PostgresStorage) UpdateUser(user *User) error {
 	user.UpdatedAt = time.Now()
 
 	_, err := p.db.Exec(query,
-		user.Email, user.PasswordHash, user.Name, user.AvatarURL, user.Provider, user.ProviderID,
+		user.Email, user.PasswordHash, user.Username, user.FirstName, user.LastName, user.AvatarURL, user.Provider, user.ProviderID,
 		user.EmailVerified, user.EmailVerifiedAt, user.VerificationToken,
 		user.PasswordResetToken, user.PasswordResetExpiresAt, user.PasswordChangedAt,
 		user.LoginAttempts, user.LastFailedLoginAt, user.LockedUntil, user.LastLoginAt,
@@ -928,7 +940,7 @@ func (p *PostgresStorage) CreatePasswordResetToken(userID uint, token string, ex
 func (p *PostgresStorage) GetUserByPasswordResetToken(token string) (*User, error) {
 	query := fmt.Sprintf(`
 		SELECT 
-			%s, %s, %s, %s, %s, %s, %s,
+			%s, %s, %s, %s, %s, %s, %s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s, %s,
@@ -942,7 +954,9 @@ func (p *PostgresStorage) GetUserByPasswordResetToken(token string) (*User, erro
 		p.config.UserColumns.ID,
 		p.config.UserColumns.Email,
 		p.config.UserColumns.PasswordHash,
-		p.config.UserColumns.Name,
+		p.config.UserColumns.Username,
+		p.config.UserColumns.FirstName,
+		p.config.UserColumns.LastName,
 		p.config.UserColumns.AvatarURL,
 		p.config.UserColumns.Provider,
 		p.config.UserColumns.ProviderID,
@@ -982,7 +996,7 @@ func (p *PostgresStorage) GetUserByPasswordResetToken(token string) (*User, erro
 
 	var user User
 	err := p.db.QueryRow(query, token, time.Now()).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.AvatarURL, &user.Provider, &user.ProviderID,
+		&user.ID, &user.Email, &user.PasswordHash, &user.Username, &user.FirstName, &user.LastName, &user.AvatarURL, &user.Provider, &user.ProviderID,
 		&user.EmailVerified, &user.EmailVerifiedAt, &user.VerificationToken,
 		&user.PasswordResetToken, &user.PasswordResetExpiresAt, &user.PasswordChangedAt,
 		&user.LoginAttempts, &user.LastFailedLoginAt, &user.LockedUntil, &user.LastLoginAt,
@@ -1037,7 +1051,7 @@ func (p *PostgresStorage) SetEmailVerificationToken(userID uint, token string) e
 func (p *PostgresStorage) GetUserByVerificationToken(token string) (*User, error) {
 	query := fmt.Sprintf(`
 		SELECT 
-			%s, %s, %s, %s, %s, %s, %s,
+			%s, %s, %s, %s, %s, %s, %s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s,
 			%s, %s, %s, %s,
@@ -1051,7 +1065,9 @@ func (p *PostgresStorage) GetUserByVerificationToken(token string) (*User, error
 		p.config.UserColumns.ID,
 		p.config.UserColumns.Email,
 		p.config.UserColumns.PasswordHash,
-		p.config.UserColumns.Name,
+		p.config.UserColumns.Username,
+		p.config.UserColumns.FirstName,
+		p.config.UserColumns.LastName,
 		p.config.UserColumns.AvatarURL,
 		p.config.UserColumns.Provider,
 		p.config.UserColumns.ProviderID,
@@ -1090,7 +1106,7 @@ func (p *PostgresStorage) GetUserByVerificationToken(token string) (*User, error
 
 	var user User
 	err := p.db.QueryRow(query, token).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.AvatarURL, &user.Provider, &user.ProviderID,
+		&user.ID, &user.Email, &user.PasswordHash, &user.Username, &user.FirstName, &user.LastName, &user.AvatarURL, &user.Provider, &user.ProviderID,
 		&user.EmailVerified, &user.EmailVerifiedAt, &user.VerificationToken,
 		&user.PasswordResetToken, &user.PasswordResetExpiresAt, &user.PasswordChangedAt,
 		&user.LoginAttempts, &user.LastFailedLoginAt, &user.LockedUntil, &user.LastLoginAt,

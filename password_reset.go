@@ -7,8 +7,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Password reset functionality
-func (a *AuthService) InitiatePasswordReset(email string) error {
+// Internal password reset implementation
+func (a *AuthService) initiatePasswordResetInternal(email string) error {
 	user, err := a.storage.GetUserByEmailAnyProvider(email)
 	if err != nil {
 		// Don't reveal if email exists
@@ -30,7 +30,7 @@ func (a *AuthService) InitiatePasswordReset(email string) error {
 
 	// Send reset email if email service is configured
 	if a.emailService != nil {
-		if err := a.emailService.SendPasswordResetEmail(user.Email, user.Name, token); err != nil {
+		if err := a.emailService.SendPasswordResetEmail(user.Email, token); err != nil {
 			return fmt.Errorf("failed to send reset email: %w", err)
 		}
 	}
@@ -75,10 +75,10 @@ func (a *AuthService) CompletePasswordReset(token, newPassword string) error {
 	a.logSecurityEvent(&user.ID, nil, EventPasswordReset,
 		"Password reset completed", "", "", "")
 
-	// Invalidate all existing sessions
-	if err := a.storage.InvalidateUserSessions(user.ID); err != nil {
+	// Delete all existing sessions
+	if err := a.storage.DeleteUserSessions(user.ID); err != nil {
 		// Log but don't fail the reset
-		fmt.Printf("Failed to invalidate sessions: %v\n", err)
+		fmt.Printf("Failed to delete sessions: %v\n", err)
 	}
 
 	return nil

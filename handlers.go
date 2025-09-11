@@ -10,13 +10,6 @@ import (
 
 // Request and Response Types
 
-// SignUpRequest represents a user registration request with required fields
-type SignUpRequest struct {
-	Email    string `json:"email"`    // User's email address
-	Password string `json:"password"` // User's password (plaintext)
-	Name     string `json:"name"`     // User's display name
-}
-
 // SignUpResponse represents the response for user registration
 type SignUpResponse struct {
 	Token                     string `json:"token"`                       // JWT token for authentication
@@ -113,9 +106,11 @@ type RevokeSessionResponse struct {
 
 // HTTP request types with validation
 type SignUpRequestHTTP struct {
-	Email    string `json:"email" validate:"required,email,max=255"`
-	Password string `json:"password" validate:"required,min=8,max=128"`
-	Name     string `json:"name" validate:"required,min=2,max=100"`
+	Email     string `json:"email" validate:"required,email,max=255"`
+	Password  string `json:"password" validate:"required,min=8,max=128"`
+	Username  string `json:"username" validate:"required,min=2,max=100"`
+	FirstName string `json:"first_name" validate:"omitempty,max=100"`
+	LastName  string `json:"last_name" validate:"omitempty,max=100"`
 }
 
 type SignInRequestHTTP struct {
@@ -171,7 +166,14 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 	userAgent := r.Header.Get("User-Agent")
 
 	// Create user account
-	user, err := a.SignUpWithTenant(req.Email, req.Password, req.Name, 0)
+	signUpReq := SignUpRequest{
+		Email:     req.Email,
+		Password:  req.Password,
+		Username:  req.Username,
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+	}
+	user, err := a.SignUpWithTenant(signUpReq, 0)
 	if err != nil {
 		if errors.Is(err, ErrUserExists) {
 			return SignUpResponse{
@@ -215,7 +217,19 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 
 	// Send welcome email
 	if a.emailService != nil {
-		go a.emailService.SendWelcomeEmail(response.User.Email, response.User.Name)
+		displayName := ""
+		if response.User.FirstName != "" {
+			if response.User.LastName != "" {
+				displayName = response.User.FirstName + " " + response.User.LastName
+			} else {
+				displayName = response.User.FirstName
+			}
+		} else if response.User.Username != "" {
+			displayName = response.User.Username
+		} else {
+			displayName = response.User.Email
+		}
+		go a.emailService.SendWelcomeEmail(response.User.Email, displayName)
 	}
 
 	return response
@@ -799,7 +813,19 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, stat
 
 	// Send welcome email for new users
 	if isNewUser && a.emailService != nil {
-		go a.emailService.SendWelcomeEmail(user.Email, user.Name)
+		displayName := ""
+		if user.FirstName != "" {
+			if user.LastName != "" {
+				displayName = user.FirstName + " " + user.LastName
+			} else {
+				displayName = user.FirstName
+			}
+		} else if user.Username != "" {
+			displayName = user.Username
+		} else {
+			displayName = user.Email
+		}
+		go a.emailService.SendWelcomeEmail(user.Email, displayName)
 	}
 
 	return OAuthResponse{
