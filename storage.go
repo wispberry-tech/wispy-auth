@@ -10,28 +10,7 @@ var (
 	ErrInvalidSession  = errors.New("invalid session")
 )
 
-// Session represents a user session with enhanced security tracking
-type Session struct {
-	ID        string    `json:"id"`
-	UserID    uint      `json:"user_id"`
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
-
-	// Device & Location Tracking
-	DeviceFingerprint string `json:"device_fingerprint"`
-	UserAgent         string `json:"user_agent"`
-	IPAddress         string `json:"ip_address"`
-	Location          string `json:"location,omitempty"`
-
-	// Security Features
-	IsActive          bool      `json:"is_active"`
-	LastActivity      time.Time `json:"last_activity"`
-	RequiresTwoFactor bool      `json:"requires_2fa"`
-	TwoFactorVerified bool      `json:"2fa_verified"`
-
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
+// Session type is defined in models.go
 
 // StorageInterface defines the contract for data storage operations
 type StorageInterface interface {

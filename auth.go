@@ -53,7 +53,6 @@ import (
 	"crypto/subtle"
 
 	"github.com/go-playground/validator/v10"
-	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
@@ -464,59 +463,9 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 	return user, nil
 }
 
-// OAuth state is now stored in Redis/database for validation
-type OAuthState struct {
-	State     string    `json:"state"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CSRF      string    `json:"csrf_token"` // Anti-CSRF token
-}
+// OAuthState type is defined in oauth.go
 
-func (a *AuthService) ValidateUser(tokenString string) (*User, error) {
-	if tokenString == "" {
-		return nil, errors.New("invalid token")
-	}
-
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return a.jwtSecret, nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse token: %w", err)
-	}
-
-	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
-		return nil, fmt.Errorf("invalid token claims")
-	}
-
-	user, err := a.storage.GetUserByID(claims.UserID)
-	if err != nil {
-		return nil, ErrUserNotFound
-	}
-
-	return user, nil
-}
-
-func (a *AuthService) GenerateToken(user *User) (string, error) {
-	now := time.Now()
-	claims := Claims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(now.Add(24 * time.Hour)), // 24 hour expiry
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			Issuer:    "nucleus-auth",
-			Subject:   fmt.Sprintf("%d", user.ID),
-		},
-		UserID: user.ID,
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(a.jwtSecret)
-}
+// Session type is defined in models.go
 
 func (a *AuthService) GetOAuthURL(provider string, r *http.Request) (string, string, error) {
 	config, exists := a.oauthConfigs[provider]
@@ -587,13 +536,7 @@ func (a *AuthService) logSecurityEvent(userID *uint, tenantID *uint, eventType, 
 	a.storage.CreateSecurityEvent(event)
 }
 
-func (a *AuthService) isAccountLocked(user *User) bool {
-	if user.LockedUntil == nil {
-		return false
-	}
-	return time.Now().Before(*user.LockedUntil)
-}
-
+// shouldLockAccount checks if the account should be locked based on failed attempts
 func (a *AuthService) shouldLockAccount(user *User) bool {
 	return user.LoginAttempts >= a.securityConfig.MaxLoginAttempts
 }

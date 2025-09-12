@@ -58,26 +58,26 @@ func generateDeviceFingerprint(userAgent, ip string) string {
 
 // Password validation
 func validatePasswordStrength(password string, config SecurityConfig) error {
-	if len(password) < config.MinPasswordLength {
-		return fmt.Errorf("password must be at least %d characters long", config.MinPasswordLength)
+	if len(password) < config.PasswordMinLength {
+		return fmt.Errorf("password must be at least %d characters long", config.PasswordMinLength)
 	}
-	
-	if config.RequireUppercase && !regexp.MustCompile(`[A-Z]`).MatchString(password) {
+
+	if config.PasswordRequireUpper && !regexp.MustCompile(`[A-Z]`).MatchString(password) {
 		return fmt.Errorf("password must contain at least one uppercase letter")
 	}
-	
-	if config.RequireLowercase && !regexp.MustCompile(`[a-z]`).MatchString(password) {
+
+	if config.PasswordRequireLower && !regexp.MustCompile(`[a-z]`).MatchString(password) {
 		return fmt.Errorf("password must contain at least one lowercase letter")
 	}
-	
-	if config.RequireNumbers && !regexp.MustCompile(`[0-9]`).MatchString(password) {
+
+	if config.PasswordRequireNumber && !regexp.MustCompile(`[0-9]`).MatchString(password) {
 		return fmt.Errorf("password must contain at least one number")
 	}
-	
-	if config.RequireSpecialChars && !regexp.MustCompile(`[^a-zA-Z0-9]`).MatchString(password) {
+
+	if config.PasswordRequireSpecial && !regexp.MustCompile(`[^a-zA-Z0-9]`).MatchString(password) {
 		return fmt.Errorf("password must contain at least one special character")
 	}
-	
+
 	return nil
 }
 
@@ -97,14 +97,14 @@ func extractIPFromRequest(remoteAddr, xForwardedFor, xRealIP string) string {
 			return clientIP
 		}
 	}
-	
+
 	// Check X-Real-IP header
 	if xRealIP != "" {
 		if net.ParseIP(xRealIP) != nil {
 			return xRealIP
 		}
 	}
-	
+
 	// Fall back to RemoteAddr
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
@@ -115,7 +115,7 @@ func extractIPFromRequest(remoteAddr, xForwardedFor, xRealIP string) string {
 
 // calculateSessionExpiry calculates when a session should expire
 func calculateSessionExpiry(config SecurityConfig) time.Time {
-	return time.Now().Add(config.SessionTimeout)
+	return time.Now().Add(config.SessionLifetime)
 }
 
 // extractTokenFromRequest extracts JWT token from Authorization header

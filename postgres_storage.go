@@ -505,8 +505,8 @@ func (p *PostgresStorage) UpdateUser(user *User) error {
 			%s = $17, %s = $18,
 			%s = $19, %s = $20, %s = $21,
 			%s = $22, %s = $23, %s = $24, %s = $25,
-			%s = $26
-		WHERE %s = $27`,
+			%s = $26, %s = $27, %s = $28
+		WHERE %s = $29`,
 		p.config.UsersTable,
 		// Basic fields
 		p.config.UserColumns.Email,
