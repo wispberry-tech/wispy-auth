@@ -1,4 +1,4 @@
-# Nucleus Auth
+# Wispy Auth
 
 A production-ready Go authentication library with comprehensive security features, flexible architecture, and multi-tenant support. Built with pure SQL (PostgreSQL) for maximum performance and compatibility.
 
@@ -7,7 +7,7 @@ A production-ready Go authentication library with comprehensive security feature
 ### Core Authentication
 - ✅ **Email/Password authentication** with advanced security
 - ✅ **Multiple OAuth2 providers** (Google, GitHub, Discord)
-- ✅ **JWT token generation & validation**
+- ✅ **Session token generation & validation**
 - ✅ **Password hashing with bcrypt**
 - ✅ **Multiple provider support per user**
 
@@ -33,15 +33,16 @@ A production-ready Go authentication library with comprehensive security feature
 ### 🛠 Developer Experience
 - ✅ **Pure SQL implementation** (no ORM dependencies)
 - ✅ **Flexible database schema support**
-- ✅ **Clean response-based handlers** (no HTTP coupling in library)
+- ✅ **Simplified HTTP handlers** with structured responses
 - ✅ **Configurable table and column names**
 - ✅ **Comprehensive error handling**
 - ✅ **Production-ready defaults**
+- ✅ **Built-in email integration**
 
 ## 📦 Installation
 
 ```bash
-go get github.com/wispberry-tech/nucleus-auth
+go get github.com/wispberry-tech/wispy-auth
 ```
 
 ## 🔧 Configuration
@@ -72,6 +73,8 @@ DISCORD_CLIENT_SECRET=your-discord-oauth-client-secret
 
 ## 🚦 Quick Start
 
+The following is a quick start example. For a more complete, production-ready example, see the `example` directory.
+
 ```go
 package main
 
@@ -84,49 +87,51 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/wispberry-tech/nucleus-auth"
+	auth "github.com/wispberry-tech/wispy-auth"
 )
 
+// Implement your email service
+type YourEmailService struct{}
+
+func (e *YourEmailService) SendVerificationEmail(email, token string) error {
+	log.Printf("📧 Sending verification email to %s with token %s", email, token)
+	return nil
+}
+
+func (e *YourEmailService) SendPasswordResetEmail(email, token string) error {
+	log.Printf("📧 Sending password reset email to %s with token %s", email, token)
+	return nil
+}
+
+func (e *YourEmailService) SendWelcomeEmail(email, name string) error {
+	log.Printf("📧 Sending welcome email to %s (%s)", name, email)
+	return nil
+}
+
 func main() {
+	// Initialize email service
+	emailService := &YourEmailService{}
+
 	// Initialize with security-enhanced configuration
 	cfg := auth.Config{
 		DatabaseDSN: os.Getenv("DATABASE_URL"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
 		
+		// Built-in email service integration
+		EmailService: emailService,
+
 		// Storage configuration with flexible schema
 		StorageConfig: auth.DefaultStorageConfig(),
 		
 		// Enhanced security configuration
-		SecurityConfig: auth.SecurityConfig{
-			// Password policy
-			MinPasswordLength:   8,
-			RequireUppercase:    true,
-			RequireLowercase:    true,
-			RequireNumbers:      true,
-			RequireSpecialChars: false,
-			
-			// Login protection
-			MaxLoginAttempts:     5,
-			LoginLockoutDuration: 15 * time.Minute,
-			
-			// Session security
-			SessionTimeout:       24 * time.Hour,
-			MaxActiveSessions:    5,
-			
-			// Email verification
-			RequireEmailVerification: true,
-			EmailVerificationExpiry:  24 * time.Hour,
-			
-			// Password reset
-			PasswordResetExpiry: 1 * time.Hour,
-		},
+		SecurityConfig: auth.DefaultSecurityConfig(),
 		
 		// OAuth providers
 		OAuthProviders: map[string]auth.OAuthProviderConfig{
 			"google": {
 				ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 				ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-				RedirectURL:  "http://localhost:8080/auth/oauth/callback?provider=google",
+				RedirectURL:  "http://localhost:8080/api/auth/oauth/callback?provider=google",
 			},
 			// Add other providers as needed...
 		},
@@ -143,37 +148,34 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// 🎉 Create route helpers - mount routes exactly where you want!
-	helpers := authService.NewRouteHelpers(&YourEmailService{})
-
-	// Mount auth routes with perfect flexibility
+	// Mount auth routes with the new simplified API
 	r.Route("/api/auth", func(r chi.Router) {
-		// Simple pattern: get result, control response
+		// Public routes - single API, maximum simplicity!
 		r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
-			result := helpers.SignUp(r)                    // ✅ Returns structured response
+			result := authService.SignUpHandler(r)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(result.StatusCode)
 			json.NewEncoder(w).Encode(result)
 		})
 		
 		r.Post("/signin", func(w http.ResponseWriter, r *http.Request) {
-			result := helpers.SignIn(r)                    // ✅ Complete login flow
+			result := authService.SignInHandler(r)
 			w.Header().Set("Content-Type", "application/json") 
 			w.WriteHeader(result.StatusCode)
 			json.NewEncoder(w).Encode(result)
 		})
 		
 		r.Get("/validate", func(w http.ResponseWriter, r *http.Request) {
-			result := helpers.Validate(r)                  // ✅ Token validation
+			result := authService.ValidateHandler(r)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(result.StatusCode)
 			json.NewEncoder(w).Encode(result)
 		})
 		
-		// OAuth with custom redirect handling  
+		// OAuth with redirect handling  
 		r.Get("/oauth", func(w http.ResponseWriter, r *http.Request) {
 			provider := r.URL.Query().Get("provider")
-			result := helpers.OAuth(r, provider)
+			result := authService.OAuthHandler(w, r, provider)
 			if result.URL != "" {
 				http.Redirect(w, r, result.URL, http.StatusTemporaryRedirect)
 				return
@@ -208,88 +210,64 @@ func main() {
 	})
 
 	log.Println("🚀 Server starting on :8080")
-	log.Println("📍 Auth endpoints: http://localhost:8080/auth/*")
+	log.Println("📍 Auth endpoints: http://localhost:8080/api/auth/*")
 	log.Fatal(http.ListenAndServe(":8080", r))
-}
-
-// Implement your email service
-type YourEmailService struct{}
-
-func (e *YourEmailService) SendVerificationEmail(email, token string) error {
-	// Send verification email
-	log.Printf("📧 Sending verification email to %s", email)
-	return nil
-}
-
-func (e *YourEmailService) SendPasswordResetEmail(email, token string) error {
-	// Send password reset email
-	log.Printf("📧 Sending password reset email to %s", email)
-	return nil
-}
-
-func (e *YourEmailService) SendWelcomeEmail(email, firstName, lastName string) error {
-	// Send welcome email
-	log.Printf("📧 Sending welcome email to %s %s (%s)", firstName, lastName, email)
-	return nil
 }
 ```
 
-**Perfect! Your authentication system is ready with the best developer experience:**
+**Your authentication system is ready with a great developer experience:**
 
-✅ **Flexible Route Mounting** - Mount routes exactly where you want them  
-✅ **One Line Per Endpoint** - `r.Post("/signup", helpers.SignUp)` and you're done!  
-✅ **Full Control** - Choose your URL structure, middleware, and custom logic  
-✅ **Zero Boilerplate** - Each helper handles validation, emails, errors automatically  
-✅ **Enterprise Security** - Built-in protection, audit logging, and compliance features  
-✅ **Production Ready** - OAuth, sessions, multi-tenant, RBAC out of the box
+✅ **Simplified Handlers** - One line per endpoint, `authService.SignUpHandler(r)` and you're done!  
+✅ **Full Control** - You control the HTTP response, status code, and encoding.
+✅ **Built-in Email Integration** - Configure your email service once, and it works for verification, password resets, and welcome emails.
+✅ **Zero Boilerplate** - Each handler handles validation, emails, and errors automatically.
+✅ **Enterprise Security** - Built-in protection, audit logging, and compliance features.
+✅ **Production Ready** - OAuth, sessions, multi-tenant, RBAC out of the box.
 
 ### Available Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/auth/signup` | User registration |
-| POST | `/auth/signin` | User login |
-| GET | `/auth/validate` | Validate JWT token |
-| POST | `/auth/forgot-password` | Request password reset |
-| POST | `/auth/reset-password` | Reset password with token |
-| POST | `/auth/verify-email` | Verify email address |
-| GET | `/auth/oauth?provider=X` | OAuth redirect |
-| GET | `/auth/oauth/callback` | OAuth callback |
-| GET | `/auth/providers` | List available OAuth providers |
-| POST | `/auth/resend-verification` | Resend verification email (protected) |
-| GET | `/auth/sessions` | List user sessions (protected) |
-| DELETE | `/auth/sessions/{id}` | Revoke specific session (protected) |
-| POST | `/auth/logout-all` | Revoke all sessions (protected) |
+| POST | `/api/auth/signup` | User registration |
+| POST | `/api/auth/signin` | User login |
+| GET | `/api/auth/validate` | Validate session token |
+| POST | `/api/auth/forgot-password` | Request password reset |
+| POST | `/api/auth/reset-password` | Reset password with token |
+| POST | `/api/auth/verify-email` | Verify email address with token |
+| GET | `/api/auth/oauth` | OAuth redirect (e.g., `/api/auth/oauth?provider=google`) |
+| GET | `/api/auth/oauth/callback` | OAuth callback |
+| GET | `/api/auth/providers` | List available OAuth providers |
+| POST | `/api/auth/resend-verification` | Resend verification email (protected) |
+| GET | `/api/auth/sessions` | List user sessions (protected) |
+| DELETE | `/api/auth/sessions/{id}` | Revoke specific session (protected) |
+| POST | `/api/auth/logout-all` | Revoke all sessions (protected) |
 
-## 🎯 Flexible & Simple Route Mounting
+## 🎯 Simplified HTTP Handlers
 
 ### 🚀 Perfect Balance: Control + Simplicity
 
 Mount auth routes exactly where you want them with **perfect control**:
 
 ```go
-// Create route helpers with email integration
-helpers := authService.NewRouteHelpers(emailService)
-
 // Mount routes exactly where you want them - super flexible!
 r.Route("/api/auth", func(r chi.Router) {
     // Public routes - perfect balance of control and simplicity!
     r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
-        result := helpers.SignUp(r)                    // ✅ Returns structured response
+        result := authService.SignUpHandler(r)         // ✅ Returns structured response
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode)               // ✅ You control the HTTP response
         json.NewEncoder(w).Encode(result)              // ✅ You choose how to encode
     })
     
     r.Post("/signin", func(w http.ResponseWriter, r *http.Request) {
-        result := helpers.SignIn(r)                    // ✅ Complete login logic
+        result := authService.SignInHandler(r)         // ✅ Complete login logic
         w.Header().Set("Content-Type", "application/json") 
         w.WriteHeader(result.StatusCode)
         json.NewEncoder(w).Encode(result)
     })
     
     r.Post("/forgot-password", func(w http.ResponseWriter, r *http.Request) {
-        result := helpers.ForgotPassword(r)            // ✅ Handles validation + emails
+        result := authService.ForgotPasswordHandler(r) // ✅ Handles validation + emails
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode) 
         json.NewEncoder(w).Encode(result)
@@ -298,7 +276,7 @@ r.Route("/api/auth", func(r chi.Router) {
     // OAuth with redirect handling  
     r.Get("/oauth", func(w http.ResponseWriter, r *http.Request) {
         provider := r.URL.Query().Get("provider")
-        result := helpers.OAuth(r, provider)
+        result := authService.OAuthHandler(w, r, provider)
         if result.URL != "" {
             http.Redirect(w, r, result.URL, http.StatusTemporaryRedirect) // ✅ You control redirects
             return
@@ -308,13 +286,13 @@ r.Route("/api/auth", func(r chi.Router) {
     })
 })
 
-// Or mount them anywhere in your existing API structure!
+// You can still add custom logic around the handlers
 r.Post("/auth/register", func(w http.ResponseWriter, r *http.Request) {
-    result := helpers.SignUp(r)
+    result := authService.SignUpHandler(r)
     // Add custom business logic here
     if result.User != nil {
-        createUserProfile(result.User.ID)           // ✅ Your custom logic
-        trackSignupEvent(result.User.Email)         // ✅ Your analytics
+        // createUserProfile(result.User.ID)           // ✅ Your custom logic
+        // trackSignupEvent(result.User.Email)         // ✅ Your analytics
     }
     w.WriteHeader(result.StatusCode)
     json.NewEncoder(w).Encode(result)
@@ -353,9 +331,9 @@ r.Group(func(r chi.Router) {
 })
 ```
 
-### 🎨 Every Helper Includes
+### 🎨 Every Handler Includes
 
-Each helper method automatically handles:
+Each handler method automatically handles:
 
 - ✅ **Input validation** using `go-playground/validator`
 - ✅ **JSON request/response** parsing and formatting
@@ -366,7 +344,7 @@ Each helper method automatically handles:
 
 ### 🔧 Custom Integration
 
-Need custom logic? Easy - access the underlying handlers:
+Need more control? You can still call the core service methods directly:
 
 ```go
 // Custom signup with your own business logic
@@ -376,25 +354,25 @@ r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
     json.NewDecoder(r.Body).Decode(&req)
     
     // Call the auth service directly
-    response := authService.HandleSignUp(auth.SignUpRequest{
+    user, err := authService.SignUp(auth.SignUpRequest{
         Email:     req.Email,
         Password:  req.Password,
         Username:  req.Username,
         FirstName: req.FirstName,
         LastName:  req.LastName,
-    }, getIP(r), r.Header.Get("User-Agent"))
+    })
     
     // Handle response with your custom logic
-    if response.Error != "" {
+    if err != nil {
         // Your custom error handling
         return
     }
     
     // Your custom success logic
-    createUserProfile(response.User.ID, req.AdditionalData)
-    sendWelcomeSlackMessage(req.Email)
+    // createUserProfile(user.ID, req.AdditionalData)
+    // sendWelcomeSlackMessage(req.Email)
     
-    json.NewEncoder(w).Encode(response)
+    json.NewEncoder(w).Encode(user)
 })
 ```
 
@@ -402,48 +380,38 @@ r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
 
 ### Password Reset Flow
 ```go
-// 1. Initiate password reset
-response := authService.HandleForgotPassword(auth.ForgotPasswordRequest{
-    Email: "user@example.com",
-})
+// 1. Initiate password reset (via handler)
+// POST /api/auth/forgot-password with {"email": "user@example.com"}
+// The handler calls authService.InitiatePasswordReset and sends an email.
 
-// 2. Send reset email (your implementation)
-if response.StatusCode == 200 {
-    sendPasswordResetEmail(email, resetToken) // Your email logic
-}
-
-// 3. Reset password with token
-response := authService.HandleResetPassword(auth.ResetPasswordRequest{
-    Token:       "reset-token-from-email",
-    NewPassword: "newSecurePassword123",
-})
+// 2. Reset password with token (via handler)
+// POST /api/auth/reset-password with {"token": "...", "new_password": "..."}
+// The handler calls authService.ResetPassword.
 ```
 
 ### Email Verification
 ```go
-// 1. Send verification email
-response := authService.HandleResendVerification(userToken)
+// 1. Resend verification email (via handler, protected route)
+// POST /api/auth/resend-verification
 
-// 2. Verify email with token
-response := authService.HandleVerifyEmail(auth.VerifyEmailRequest{
-    Token: "verification-token-from-email",
-})
+// 2. Verify email with token (via handler)
+// POST /api/auth/verify-email with {"token": "..."}
 ```
 
 ### Session Management
 ```go
-// Get all user sessions
-response := authService.HandleGetSessions(userToken)
+// Get all user sessions (via handler, protected route)
+// GET /api/auth/sessions
 
-// Revoke specific session
-response := authService.HandleRevokeSession("session-id")
+// Revoke specific session (via handler, protected route)
+// DELETE /api/auth/sessions/{sessionID}
 
-// Revoke all sessions (logout everywhere)
-response := authService.HandleRevokeAllSessions(userToken)
+// Revoke all sessions (logout everywhere) (via handler, protected route)
+// POST /api/auth/logout-all
 ```
 
 ### Security Event Logging
-All security-related events are automatically logged:
+All security-related events are automatically logged to the `security_events` table:
 - Login attempts (successful/failed)
 - Account lockouts
 - Password resets
@@ -452,7 +420,7 @@ All security-related events are automatically logged:
 
 ## 🗄 Database Schema
 
-### Enhanced Users Table
+### Users Table
 ```sql
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
@@ -501,13 +469,14 @@ CREATE TABLE users (
 );
 ```
 
-### Enhanced Sessions Table
+### Sessions Table
 ```sql
 CREATE TABLE sessions (
     id VARCHAR(255) PRIMARY KEY,
     user_id INTEGER REFERENCES users(id),
     token VARCHAR(255) UNIQUE,
     expires_at TIMESTAMP,
+    csrf_token TEXT,
     
     -- Device & Location Tracking
     device_fingerprint VARCHAR(255),
@@ -551,11 +520,11 @@ cfg.StorageConfig.MultiTenant = auth.MultiTenantConfig{
     DefaultTenantID: 1,
     
     // Customize table names if needed
-    TenantsTable:         "organizations",
-    RolesTable:          "roles",
-    PermissionsTable:    "permissions",
+    TenantsTable:         "tenants",
+    RolesTable:           "roles",
+    PermissionsTable:     "permissions",
     RolePermissionsTable: "role_permissions",
-    UserTenantsTable:    "user_tenants",
+    UserTenantsTable:     "user_tenants",
 }
 ```
 
@@ -612,37 +581,23 @@ type SignInResponse struct {
 ### Security Configuration
 ```go
 type SecurityConfig struct {
-    // Password Policy
-    MinPasswordLength   int
-    RequireUppercase    bool
-    RequireLowercase    bool
-    RequireNumbers      bool
-    RequireSpecialChars bool
-    
-    // Login Protection
-    MaxLoginAttempts     int
-    LoginLockoutDuration time.Duration
-    
-    // Session Security
-    SessionTimeout              time.Duration
-    MaxActiveSessions           int
-    RequireDeviceVerification   bool
-    
-    // Two-Factor Authentication
-    Force2FA       bool
-    Allow2FABypass bool
-    
-    // Email Security
-    RequireEmailVerification bool
-    EmailVerificationExpiry  time.Duration
-    
-    // Password Reset
-    PasswordResetExpiry time.Duration
-    
-    // Rate Limiting
-    EnableRateLimiting   bool
-    RateLimitWindow      time.Duration
-    RateLimitMaxRequests int
+	// Email verification
+	RequireEmailVerification bool
+	VerificationTokenExpiry  time.Duration
+
+	// Password security
+	PasswordMinLength      int
+	PasswordRequireUpper   bool
+	PasswordRequireLower   bool
+	PasswordRequireNumber  bool
+	PasswordRequireSpecial bool
+	PasswordResetExpiry    time.Duration
+
+	// Login security
+	MaxLoginAttempts int
+	LockoutDuration  time.Duration
+	SessionLifetime  time.Duration
+	RequireTwoFactor bool
 }
 ```
 
@@ -680,7 +635,7 @@ cfg.StorageConfig = auth.StorageConfig{
 ## 🚀 Production Recommendations
 
 1. **Database**: Use connection pooling and read replicas
-2. **Caching**: Implement Redis for session storage
+2. **Caching**: Consider Redis for session storage in high-traffic applications
 3. **Monitoring**: Set up security event alerts
 4. **Backup**: Regular database backups with encryption
 5. **Updates**: Keep dependencies updated
@@ -697,17 +652,13 @@ package main
 
 import (
     "github.com/go-chi/chi/v5"
-    "github.com/wispberry-tech/nucleus-auth"
+    auth "github.com/wispberry-tech/wispy-auth"
 )
 
 func main() {
     r := chi.NewRouter()
     
-    // Initialize auth service
-    authService, err := auth.NewAuthService(cfg)
-    if err != nil {
-        log.Fatal(err)
-    }
+    // Initialize auth service...
     
     // Protected routes requiring authentication
     r.Group(func(r chi.Router) {
@@ -798,7 +749,7 @@ config := auth.MiddlewareConfig{
         host := r.Host
         if strings.Contains(host, ".") {
             subdomain := strings.Split(host, ".")[0]
-            return getTenantIDBySubdomain(subdomain)
+            // return getTenantIDBySubdomain(subdomain)
         }
         return 0
     },
@@ -901,7 +852,7 @@ r.Group(func(r chi.Router) {
 
 | Middleware | Purpose | Usage |
 |------------|---------|-------|
-| `RequireAuth()` | Basic authentication | Validates JWT token |
+| `RequireAuth()` | Basic authentication | Validates session token |
 | `RequireRole(roles...)` | Role-based protection | Check user has any of the specified roles |
 | `RequireRoleInTenant(tenantID, roles...)` | Tenant-specific role protection | Check role in specific tenant |
 | `RequirePermission(permissions...)` | Permission-based protection | Check user has all specified permissions |
@@ -923,7 +874,11 @@ r.Group(func(r chi.Router) {
 
 ```go
 require (
+    github.com/go-chi/chi/v5 v5.0.12
+    github.com/go-playground/validator/v10 v10.22.1
+    github.com/golang-jwt/jwt/v5 v5.3.0
     github.com/jackc/pgx/v5 v5.6.0
+    github.com/pquerna/otp v1.5.0
     golang.org/x/crypto v0.42.0
     golang.org/x/oauth2 v0.31.0
 )
@@ -933,10 +888,6 @@ require (
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## 📄 License
-
-This project is licensed under the MIT License.
-
 ---
 
-**Nucleus Auth** - Production-ready authentication with security at its core. 🛡️
+**Wispy Auth** - Production-ready authentication with security at its core. 🛡️
