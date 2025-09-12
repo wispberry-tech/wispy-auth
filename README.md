@@ -227,9 +227,9 @@ func (e *YourEmailService) SendPasswordResetEmail(email, token string) error {
 	return nil
 }
 
-func (e *YourEmailService) SendWelcomeEmail(email, name string) error {
+func (e *YourEmailService) SendWelcomeEmail(email, firstName, lastName string) error {
 	// Send welcome email
-	log.Printf("📧 Sending welcome email to %s", email)
+	log.Printf("📧 Sending welcome email to %s %s (%s)", firstName, lastName, email)
 	return nil
 }
 ```
@@ -377,9 +377,11 @@ r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
     
     // Call the auth service directly
     response := authService.HandleSignUp(auth.SignUpRequest{
-        Email:    req.Email,
-        Password: req.Password,
-        Name:     req.Name,
+        Email:     req.Email,
+        Password:  req.Password,
+        Username:  req.Username,
+        FirstName: req.FirstName,
+        LastName:  req.LastName,
     }, getIP(r), r.Header.Get("User-Agent"))
     
     // Handle response with your custom logic
@@ -456,7 +458,9 @@ CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash TEXT,
-    name VARCHAR(255),
+    username VARCHAR(255),
+    first_name VARCHAR(255),
+    last_name VARCHAR(255),
     avatar_url TEXT,
     provider VARCHAR(50),
     provider_id VARCHAR(255),
@@ -653,7 +657,9 @@ cfg.StorageConfig = auth.StorageConfig{
         ID:           "member_id",      // Your primary key column
         Email:        "email_address",  // Your email column
         PasswordHash: "pwd_hash",       // Your password column
-        Name:         "full_name",      // Your name column
+        Username:     "username",      // Your username column
+        FirstName:    "first_name",    // Your first name column
+        LastName:     "last_name",     // Your last name column
         // ... map all required fields to your schema
     },
     // ... other column mappings
