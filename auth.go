@@ -45,7 +45,7 @@ package auth
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	mathrand "math/rand"
 	"net/http"
 	"time"
@@ -255,6 +255,7 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 	// Initialize storage interface with PostgreSQL
 	storage, err := NewPostgresStorage(cfg.DatabaseDSN, cfg.StorageConfig)
 	if err != nil {
+		slog.Error("Failed to initialize storage", "error", err, "dsn", cfg.DatabaseDSN)
 		return nil, fmt.Errorf("failed to initialize storage: %w", err)
 	}
 
@@ -279,6 +280,7 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 			}
 			scopes = []string{"identify", "email"}
 		default:
+			slog.Error("Unsupported OAuth provider", "provider", provider)
 			return nil, fmt.Errorf("unsupported OAuth provider: %s", provider)
 		}
 
@@ -326,11 +328,13 @@ type SignUpRequest struct {
 func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User, error) {
 	// Validate email format
 	if !isValidEmail(req.Email) {
+		slog.Warn("Invalid email format provided", "email", req.Email)
 		return nil, fmt.Errorf("invalid email format")
 	}
 
 	// Validate password strength
 	if err := validatePasswordStrength(req.Password, a.securityConfig); err != nil {
+		slog.Warn("Password validation failed", "error", err, "email", req.Email)
 		return nil, err
 	}
 
@@ -340,11 +344,13 @@ func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User,
 		return nil, ErrUserExists
 	}
 	if err != ErrUserNotFound {
+		slog.Error("Failed to check existing user", "error", err, "email", req.Email)
 		return nil, fmt.Errorf("failed to check existing user: %w", err)
 	}
 
 	hashedPassword, err := hashPassword(req.Password)
 	if err != nil {
+		slog.Error("Failed to hash password", "error", err, "email", req.Email)
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
@@ -353,6 +359,7 @@ func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User,
 	if a.securityConfig.RequireEmailVerification {
 		verificationToken, err = generateVerificationToken()
 		if err != nil {
+			slog.Error("Failed to generate verification token", "error", err, "email", req.Email)
 			return nil, fmt.Errorf("failed to generate verification token: %w", err)
 		}
 	}
@@ -378,11 +385,13 @@ func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User,
 	}
 
 	if err := a.storage.CreateUser(&user); err != nil {
+		slog.Error("Failed to create user", "error", err, "email", req.Email, "username", req.Username)
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
 	// Assign user to tenant if multi-tenant is enabled
 	if err := a.assignUserToDefaultTenant(&user, tenantID); err != nil {
+		slog.Error("Failed to assign user to tenant", "error", err, "user_id", user.ID, "tenant_id", tenantID)
 		return nil, fmt.Errorf("failed to assign user to tenant: %w", err)
 	}
 
@@ -414,11 +423,13 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 			)
 			return nil, ErrInvalidCredentials
 		}
+		slog.Error("Database error during user lookup", "error", err, "email", email)
 		return nil, fmt.Errorf("database error: %w", err)
 	}
 
 	// Check if account is suspended
 	if user.IsSuspended {
+		slog.Warn("Login attempt on suspended account", "user_id", user.ID, "email", email, "suspend_reason", user.SuspendReason)
 		a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
 			"Login attempt on suspended account", ip, userAgent, location)
 		return nil, fmt.Errorf("account is suspended: %s", user.SuspendReason)
@@ -426,6 +437,7 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 
 	// Check if account is inactive
 	if !user.IsActive {
+		slog.Warn("Login attempt on inactive account", "user_id", user.ID, "email", email)
 		a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
 			"Login attempt on inactive account", ip, userAgent, location)
 		return nil, fmt.Errorf("account is inactive")
@@ -433,11 +445,13 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 
 	// Check if email verification is required and not verified
 	if a.securityConfig.RequireEmailVerification && !user.EmailVerified {
+		slog.Warn("Login attempt with unverified email", "user_id", user.ID, "email", email)
 		return nil, fmt.Errorf("email not verified")
 	}
 
 	// Check if account is locked
 	if a.isAccountLocked(user) {
+		slog.Warn("Login attempt on locked account", "user_id", user.ID, "email", email, "locked_until", user.LockedUntil)
 		a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
 			"Login attempt on locked account", ip, userAgent, location)
 		return nil, fmt.Errorf("account is locked until %v", user.LockedUntil.Format(time.RFC3339))
@@ -449,7 +463,7 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 		// Record failed login attempt
 		if err := a.recordFailedLogin(user, ip, userAgent); err != nil {
 			// Log error but don't block the response
-			fmt.Printf("Failed to record failed login: %v\n", err)
+			slog.Error("Failed to record failed login", "error", err, "user_id", user.ID, "email", email)
 		}
 		return nil, ErrInvalidCredentials
 	}
@@ -457,7 +471,7 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 	// Password is correct, record successful login
 	if err := a.recordSuccessfulLogin(user, ip, userAgent, location); err != nil {
 		// Log error but don't block the response
-		fmt.Printf("Failed to record successful login: %v\n", err)
+		slog.Error("Failed to record successful login", "error", err, "user_id", user.ID, "email", email)
 	}
 
 	return user, nil
@@ -487,6 +501,7 @@ func (a *AuthService) GetOAuthURL(provider string, r *http.Request) (string, str
 
 	// Store in storage backend
 	if err := a.storage.StoreOAuthState(oauthState); err != nil {
+		slog.Error("Failed to store OAuth state", "error", err, "provider", provider)
 		return "", "", fmt.Errorf("failed to store OAuth state: %w", err)
 	}
 
@@ -497,23 +512,26 @@ func (a *AuthService) ValidateOAuthState(state, csrfToken string) error {
 	// Retrieve state from storage
 	storedState, err := a.storage.GetOAuthState(state)
 	if err != nil {
+		slog.Warn("Invalid OAuth state attempted", "error", err, "state", state)
 		return fmt.Errorf("invalid OAuth state")
 	}
 
 	// Check expiration
 	if time.Now().After(storedState.ExpiresAt) {
+		slog.Warn("OAuth state expired", "state", state, "expired_at", storedState.ExpiresAt)
 		return fmt.Errorf("OAuth state expired")
 	}
 
 	// Validate CSRF token using constant time comparison
 	if subtle.ConstantTimeCompare([]byte(csrfToken), []byte(storedState.CSRF)) != 1 {
+		slog.Warn("CSRF token mismatch", "state", state)
 		return fmt.Errorf("CSRF token mismatch")
 	}
 
 	// Delete the used state
 	if err := a.storage.DeleteOAuthState(state); err != nil {
 		// Log error but don't fail the validation
-		log.Printf("failed to delete OAuth state: %v", err)
+		slog.Error("Failed to delete OAuth state", "error", err, "state", state)
 	}
 
 	return nil
@@ -636,6 +654,7 @@ func (a *AuthService) CreateTenant(name, slug, domain string) (*Tenant, error) {
 	}
 
 	if err := a.storage.CreateTenant(tenant); err != nil {
+		slog.Error("Failed to create tenant", "error", err, "name", name, "slug", slug)
 		return nil, fmt.Errorf("failed to create tenant: %w", err)
 	}
 
@@ -662,6 +681,7 @@ func (a *AuthService) CreateRole(tenantID uint, name, description string, isSyst
 	}
 
 	if err := a.storage.CreateRole(role); err != nil {
+		slog.Error("Failed to create role", "error", err, "tenant_id", tenantID, "name", name)
 		return nil, fmt.Errorf("failed to create role: %w", err)
 	}
 
@@ -683,6 +703,7 @@ func (a *AuthService) CreatePermission(name, resource, action, description strin
 	}
 
 	if err := a.storage.CreatePermission(permission); err != nil {
+		slog.Error("Failed to create permission", "error", err, "name", name, "resource", resource, "action", action)
 		return nil, fmt.Errorf("failed to create permission: %w", err)
 	}
 
@@ -724,6 +745,7 @@ func (a *AuthService) InitiatePasswordReset(email string) error {
 
 	token, err := generatePasswordResetToken()
 	if err != nil {
+		slog.Error("Failed to generate reset token", "error", err, "email", email)
 		return fmt.Errorf("failed to generate reset token: %w", err)
 	}
 
@@ -732,6 +754,7 @@ func (a *AuthService) InitiatePasswordReset(email string) error {
 	user.PasswordResetExpiresAt = &expiresAt
 
 	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to save reset token", "error", err, "user_id", user.ID, "email", email)
 		return fmt.Errorf("failed to save reset token: %w", err)
 	}
 
@@ -744,22 +767,26 @@ func (a *AuthService) InitiatePasswordReset(email string) error {
 func (a *AuthService) ResetPassword(token, newPassword string) error {
 	user, err := a.storage.GetUserByPasswordResetToken(token)
 	if err != nil {
+		slog.Warn("Invalid reset token used", "error", err, "token", token)
 		return fmt.Errorf("invalid reset token")
 	}
 
 	// Check if token is expired
 	if user.PasswordResetExpiresAt == nil || time.Now().After(*user.PasswordResetExpiresAt) {
+		slog.Warn("Expired reset token used", "user_id", user.ID, "token", token, "expired_at", user.PasswordResetExpiresAt)
 		return fmt.Errorf("reset token has expired")
 	}
 
 	// Validate new password
 	if err := validatePasswordStrength(newPassword, a.securityConfig); err != nil {
+		slog.Warn("Password validation failed during reset", "error", err, "user_id", user.ID)
 		return err
 	}
 
 	// Hash new password
 	hashedPassword, err := hashPassword(newPassword)
 	if err != nil {
+		slog.Error("Failed to hash password during reset", "error", err, "user_id", user.ID)
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
@@ -771,6 +798,7 @@ func (a *AuthService) ResetPassword(token, newPassword string) error {
 	user.PasswordResetExpiresAt = nil
 
 	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to update password", "error", err, "user_id", user.ID)
 		return fmt.Errorf("failed to update password: %w", err)
 	}
 
@@ -784,21 +812,25 @@ func (a *AuthService) ResetPassword(token, newPassword string) error {
 func (a *AuthService) SendEmailVerification(userID uint) error {
 	user, err := a.storage.GetUserByID(userID)
 	if err != nil {
+		slog.Error("User not found for email verification", "error", err, "user_id", userID)
 		return fmt.Errorf("user not found: %w", err)
 	}
 
 	if user.EmailVerified {
+		slog.Warn("Attempt to send verification for already verified email", "user_id", userID, "email", user.Email)
 		return fmt.Errorf("email already verified")
 	}
 
 	token, err := generateVerificationToken()
 	if err != nil {
+		slog.Error("Failed to generate verification token", "error", err, "user_id", userID)
 		return fmt.Errorf("failed to generate verification token: %w", err)
 	}
 
 	user.VerificationToken = token
 
 	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to save verification token", "error", err, "user_id", userID)
 		return fmt.Errorf("failed to save verification token: %w", err)
 	}
 
@@ -808,16 +840,19 @@ func (a *AuthService) SendEmailVerification(userID uint) error {
 func (a *AuthService) VerifyEmail(token string) error {
 	user, err := a.storage.GetUserByVerificationToken(token)
 	if err != nil {
+		slog.Warn("Invalid verification token used", "error", err, "token", token)
 		return fmt.Errorf("invalid verification token")
 	}
 
 	// Check if already verified
 	if user.EmailVerified {
+		slog.Warn("Attempt to verify already verified email", "user_id", user.ID, "email", user.Email)
 		return fmt.Errorf("email already verified")
 	}
 
 	// Check if token has expired (48 hours)
 	if user.VerificationToken == "" || user.EmailVerifiedAt != nil {
+		slog.Warn("Invalid or expired verification token", "user_id", user.ID, "token", token)
 		return fmt.Errorf("invalid verification token")
 	}
 
@@ -828,6 +863,7 @@ func (a *AuthService) VerifyEmail(token string) error {
 	user.VerificationToken = "" // Clear the token after use
 
 	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to verify email", "error", err, "user_id", user.ID)
 		return fmt.Errorf("failed to verify email: %w", err)
 	}
 
@@ -843,15 +879,18 @@ func (a *AuthService) CreateSession(userID uint, ip, userAgent, location string)
 	// Check if user has too many active sessions
 	activeCount, err := a.storage.CountActiveSessions(userID)
 	if err != nil {
+		slog.Error("Failed to count active sessions", "error", err, "user_id", userID)
 		return nil, fmt.Errorf("failed to count active sessions: %w", err)
 	}
 
 	if activeCount >= 5 { // Default max sessions
+		slog.Warn("Maximum number of active sessions reached", "user_id", userID, "active_count", activeCount)
 		return nil, fmt.Errorf("maximum number of active sessions reached")
 	}
 
 	token, err := generateSecureToken(48)
 	if err != nil {
+		slog.Error("Failed to generate session token", "error", err, "user_id", userID)
 		return nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
 
@@ -873,6 +912,7 @@ func (a *AuthService) CreateSession(userID uint, ip, userAgent, location string)
 	}
 
 	if err := a.storage.CreateSession(session); err != nil {
+		slog.Error("Failed to create session", "error", err, "user_id", userID, "session_id", session.ID)
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
@@ -889,10 +929,12 @@ func (a *AuthService) GetUserSessions(userID uint) ([]*Session, error) {
 func (a *AuthService) RevokeSession(sessionID string) error {
 	session, err := a.storage.GetSession(sessionID)
 	if err != nil {
+		slog.Error("Session not found for revocation", "error", err, "session_id", sessionID)
 		return fmt.Errorf("session not found: %w", err)
 	}
 
 	if err := a.storage.DeleteSession(sessionID); err != nil {
+		slog.Error("Failed to revoke session", "error", err, "session_id", sessionID)
 		return fmt.Errorf("failed to revoke session: %w", err)
 	}
 
@@ -904,6 +946,7 @@ func (a *AuthService) RevokeSession(sessionID string) error {
 
 func (a *AuthService) RevokeAllUserSessions(userID uint) error {
 	if err := a.storage.DeleteUserSessions(userID); err != nil {
+		slog.Error("Failed to revoke user sessions", "error", err, "user_id", userID)
 		return fmt.Errorf("failed to revoke user sessions: %w", err)
 	}
 

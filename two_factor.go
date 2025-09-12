@@ -5,6 +5,7 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/pquerna/otp/totp"
@@ -14,10 +15,12 @@ import (
 func (a *AuthService) EnableTwoFactor(userID uint) (string, []string, error) {
 	user, err := a.storage.GetUserByID(userID)
 	if err != nil {
+		slog.Error("User not found for 2FA enable", "error", err, "user_id", userID)
 		return "", nil, fmt.Errorf("user not found: %w", err)
 	}
 
 	if user.TwoFactorEnabled {
+		slog.Warn("Attempt to enable 2FA when already enabled", "user_id", userID)
 		return "", nil, fmt.Errorf("2FA is already enabled")
 	}
 
@@ -32,6 +35,7 @@ func (a *AuthService) EnableTwoFactor(userID uint) (string, []string, error) {
 
 	backupCodesJSON, err := json.Marshal(backupCodes)
 	if err != nil {
+		slog.Error("Failed to encode backup codes", "error", err, "user_id", userID)
 		return "", nil, fmt.Errorf("failed to encode backup codes: %w", err)
 	}
 
@@ -41,6 +45,7 @@ func (a *AuthService) EnableTwoFactor(userID uint) (string, []string, error) {
 	user.TwoFactorEnabled = true
 
 	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to enable 2FA", "error", err, "user_id", userID)
 		return "", nil, fmt.Errorf("failed to enable 2FA: %w", err)
 	}
 
@@ -51,10 +56,12 @@ func (a *AuthService) EnableTwoFactor(userID uint) (string, []string, error) {
 func (a *AuthService) ValidateTwoFactor(userID uint, code string) error {
 	user, err := a.storage.GetUserByID(userID)
 	if err != nil {
+		slog.Error("User not found for 2FA validation", "error", err, "user_id", userID)
 		return fmt.Errorf("user not found: %w", err)
 	}
 
 	if !user.TwoFactorEnabled {
+		slog.Warn("Attempt to validate 2FA when not enabled", "user_id", userID)
 		return fmt.Errorf("2FA is not enabled")
 	}
 
@@ -67,6 +74,7 @@ func (a *AuthService) ValidateTwoFactor(userID uint, code string) error {
 	// If not valid, check backup codes
 	var backupCodes []string
 	if err := json.Unmarshal([]byte(user.BackupCodes), &backupCodes); err != nil {
+		slog.Error("Failed to decode backup codes", "error", err, "user_id", userID)
 		return fmt.Errorf("failed to decode backup codes: %w", err)
 	}
 
@@ -82,6 +90,7 @@ func (a *AuthService) ValidateTwoFactor(userID uint, code string) error {
 		}
 	}
 
+	slog.Warn("Invalid 2FA code attempted", "user_id", userID)
 	return fmt.Errorf("invalid 2FA code")
 }
 
@@ -89,10 +98,12 @@ func (a *AuthService) ValidateTwoFactor(userID uint, code string) error {
 func (a *AuthService) DisableTwoFactor(userID uint) error {
 	user, err := a.storage.GetUserByID(userID)
 	if err != nil {
+		slog.Error("User not found for 2FA disable", "error", err, "user_id", userID)
 		return fmt.Errorf("user not found: %w", err)
 	}
 
 	if !user.TwoFactorEnabled {
+		slog.Warn("Attempt to disable 2FA when not enabled", "user_id", userID)
 		return fmt.Errorf("2FA is not enabled")
 	}
 
@@ -101,6 +112,7 @@ func (a *AuthService) DisableTwoFactor(userID uint) error {
 	user.BackupCodes = ""
 
 	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to disable 2FA", "error", err, "user_id", userID)
 		return fmt.Errorf("failed to disable 2FA: %w", err)
 	}
 

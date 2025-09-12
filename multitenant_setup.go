@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"log/slog"
 )
 
 // SetupDefaultTenant creates a default tenant and basic roles if they don't exist
@@ -26,23 +27,26 @@ func (a *AuthService) SetupDefaultTenant() error {
 	}
 	
 	if err := a.storage.CreateTenant(tenant); err != nil {
+		slog.Error("Failed to create default tenant", "error", err, "tenant_name", tenant.Name)
 		return fmt.Errorf("failed to create default tenant: %w", err)
 	}
 	
 	// Update the tenant ID to match the expected default ID
 	if tenant.ID != a.storageConfig.MultiTenant.DefaultTenantID {
 		// This is a simplification; in practice, you might want to handle this differently
-		fmt.Printf("Warning: Default tenant created with ID %d but expected %d\n", 
-			tenant.ID, a.storageConfig.MultiTenant.DefaultTenantID)
+		slog.Warn("Default tenant created with different ID than expected",
+			"created_id", tenant.ID, "expected_id", a.storageConfig.MultiTenant.DefaultTenantID)
 	}
 
 	// Create default roles
 	if err := a.createDefaultRoles(tenant.ID); err != nil {
+		slog.Error("Failed to create default roles", "error", err, "tenant_id", tenant.ID)
 		return fmt.Errorf("failed to create default roles: %w", err)
 	}
 
 	// Create default permissions
 	if err := a.createDefaultPermissions(); err != nil {
+		slog.Error("Failed to create default permissions", "error", err)
 		return fmt.Errorf("failed to create default permissions: %w", err)
 	}
 
@@ -74,6 +78,7 @@ func (a *AuthService) createDefaultRoles(tenantID uint) error {
 
 	for _, role := range defaultRoles {
 		if err := a.storage.CreateRole(&role); err != nil {
+			slog.Error("Failed to create role", "error", err, "role_name", role.Name, "tenant_id", tenantID)
 			return fmt.Errorf("failed to create role %s: %w", role.Name, err)
 		}
 	}
@@ -98,6 +103,7 @@ func (a *AuthService) createDefaultPermissions() error {
 
 	for _, permission := range defaultPermissions {
 		if err := a.storage.CreatePermission(&permission); err != nil {
+			slog.Error("Failed to create permission", "error", err, "permission_name", permission.Name)
 			return fmt.Errorf("failed to create permission %s: %w", permission.Name, err)
 		}
 	}
@@ -110,12 +116,14 @@ func (a *AuthService) AssignDefaultPermissions(tenantID uint) error {
 	// Get roles
 	roles, err := a.storage.GetRolesByTenant(tenantID)
 	if err != nil {
+		slog.Error("Failed to get roles", "error", err, "tenant_id", tenantID)
 		return fmt.Errorf("failed to get roles: %w", err)
 	}
 
 	// Get permissions
 	permissions, err := a.storage.ListPermissions()
 	if err != nil {
+		slog.Error("Failed to get permissions", "error", err)
 		return fmt.Errorf("failed to get permissions: %w", err)
 	}
 
@@ -134,6 +142,7 @@ func (a *AuthService) AssignDefaultPermissions(tenantID uint) error {
 	if adminRole, exists := roleMap["admin"]; exists {
 		for _, permission := range permissions {
 			if err := a.storage.AssignPermissionToRole(adminRole.ID, permission.ID); err != nil {
+				slog.Error("Failed to assign permission to admin", "error", err, "permission_name", permission.Name, "role_id", adminRole.ID)
 				return fmt.Errorf("failed to assign permission %s to admin: %w", permission.Name, err)
 			}
 		}
@@ -145,6 +154,7 @@ func (a *AuthService) AssignDefaultPermissions(tenantID uint) error {
 		for _, permName := range userPermissions {
 			if permission, exists := permissionMap[permName]; exists {
 				if err := a.storage.AssignPermissionToRole(userRole.ID, permission.ID); err != nil {
+					slog.Error("Failed to assign permission to user", "error", err, "permission_name", permName, "role_id", userRole.ID)
 					return fmt.Errorf("failed to assign permission %s to user: %w", permName, err)
 				}
 			}
@@ -157,6 +167,7 @@ func (a *AuthService) AssignDefaultPermissions(tenantID uint) error {
 		for _, permName := range readonlyPermissions {
 			if permission, exists := permissionMap[permName]; exists {
 				if err := a.storage.AssignPermissionToRole(readonlyRole.ID, permission.ID); err != nil {
+					slog.Error("Failed to assign permission to readonly", "error", err, "permission_name", permName, "role_id", readonlyRole.ID)
 					return fmt.Errorf("failed to assign permission %s to readonly: %w", permName, err)
 				}
 			}

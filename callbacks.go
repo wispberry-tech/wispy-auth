@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 )
 
 func (a *AuthService) HandleOAuthCallback(provider, code string) (*User, error) {
@@ -14,6 +15,7 @@ func (a *AuthService) HandleOAuthCallback(provider, code string) (*User, error) 
 
 	token, err := config.Exchange(context.Background(), code)
 	if err != nil {
+		slog.Error("OAuth exchange failed", "error", err, "provider", provider, "code", code)
 		return nil, fmt.Errorf("oauth exchange failed: %w", err)
 	}
 
@@ -44,11 +46,13 @@ func (a *AuthService) HandleOAuthCallback(provider, code string) (*User, error) 
 
 	resp, err := client.Get(userInfoURL)
 	if err != nil {
+		slog.Error("Failed to get user info from OAuth provider", "error", err, "provider", provider, "url", userInfoURL)
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		slog.Error("Failed to decode user info from OAuth provider", "error", err, "provider", provider)
 		return nil, fmt.Errorf("failed to decode user info: %w", err)
 	}
 
@@ -87,6 +91,7 @@ func (a *AuthService) HandleOAuthCallback(provider, code string) (*User, error) 
 			existingEmailUser.ProviderID = userInfo.ID
 			existingEmailUser.AvatarURL = avatarURL
 			if err := a.storage.UpdateUser(existingEmailUser); err != nil {
+				slog.Error("Failed to update user provider", "error", err, "user_id", existingEmailUser.ID, "provider", provider)
 				return nil, fmt.Errorf("failed to update user provider: %w", err)
 			}
 			return existingEmailUser, nil
@@ -101,22 +106,26 @@ func (a *AuthService) HandleOAuthCallback(provider, code string) (*User, error) 
 			AvatarURL:  avatarURL,
 		}
 		if err := a.storage.CreateUser(&newUser); err != nil {
+			slog.Error("Failed to create OAuth user", "error", err, "email", userEmail, "provider", provider)
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
 
 		// Assign user to default tenant if multi-tenant is enabled
 		if err := a.assignUserToDefaultTenant(&newUser, 0); err != nil {
+			slog.Error("Failed to assign OAuth user to tenant", "error", err, "user_id", newUser.ID, "provider", provider)
 			return nil, fmt.Errorf("failed to assign user to tenant: %w", err)
 		}
 
 		user = &newUser
 	} else if err != nil {
+		slog.Error("Database error during OAuth callback", "error", err, "provider", provider, "provider_id", userInfo.ID)
 		return nil, fmt.Errorf("database error: %w", err)
 	} else {
 		// Update existing user's info
 		user.Username = userName // Only updating username since that's what OAuth providers typically give us
 		user.AvatarURL = avatarURL
 		if err := a.storage.UpdateUser(user); err != nil {
+			slog.Error("Failed to update existing OAuth user", "error", err, "user_id", user.ID, "provider", provider)
 			return nil, fmt.Errorf("failed to update user: %w", err)
 		}
 	}

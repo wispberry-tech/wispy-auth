@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -25,12 +26,14 @@ func (a *AuthService) initiatePasswordResetInternal(email string) error {
 	user.PasswordResetExpiresAt = &expiresAt
 
 	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to save reset token", "error", err, "user_id", user.ID, "email", email)
 		return fmt.Errorf("failed to save reset token: %w", err)
 	}
 
 	// Send reset email if email service is configured
 	if a.emailService != nil {
 		if err := a.emailService.SendPasswordResetEmail(user.Email, token); err != nil {
+			slog.Error("Failed to send reset email", "error", err, "email", user.Email, "user_id", user.ID)
 			return fmt.Errorf("failed to send reset email: %w", err)
 		}
 	}
@@ -41,11 +44,13 @@ func (a *AuthService) initiatePasswordResetInternal(email string) error {
 func (a *AuthService) CompletePasswordReset(token, newPassword string) error {
 	user, err := a.storage.GetUserByPasswordResetToken(token)
 	if err != nil {
+		slog.Warn("Invalid reset token used", "error", err, "token", token)
 		return fmt.Errorf("invalid reset token")
 	}
 
 	// Check if token has expired
 	if user.PasswordResetExpiresAt == nil || time.Now().After(*user.PasswordResetExpiresAt) {
+		slog.Warn("Expired reset token used", "user_id", user.ID, "token", token, "expired_at", user.PasswordResetExpiresAt)
 		return fmt.Errorf("reset token has expired")
 	}
 
@@ -57,6 +62,7 @@ func (a *AuthService) CompletePasswordReset(token, newPassword string) error {
 	// Hash new password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
+		slog.Error("Failed to hash password during reset", "error", err, "user_id", user.ID)
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
@@ -68,6 +74,7 @@ func (a *AuthService) CompletePasswordReset(token, newPassword string) error {
 	user.PasswordResetExpiresAt = nil
 
 	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to update password", "error", err, "user_id", user.ID)
 		return fmt.Errorf("failed to update password: %w", err)
 	}
 
@@ -78,7 +85,7 @@ func (a *AuthService) CompletePasswordReset(token, newPassword string) error {
 	// Delete all existing sessions
 	if err := a.storage.DeleteUserSessions(user.ID); err != nil {
 		// Log but don't fail the reset
-		fmt.Printf("Failed to delete sessions: %v\n", err)
+		slog.Error("Failed to delete sessions after password reset", "error", err, "user_id", user.ID)
 	}
 
 	return nil

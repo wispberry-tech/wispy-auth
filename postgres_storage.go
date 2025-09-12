@@ -3,6 +3,7 @@ package auth
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -22,6 +23,7 @@ func (p *PostgresStorage) StoreOAuthState(state *OAuthState) error {
 
 	_, err := p.db.Exec(query, state.State, state.CSRF, state.CreatedAt, state.ExpiresAt)
 	if err != nil {
+		slog.Error("Failed to store OAuth state", "error", err, "state_id", state.State)
 		return fmt.Errorf("failed to store OAuth state: %w", err)
 	}
 
@@ -41,9 +43,11 @@ func (p *PostgresStorage) GetOAuthState(stateID string) (*OAuthState, error) {
 	)
 
 	if err == sql.ErrNoRows {
+		slog.Warn("OAuth state not found", "state_id", stateID)
 		return nil, fmt.Errorf("OAuth state not found")
 	}
 	if err != nil {
+		slog.Error("Failed to get OAuth state", "error", err, "state_id", stateID)
 		return nil, fmt.Errorf("failed to get OAuth state: %w", err)
 	}
 
@@ -55,15 +59,18 @@ func (p *PostgresStorage) DeleteOAuthState(stateID string) error {
 
 	result, err := p.db.Exec(query, stateID)
 	if err != nil {
+		slog.Error("Failed to delete OAuth state", "error", err, "state_id", stateID)
 		return fmt.Errorf("failed to delete OAuth state: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
+		slog.Error("Failed to get rows affected", "error", err, "state_id", stateID)
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 
 	if rowsAffected == 0 {
+		slog.Warn("OAuth state not found for deletion", "state_id", stateID)
 		return fmt.Errorf("OAuth state not found")
 	}
 
@@ -75,6 +82,7 @@ func NewPostgresStorage(dsn string, config StorageConfig) (StorageInterface, err
 	// Parse the connection string and convert to pgx config
 	pgxConfig, err := pgx.ParseConfig(dsn)
 	if err != nil {
+		slog.Error("Failed to parse DSN", "error", err, "dsn", dsn)
 		return nil, fmt.Errorf("failed to parse DSN: %w", err)
 	}
 
@@ -83,6 +91,7 @@ func NewPostgresStorage(dsn string, config StorageConfig) (StorageInterface, err
 
 	// Test the connection
 	if err := db.Ping(); err != nil {
+		slog.Error("Failed to ping database", "error", err)
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 

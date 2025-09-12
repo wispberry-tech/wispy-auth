@@ -3,10 +3,37 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/go-playground/validator/v10"
 )
+
+// Helper function to format validation errors
+func formatValidationErrors(err error) string {
+	if validationErrors, ok := err.(validator.ValidationErrors); ok {
+		var errorMessages []string
+		for _, fieldError := range validationErrors {
+			switch fieldError.Tag() {
+			case "required":
+				errorMessages = append(errorMessages, fmt.Sprintf("%s is required", fieldError.Field()))
+			case "email":
+				errorMessages = append(errorMessages, fmt.Sprintf("%s must be a valid email address", fieldError.Field()))
+			case "min":
+				errorMessages = append(errorMessages, fmt.Sprintf("%s must be at least %s characters long", fieldError.Field(), fieldError.Param()))
+			case "max":
+				errorMessages = append(errorMessages, fmt.Sprintf("%s must be at most %s characters long", fieldError.Field(), fieldError.Param()))
+			default:
+				errorMessages = append(errorMessages, fmt.Sprintf("%s is invalid", fieldError.Field()))
+			}
+		}
+		return strings.Join(errorMessages, "; ")
+	}
+	return err.Error()
+}
 
 // Request and Response Types
 
@@ -108,7 +135,7 @@ type RevokeSessionResponse struct {
 type SignUpRequestHTTP struct {
 	Email     string `json:"email" validate:"required,email,max=255"`
 	Password  string `json:"password" validate:"required,min=8,max=128"`
-	Username  string `json:"username" validate:"required,min=2,max=100"`
+	Username  string `json:"username" validate:"omitempty,min=2,max=100"`
 	FirstName string `json:"first_name" validate:"omitempty,max=100"`
 	LastName  string `json:"last_name" validate:"omitempty,max=100"`
 }
@@ -148,15 +175,17 @@ type VerifyEmailRequestHTTP struct {
 func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 	var req SignUpRequestHTTP
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("Invalid request body in signup", "error", err, "remote_addr", r.RemoteAddr)
 		return SignUpResponse{
-			Error:      "Invalid request body",
+			Error:      fmt.Sprintf("Invalid request body: %v", err),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
 
 	if err := a.validator.Struct(req); err != nil {
+		slog.Warn("Validation failed in signup", "error", err, "email", req.Email, "remote_addr", r.RemoteAddr)
 		return SignUpResponse{
-			Error:      "Validation failed",
+			Error:      fmt.Sprintf("Validation failed: %s", formatValidationErrors(err)),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
@@ -166,29 +195,38 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 	userAgent := r.Header.Get("User-Agent")
 
 	// Create user account
+	username := req.Username
+	if username == "" {
+		// Auto-generate username from email if not provided
+		username = req.Email[:strings.Index(req.Email, "@")]
+	}
+	
 	signUpReq := SignUpRequest{
 		Email:     req.Email,
 		Password:  req.Password,
-		Username:  req.Username,
+		Username:  username,
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
 	}
 	user, err := a.SignUpWithTenant(signUpReq, 0)
 	if err != nil {
 		if errors.Is(err, ErrUserExists) {
+			slog.Warn("User already exists during signup", "email", req.Email, "remote_addr", r.RemoteAddr)
 			return SignUpResponse{
 				StatusCode: 409,
-				Error:      "User already exists",
+				Error:      "User with this email already exists",
 			}
 		} else if strings.Contains(err.Error(), "password must") || strings.Contains(err.Error(), "invalid email") {
+			slog.Warn("Password/email validation failed", "error", err, "email", req.Email)
 			return SignUpResponse{
 				StatusCode: 400,
-				Error:      err.Error(),
+				Error:      fmt.Sprintf("Validation error: %s", err.Error()),
 			}
 		} else {
+			slog.Error("Failed to create user during signup", "error", err, "email", req.Email, "remote_addr", r.RemoteAddr)
 			return SignUpResponse{
 				StatusCode: 500,
-				Error:      "Failed to create user",
+				Error:      fmt.Sprintf("Failed to create user: %s", err.Error()),
 			}
 		}
 	}
@@ -196,9 +234,10 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 	// Create session for the new user
 	session, err := a.CreateSession(user.ID, ip, userAgent, "")
 	if err != nil {
+		slog.Error("Failed to create session after signup", "error", err, "user_id", user.ID, "email", user.Email)
 		return SignUpResponse{
 			StatusCode: 500,
-			Error:      "Failed to create session",
+			Error:      fmt.Sprintf("Failed to create session: %s", err.Error()),
 		}
 	}
 
@@ -252,15 +291,17 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 	var req SignInRequestHTTP
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("Invalid request body in signin", "error", err, "remote_addr", r.RemoteAddr)
 		return SignInResponse{
-			Error:      "Invalid request body",
+			Error:      fmt.Sprintf("Invalid request body: %v", err),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
 
 	if err := a.validator.Struct(req); err != nil {
+		slog.Warn("Validation failed in signin", "error", err, "email", req.Email, "remote_addr", r.RemoteAddr)
 		return SignInResponse{
-			Error:      "Validation failed",
+			Error:      fmt.Sprintf("Validation failed: %s", formatValidationErrors(err)),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
@@ -272,30 +313,35 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 	user, err := a.SignInWithContext(req.Email, req.Password, ip, userAgent, "")
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrInvalidCredentials) {
+			slog.Warn("Invalid credentials attempt", "email", req.Email, "remote_addr", r.RemoteAddr)
 			return SignInResponse{
 				StatusCode: 401,
-				Error:      "Invalid credentials",
+				Error:      "Invalid email or password",
 			}
 		} else if strings.Contains(err.Error(), "account is locked") {
+			slog.Warn("Login attempt on locked account", "email", req.Email, "error", err)
 			return SignInResponse{
 				StatusCode: 423,
-				Error:      err.Error(),
+				Error:      fmt.Sprintf("Account locked: %s", err.Error()),
 			}
 		} else if strings.Contains(err.Error(), "account is suspended") ||
 			strings.Contains(err.Error(), "account is inactive") {
+			slog.Warn("Login attempt on suspended/inactive account", "email", req.Email, "error", err)
 			return SignInResponse{
 				StatusCode: 403,
-				Error:      err.Error(),
+				Error:      fmt.Sprintf("Account access denied: %s", err.Error()),
 			}
 		} else if strings.Contains(err.Error(), "email not verified") {
+			slog.Info("Login attempt with unverified email", "email", req.Email)
 			return SignInResponse{
 				StatusCode: 403,
-				Error:      "Email verification required",
+				Error:      "Email verification required. Please check your email and click the verification link.",
 			}
 		} else {
+			slog.Error("Internal error during signin", "error", err, "email", req.Email, "remote_addr", r.RemoteAddr)
 			return SignInResponse{
 				StatusCode: 500,
-				Error:      "Internal server error",
+				Error:      fmt.Sprintf("Authentication failed: %s", err.Error()),
 			}
 		}
 	}
@@ -303,9 +349,10 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 	// Create session for the authenticated user
 	session, err := a.CreateSession(user.ID, ip, userAgent, "")
 	if err != nil {
+		slog.Error("Failed to create session after signin", "error", err, "user_id", user.ID, "email", user.Email)
 		return SignInResponse{
 			StatusCode: 500,
-			Error:      "Failed to create session",
+			Error:      fmt.Sprintf("Failed to create session: %s", err.Error()),
 		}
 	}
 
@@ -336,17 +383,19 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
 	token := extractTokenFromRequest(r)
 	if token == "" {
+		slog.Warn("Missing authorization header", "remote_addr", r.RemoteAddr)
 		return ValidateResponse{
 			StatusCode: 401,
-			Error:      "Authorization header required",
+			Error:      "Authorization header required. Please provide a Bearer token.",
 		}
 	}
 
 	user, err := a.ValidateUser(token)
 	if err != nil {
+		slog.Warn("Token validation failed", "error", err, "remote_addr", r.RemoteAddr)
 		return ValidateResponse{
 			StatusCode: 401,
-			Error:      "Invalid token",
+			Error:      fmt.Sprintf("Invalid or expired token: %s", err.Error()),
 		}
 	}
 
@@ -373,15 +422,17 @@ func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
 func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordResponse {
 	var req ForgotPasswordRequestHTTP
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("Invalid request body in forgot password", "error", err, "remote_addr", r.RemoteAddr)
 		return ForgotPasswordResponse{
-			Error:      "Invalid request body",
+			Error:      fmt.Sprintf("Invalid request body: %v", err),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
 
 	if err := a.validator.Struct(req); err != nil {
+		slog.Warn("Validation failed in forgot password", "error", err, "email", req.Email, "remote_addr", r.RemoteAddr)
 		return ForgotPasswordResponse{
-			Error:      "Validation failed",
+			Error:      fmt.Sprintf("Validation failed: %s", formatValidationErrors(err)),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
@@ -421,34 +472,39 @@ func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordRespo
 func (a *AuthService) ResetPasswordHandler(r *http.Request) ResetPasswordResponse {
 	var req ResetPasswordRequestHTTP
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("Invalid request body in reset password", "error", err, "remote_addr", r.RemoteAddr)
 		return ResetPasswordResponse{
-			Error:      "Invalid request body",
+			Error:      fmt.Sprintf("Invalid request body: %v", err),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
 
 	if err := a.validator.Struct(req); err != nil {
+		slog.Warn("Validation failed in reset password", "error", err, "remote_addr", r.RemoteAddr)
 		return ResetPasswordResponse{
-			Error:      "Validation failed",
+			Error:      fmt.Sprintf("Validation failed: %s", formatValidationErrors(err)),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
 
 	if err := a.ResetPassword(req.Token, req.NewPassword); err != nil {
 		if strings.Contains(err.Error(), "invalid reset token") || strings.Contains(err.Error(), "expired") {
+			slog.Warn("Invalid or expired reset token used", "error", err, "remote_addr", r.RemoteAddr)
 			return ResetPasswordResponse{
 				StatusCode: 400,
-				Error:      err.Error(),
+				Error:      fmt.Sprintf("Reset token error: %s", err.Error()),
 			}
 		} else if strings.Contains(err.Error(), "password must") {
+			slog.Info("Password validation failed during reset", "error", err)
 			return ResetPasswordResponse{
 				StatusCode: 400,
-				Error:      err.Error(),
+				Error:      fmt.Sprintf("Password requirements not met: %s", err.Error()),
 			}
 		} else {
+			slog.Error("Failed to reset password", "error", err, "remote_addr", r.RemoteAddr)
 			return ResetPasswordResponse{
 				StatusCode: 500,
-				Error:      "Failed to reset password",
+				Error:      fmt.Sprintf("Password reset failed: %s", err.Error()),
 			}
 		}
 	}
@@ -476,23 +532,26 @@ func (a *AuthService) ResetPasswordHandler(r *http.Request) ResetPasswordRespons
 func (a *AuthService) VerifyEmailHandler(r *http.Request) EmailVerificationResponse {
 	var req VerifyEmailRequestHTTP
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("Invalid request body in verify email", "error", err, "remote_addr", r.RemoteAddr)
 		return EmailVerificationResponse{
-			Error:      "Invalid request body",
+			Error:      fmt.Sprintf("Invalid request body: %v", err),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
 
 	if err := a.validator.Struct(req); err != nil {
+		slog.Warn("Validation failed in verify email", "error", err, "remote_addr", r.RemoteAddr)
 		return EmailVerificationResponse{
-			Error:      "Validation failed",
+			Error:      fmt.Sprintf("Validation failed: %s", formatValidationErrors(err)),
 			StatusCode: http.StatusBadRequest,
 		}
 	}
 
 	if err := a.VerifyEmail(req.Token); err != nil {
+		slog.Warn("Email verification failed", "error", err, "remote_addr", r.RemoteAddr)
 		return EmailVerificationResponse{
 			StatusCode: 400,
-			Error:      "Invalid verification token",
+			Error:      fmt.Sprintf("Email verification failed: %s", err.Error()),
 		}
 	}
 
@@ -720,17 +779,19 @@ func (a *AuthService) RevokeAllSessionsHandler(r *http.Request) RevokeSessionRes
 // Returns OAuthResponse with authorization URL and redirect status
 func (a *AuthService) OAuthHandler(w http.ResponseWriter, r *http.Request, provider string) OAuthResponse {
 	if provider == "" {
+		slog.Warn("Missing provider parameter in OAuth", "remote_addr", r.RemoteAddr)
 		return OAuthResponse{
 			StatusCode: 400,
-			Error:      "Provider parameter required",
+			Error:      "OAuth provider parameter is required",
 		}
 	}
 
 	url, csrfToken, err := a.GetOAuthURL(provider, r)
 	if err != nil {
+		slog.Warn("Invalid OAuth provider requested", "provider", provider, "error", err, "remote_addr", r.RemoteAddr)
 		return OAuthResponse{
 			StatusCode: 400,
-			Error:      "Invalid OAuth provider",
+			Error:      fmt.Sprintf("Invalid OAuth provider '%s': %s", provider, err.Error()),
 		}
 	}
 
@@ -768,34 +829,38 @@ func (a *AuthService) OAuthHandler(w http.ResponseWriter, r *http.Request, provi
 // Returns OAuthResponse with token, user data, new user status, and any errors
 func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, state string) OAuthResponse {
 	if provider == "" || code == "" || state == "" {
+		slog.Warn("Missing OAuth callback parameters", "provider", provider, "has_code", code != "", "has_state", state != "", "remote_addr", r.RemoteAddr)
 		return OAuthResponse{
 			StatusCode: 400,
-			Error:      "Provider, code and state parameters required",
+			Error:      "OAuth callback missing required parameters: provider, code, and state are all required",
 		}
 	}
 
 	// Get CSRF token from cookie
 	csrfCookie, err := r.Cookie("_csrf")
 	if err != nil {
+		slog.Warn("CSRF cookie missing in OAuth callback", "error", err, "provider", provider, "remote_addr", r.RemoteAddr)
 		return OAuthResponse{
 			StatusCode: 400,
-			Error:      "CSRF cookie not found",
+			Error:      fmt.Sprintf("CSRF cookie not found: %s. Please restart the OAuth flow.", err.Error()),
 		}
 	}
 
 	// Validate state and CSRF token
 	if err := a.ValidateOAuthState(state, csrfCookie.Value); err != nil {
+		slog.Warn("OAuth state validation failed", "error", err, "provider", provider, "remote_addr", r.RemoteAddr)
 		return OAuthResponse{
 			StatusCode: 400,
-			Error:      err.Error(),
+			Error:      fmt.Sprintf("OAuth state validation failed: %s. Please restart the OAuth flow.", err.Error()),
 		}
 	}
 
 	user, err := a.HandleOAuthCallback(provider, code)
 	if err != nil {
+		slog.Error("OAuth callback processing failed", "error", err, "provider", provider, "remote_addr", r.RemoteAddr)
 		return OAuthResponse{
 			StatusCode: 500,
-			Error:      "OAuth failed: " + err.Error(),
+			Error:      fmt.Sprintf("OAuth authentication failed: %s", err.Error()),
 		}
 	}
 
@@ -805,9 +870,10 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, stat
 
 	token, err := a.GenerateToken(user)
 	if err != nil {
+		slog.Error("Failed to generate token after OAuth", "error", err, "user_id", user.ID, "provider", provider)
 		return OAuthResponse{
 			StatusCode: 500,
-			Error:      "Failed to generate token",
+			Error:      fmt.Sprintf("Failed to generate authentication token: %s", err.Error()),
 		}
 	}
 
