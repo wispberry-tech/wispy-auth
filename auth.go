@@ -191,6 +191,7 @@ type AuthService struct {
 	securityConfig SecurityConfig
 	emailService   EmailService
 	validator      *validator.Validate
+	developmentMode bool // Whether running in development mode
 }
 
 // Config holds the main configuration for the authentication service.
@@ -206,6 +207,9 @@ type Config struct {
 	
 	// Migration settings
 	AutoMigrate bool // Whether to automatically run migrations on startup
+	
+	// Environment configuration
+	DevelopmentMode bool // Whether running in development mode (affects cookie security)
 }
 
 // DefaultSecurityConfig returns sensible security defaults
@@ -317,6 +321,7 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 		securityConfig: cfg.SecurityConfig,
 		emailService:   cfg.EmailService,
 		validator:      validator.New(),
+		developmentMode: cfg.DevelopmentMode,
 	}, nil
 }
 
@@ -443,41 +448,22 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 		return nil, fmt.Errorf("database error: %w", err)
 	}
 
-	// Check if account is suspended
-	if user.IsSuspended {
-		slog.Warn("Login attempt on suspended account", "user_id", user.ID, "email", email, "suspend_reason", user.SuspendReason)
-		a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
-			"Login attempt on suspended account", ip, userAgent, location)
-		return nil, fmt.Errorf("account is suspended: %s", user.SuspendReason)
-	}
-
-	// Check if account is inactive
-	if !user.IsActive {
-		slog.Warn("Login attempt on inactive account", "user_id", user.ID, "email", email)
-		a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
-			"Login attempt on inactive account", ip, userAgent, location)
-		return nil, fmt.Errorf("account is inactive")
-	}
-
 	// Check if email verification is required and not verified
 	if a.securityConfig.RequireEmailVerification && !user.EmailVerified {
 		slog.Warn("Login attempt with unverified email", "user_id", user.ID, "email", email)
 		return nil, fmt.Errorf("email not verified")
 	}
 
-	// Check if account is locked
-	if a.isAccountLocked(user) {
-		slog.Warn("Login attempt on locked account", "user_id", user.ID, "email", email, "locked_until", user.LockedUntil)
-		a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
-			"Login attempt on locked account", ip, userAgent, location)
-		return nil, fmt.Errorf("account is locked until %v", user.LockedUntil.Format(time.RFC3339))
+	// Validate login attempt (checks account status, suspension, lock, etc.)
+	if err := a.validateLoginAttempt(user, ip, userAgent); err != nil {
+		return nil, err
 	}
 
 	// Verify password using constant-time comparison
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 	if err != nil {
 		// Record failed login attempt
-		if err := a.recordFailedLogin(user, ip, userAgent); err != nil {
+		if err := a.recordLoginFailure(user, ip, userAgent); err != nil {
 			// Log error but don't block the response
 			slog.Error("Failed to record failed login", "error", err, "user_id", user.ID, "email", email)
 		}
@@ -485,7 +471,7 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 	}
 
 	// Password is correct, record successful login
-	if err := a.recordSuccessfulLogin(user, ip, userAgent, location); err != nil {
+	if err := a.recordLoginSuccess(user, ip, userAgent, location); err != nil {
 		// Log error but don't block the response
 		slog.Error("Failed to record successful login", "error", err, "user_id", user.ID, "email", email)
 	}
@@ -570,68 +556,6 @@ func (a *AuthService) logSecurityEvent(userID *uint, tenantID *uint, eventType, 
 	a.storage.CreateSecurityEvent(event)
 }
 
-// shouldLockAccount checks if the account should be locked based on failed attempts
-func (a *AuthService) shouldLockAccount(user *User) bool {
-	return user.LoginAttempts >= a.securityConfig.MaxLoginAttempts
-}
-
-func (a *AuthService) lockAccount(user *User) error {
-	lockUntil := time.Now().Add(a.securityConfig.LockoutDuration)
-	user.LockedUntil = &lockUntil
-
-	if err := a.storage.UpdateUser(user); err != nil {
-		return err
-	}
-
-	a.logSecurityEvent(&user.ID, nil, EventAccountLocked,
-		fmt.Sprintf("Account locked due to %d failed login attempts", user.LoginAttempts),
-		user.LastKnownIP, "", user.LastLoginLocation)
-
-	return nil
-}
-
-func (a *AuthService) recordFailedLogin(user *User, ip, userAgent string) error {
-	user.LoginAttempts++
-	now := time.Now()
-	user.LastFailedLoginAt = &now
-	user.LastKnownIP = ip
-
-	if err := a.storage.UpdateUser(user); err != nil {
-		return err
-	}
-
-	a.logSecurityEvent(&user.ID, nil, EventLoginFailed,
-		fmt.Sprintf("Failed login attempt (%d/%d)", user.LoginAttempts, a.securityConfig.MaxLoginAttempts),
-		ip, userAgent, "")
-
-	// Lock account if too many attempts
-	if a.shouldLockAccount(user) {
-		return a.lockAccount(user)
-	}
-
-	return nil
-}
-
-func (a *AuthService) recordSuccessfulLogin(user *User, ip, userAgent, location string) error {
-	now := time.Now()
-	user.LastLoginAt = &now
-	user.LastKnownIP = ip
-	user.LastLoginLocation = location
-
-	// Reset login attempts on successful login
-	user.LoginAttempts = 0
-	user.LastFailedLoginAt = nil
-	user.LockedUntil = nil
-
-	if err := a.storage.UpdateUser(user); err != nil {
-		return err
-	}
-
-	a.logSecurityEvent(&user.ID, nil, EventLoginSuccess,
-		"Successful login", ip, userAgent, location)
-
-	return nil
-}
 
 // Multi-tenant helper methods
 func (a *AuthService) assignUserToDefaultTenant(user *User, tenantID uint) error {

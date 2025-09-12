@@ -37,6 +37,9 @@ func main() {
 		
 		// Enable auto-migrations for easy setup
 		AutoMigrate: true,
+		
+		// Development mode (affects cookie security)
+		DevelopmentMode: true,
 
 		// Enhanced security configuration
 		SecurityConfig: auth.SecurityConfig{

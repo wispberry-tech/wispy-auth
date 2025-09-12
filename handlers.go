@@ -775,7 +775,7 @@ func (a *AuthService) OAuthHandler(w http.ResponseWriter, r *http.Request, provi
 		Name:     "_csrf",
 		Value:    csrfToken,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   !a.developmentMode, // Only secure in production
 		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 		MaxAge:   900, // 15 minutes
