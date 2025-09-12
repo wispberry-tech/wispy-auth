@@ -11,7 +11,7 @@ func generateSecureRandomString(length int) string {
 	b := make([]byte, length)
 	_, err := rand.Read(b)
 	if err != nil {
-		panic(err) // This should never happen with a proper system
+		panic(err)
 	}
 	return base64.URLEncoding.EncodeToString(b)[:length]
 }

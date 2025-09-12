@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -136,6 +137,29 @@ func extractTokenFromRequest(r *http.Request) string {
 // extractIP extracts client IP from HTTP request
 func extractIP(r *http.Request) string {
 	return extractIPFromRequest(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), r.Header.Get("X-Real-IP"))
+}
+
+// Helper function to format validation errors
+func formatValidationErrors(err error) string {
+	if validationErrors, ok := err.(validator.ValidationErrors); ok {
+		var errorMessages []string
+		for _, fieldError := range validationErrors {
+			switch fieldError.Tag() {
+			case "required":
+				errorMessages = append(errorMessages, fmt.Sprintf("%s is required", fieldError.Field()))
+			case "email":
+				errorMessages = append(errorMessages, fmt.Sprintf("%s must be a valid email address", fieldError.Field()))
+			case "min":
+				errorMessages = append(errorMessages, fmt.Sprintf("%s must be at least %s characters long", fieldError.Field(), fieldError.Param()))
+			case "max":
+				errorMessages = append(errorMessages, fmt.Sprintf("%s must be at most %s characters long", fieldError.Field(), fieldError.Param()))
+			default:
+				errorMessages = append(errorMessages, fmt.Sprintf("%s is invalid", fieldError.Field()))
+			}
+		}
+		return strings.Join(errorMessages, "; ")
+	}
+	return err.Error()
 }
 
 // Security event types

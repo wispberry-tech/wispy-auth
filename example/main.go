@@ -34,35 +34,29 @@ func main() {
 
 		// Use default storage configuration
 		StorageConfig: auth.DefaultStorageConfig(),
+		
+		// Enable auto-migrations for easy setup
+		AutoMigrate: true,
 
 		// Enhanced security configuration
 		SecurityConfig: auth.SecurityConfig{
-			// Password policy
-			MinPasswordLength:   8,
-			RequireUppercase:    true,
-			RequireLowercase:    true,
-			RequireNumbers:      true,
-			RequireSpecialChars: false,
-
-			// Login protection
-			MaxLoginAttempts:     7,
-			LoginLockoutDuration: 60 * time.Minute,
-
-			// Session security
-			SessionTimeout:    24 * time.Hour,
-			MaxActiveSessions: 5,
-
 			// Email verification
 			RequireEmailVerification: true,
-			EmailVerificationExpiry:  24 * time.Hour,
+			VerificationTokenExpiry:  24 * time.Hour,
 
-			// Password reset
-			PasswordResetExpiry: 1 * time.Hour,
+			// Password policy
+			PasswordMinLength:      8,
+			PasswordRequireUpper:   true,
+			PasswordRequireLower:   true,
+			PasswordRequireNumber:  true,
+			PasswordRequireSpecial: false,
+			PasswordResetExpiry:    1 * time.Hour,
 
-			// Rate limiting
-			EnableRateLimiting:   true,
-			RateLimitWindow:      1 * time.Minute,
-			RateLimitMaxRequests: 60,
+			// Login protection
+			MaxLoginAttempts: 7,
+			LockoutDuration:  60 * time.Minute,
+			SessionLifetime:  24 * time.Hour,
+			RequireTwoFactor: false,
 		},
 
 		// OAuth providers
@@ -157,7 +151,7 @@ func main() {
 		// OAuth routes
 		r.Get("/oauth", func(w http.ResponseWriter, r *http.Request) {
 			provider := r.URL.Query().Get("provider")
-			result := authService.OAuthHandler(r, provider)
+			result := authService.OAuthHandler(w, r, provider)
 			if result.URL != "" {
 				http.Redirect(w, r, result.URL, http.StatusTemporaryRedirect)
 				return
@@ -170,7 +164,8 @@ func main() {
 		r.Get("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 			provider := r.URL.Query().Get("provider")
 			code := r.URL.Query().Get("code")
-			result := authService.OAuthCallbackHandler(r, provider, code)
+			state := r.URL.Query().Get("state")
+			result := authService.OAuthCallbackHandler(r, provider, code, state)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(result.StatusCode)
 			json.NewEncoder(w).Encode(result)

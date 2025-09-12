@@ -8,32 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/go-playground/validator/v10"
 )
-
-// Helper function to format validation errors
-func formatValidationErrors(err error) string {
-	if validationErrors, ok := err.(validator.ValidationErrors); ok {
-		var errorMessages []string
-		for _, fieldError := range validationErrors {
-			switch fieldError.Tag() {
-			case "required":
-				errorMessages = append(errorMessages, fmt.Sprintf("%s is required", fieldError.Field()))
-			case "email":
-				errorMessages = append(errorMessages, fmt.Sprintf("%s must be a valid email address", fieldError.Field()))
-			case "min":
-				errorMessages = append(errorMessages, fmt.Sprintf("%s must be at least %s characters long", fieldError.Field(), fieldError.Param()))
-			case "max":
-				errorMessages = append(errorMessages, fmt.Sprintf("%s must be at most %s characters long", fieldError.Field(), fieldError.Param()))
-			default:
-				errorMessages = append(errorMessages, fmt.Sprintf("%s is invalid", fieldError.Field()))
-			}
-		}
-		return strings.Join(errorMessages, "; ")
-	}
-	return err.Error()
-}
 
 // Request and Response Types
 
@@ -200,7 +175,7 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 		// Auto-generate username from email if not provided
 		username = req.Email[:strings.Index(req.Email, "@")]
 	}
-	
+
 	signUpReq := SignUpRequest{
 		Email:     req.Email,
 		Password:  req.Password,

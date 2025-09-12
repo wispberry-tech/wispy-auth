@@ -203,6 +203,9 @@ type Config struct {
 	StorageConfig  StorageConfig
 	SecurityConfig SecurityConfig
 	EmailService   EmailService // Email service for sending verification/reset emails
+	
+	// Migration settings
+	AutoMigrate bool // Whether to automatically run migrations on startup
 }
 
 // DefaultSecurityConfig returns sensible security defaults
@@ -257,6 +260,19 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 	if err != nil {
 		slog.Error("Failed to initialize storage", "error", err, "dsn", cfg.DatabaseDSN)
 		return nil, fmt.Errorf("failed to initialize storage: %w", err)
+	}
+
+	// Run auto-migrations if enabled
+	if cfg.AutoMigrate {
+		slog.Info("Auto-migration enabled, running database migrations")
+		if pgStorage, ok := storage.(*PostgresStorage); ok {
+			if err := pgStorage.RunMigrations(); err != nil {
+				slog.Error("Auto-migration failed", "error", err)
+				return nil, fmt.Errorf("auto-migration failed: %w", err)
+			}
+		} else {
+			slog.Warn("Auto-migration requested but storage type doesn't support it")
+		}
 	}
 
 	// Set up OAuth2 configurations for multiple providers
