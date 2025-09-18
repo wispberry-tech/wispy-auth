@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -25,13 +24,13 @@ const (
 type MiddlewareConfig struct {
 	// TokenExtractor defines how to extract token from request
 	TokenExtractor func(r *http.Request) string
-	
+
 	// TenantExtractor defines how to extract tenant context from request
 	TenantExtractor func(r *http.Request) uint
-	
+
 	// ErrorHandler defines how to handle middleware errors
 	ErrorHandler func(w http.ResponseWriter, r *http.Request, err error, statusCode int)
-	
+
 	// SkipAuth allows certain paths to skip authentication
 	SkipAuth func(r *http.Request) bool
 }
@@ -41,27 +40,11 @@ type MiddlewareConfig struct {
 // from headers/URL parameters, JSON error responses, and no auth skipping.
 func DefaultMiddlewareConfig() MiddlewareConfig {
 	return MiddlewareConfig{
-		TokenExtractor:  defaultTokenExtractor,
+		TokenExtractor:  extractTokenFromRequest,
 		TenantExtractor: defaultTenantExtractor,
 		ErrorHandler:    defaultErrorHandler,
 		SkipAuth:        func(r *http.Request) bool { return false },
 	}
-}
-
-// defaultTokenExtractor extracts session token from Authorization header.
-// It removes the "Bearer " prefix if present and returns the clean token.
-func defaultTokenExtractor(r *http.Request) string {
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		return ""
-	}
-	
-	// Remove "Bearer " prefix if present
-	if strings.HasPrefix(token, "Bearer ") {
-		return token[7:]
-	}
-	
-	return token
 }
 
 // defaultTenantExtractor extracts tenant ID from various sources.
@@ -74,21 +57,21 @@ func defaultTenantExtractor(r *http.Request) uint {
 			return uint(tenantID)
 		}
 	}
-	
+
 	// Try URL parameter
 	if tenantParam := r.URL.Query().Get("tenant_id"); tenantParam != "" {
 		if tenantID, err := strconv.ParseUint(tenantParam, 10, 32); err == nil {
 			return uint(tenantID)
 		}
 	}
-	
+
 	// Try Chi URL parameter
 	if tenantParam := chi.URLParam(r, "tenantID"); tenantParam != "" {
 		if tenantID, err := strconv.ParseUint(tenantParam, 10, 32); err == nil {
 			return uint(tenantID)
 		}
 	}
-	
+
 	return 0 // Default/no tenant
 }
 
@@ -107,14 +90,15 @@ func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error, stat
 // Optionally accepts custom MiddlewareConfig for customized behavior.
 //
 // Usage:
-//   r.Use(authService.RequireAuth())
-//   r.With(authService.RequireAuth()).Get("/protected", handler)
+//
+//	r.Use(authService.RequireAuth())
+//	r.With(authService.RequireAuth()).Get("/protected", handler)
 func (a *AuthService) RequireAuth(config ...MiddlewareConfig) func(http.Handler) http.Handler {
 	cfg := DefaultMiddlewareConfig()
 	if len(config) > 0 {
 		cfg = config[0]
 	}
-	
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check if this request should skip auth
@@ -122,41 +106,41 @@ func (a *AuthService) RequireAuth(config ...MiddlewareConfig) func(http.Handler)
 				next.ServeHTTP(w, r)
 				return
 			}
-			
+
 			// Extract token
 			token := cfg.TokenExtractor(r)
 			if token == "" {
 				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusUnauthorized)
 				return
 			}
-			
+
 			// Get session from token
 			session, err := a.storage.GetSession(token)
 			if err != nil {
 				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusUnauthorized)
 				return
 			}
-			
+
 			// Check if session is valid and active
 			if !session.IsActive || session.ExpiresAt.Before(time.Now()) {
 				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusUnauthorized)
 				return
 			}
-			
+
 			// Get user from session
 			user, err := a.storage.GetUserByID(session.UserID)
 			if err != nil {
 				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusUnauthorized)
 				return
 			}
-			
+
 			// Update session activity
 			session.LastActivity = time.Now()
 			if updateErr := a.storage.UpdateSession(session); updateErr != nil {
 				// Log the error but don't fail the request
 				slog.Warn("Failed to update session activity", "error", updateErr, "session_id", session.ID)
 			}
-			
+
 			// Add user to context
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -172,7 +156,8 @@ func (a *AuthService) RequireAuth(config ...MiddlewareConfig) func(http.Handler)
 //   - roles: One or more role names that the user must have
 //
 // Usage:
-//   r.With(authService.RequireRole("admin", "moderator")).Get("/admin", handler)
+//
+//	r.With(authService.RequireRole("admin", "moderator")).Get("/admin", handler)
 func (a *AuthService) RequireRole(roles ...string) func(http.Handler) http.Handler {
 	return a.RequireRoleInTenant(0, roles...) // Use default tenant
 }
@@ -186,10 +171,11 @@ func (a *AuthService) RequireRole(roles ...string) func(http.Handler) http.Handl
 //   - roles: One or more role names that the user must have
 //
 // Usage:
-//   r.With(authService.RequireRoleInTenant(1, "admin")).Get("/tenant/1/admin", handler)
+//
+//	r.With(authService.RequireRoleInTenant(1, "admin")).Get("/tenant/1/admin", handler)
 func (a *AuthService) RequireRoleInTenant(tenantID uint, roles ...string) func(http.Handler) http.Handler {
 	cfg := DefaultMiddlewareConfig()
-	
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Get user from context (should be set by RequireAuth)
@@ -198,25 +184,25 @@ func (a *AuthService) RequireRoleInTenant(tenantID uint, roles ...string) func(h
 				cfg.ErrorHandler(w, r, ErrUserNotFound, http.StatusUnauthorized)
 				return
 			}
-			
+
 			// Determine tenant ID
 			targetTenantID := tenantID
 			if targetTenantID == 0 {
 				targetTenantID = cfg.TenantExtractor(r)
 			}
-			
+
 			// If still no tenant ID, use default tenant
 			if targetTenantID == 0 {
 				targetTenantID = a.storageConfig.MultiTenant.DefaultTenantID
 			}
-			
+
 			// Get user's tenants and roles
 			userTenants, err := a.GetUserTenants(user.ID)
 			if err != nil {
 				cfg.ErrorHandler(w, r, err, http.StatusInternalServerError)
 				return
 			}
-			
+
 			// Check if user has required role in the tenant
 			hasRole := false
 			for _, ut := range userTenants {
@@ -235,12 +221,12 @@ func (a *AuthService) RequireRoleInTenant(tenantID uint, roles ...string) func(h
 					break
 				}
 			}
-			
+
 			if !hasRole {
 				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusForbidden)
 				return
 			}
-			
+
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -254,7 +240,8 @@ func (a *AuthService) RequireRoleInTenant(tenantID uint, roles ...string) func(h
 //   - permissions: One or more permission names that the user must have
 //
 // Usage:
-//   r.With(authService.RequirePermission("users.read", "users.write")).Get("/users", handler)
+//
+//	r.With(authService.RequirePermission("users.read", "users.write")).Get("/users", handler)
 func (a *AuthService) RequirePermission(permissions ...string) func(http.Handler) http.Handler {
 	return a.RequirePermissionInTenant(0, permissions...)
 }
@@ -268,10 +255,11 @@ func (a *AuthService) RequirePermission(permissions ...string) func(http.Handler
 //   - permissions: One or more permission names that the user must have
 //
 // Usage:
-//   r.With(authService.RequirePermissionInTenant(1, "billing.read")).Get("/tenant/1/billing", handler)
+//
+//	r.With(authService.RequirePermissionInTenant(1, "billing.read")).Get("/tenant/1/billing", handler)
 func (a *AuthService) RequirePermissionInTenant(tenantID uint, permissions ...string) func(http.Handler) http.Handler {
 	cfg := DefaultMiddlewareConfig()
-	
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Get user from context (should be set by RequireAuth)
@@ -280,18 +268,18 @@ func (a *AuthService) RequirePermissionInTenant(tenantID uint, permissions ...st
 				cfg.ErrorHandler(w, r, ErrUserNotFound, http.StatusUnauthorized)
 				return
 			}
-			
+
 			// Determine tenant ID
 			targetTenantID := tenantID
 			if targetTenantID == 0 {
 				targetTenantID = cfg.TenantExtractor(r)
 			}
-			
+
 			// If still no tenant ID, use default tenant
 			if targetTenantID == 0 {
 				targetTenantID = a.storageConfig.MultiTenant.DefaultTenantID
 			}
-			
+
 			// Check each required permission
 			for _, permission := range permissions {
 				hasPermission, err := a.UserHasPermission(user.ID, targetTenantID, permission)
@@ -299,19 +287,19 @@ func (a *AuthService) RequirePermissionInTenant(tenantID uint, permissions ...st
 					cfg.ErrorHandler(w, r, err, http.StatusInternalServerError)
 					return
 				}
-				
+
 				if !hasPermission {
 					cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusForbidden)
 					return
 				}
 			}
-			
+
 			// Add tenant ID to context for convenience
 			if targetTenantID > 0 {
 				ctx := context.WithValue(r.Context(), TenantContextKey, targetTenantID)
 				r = r.WithContext(ctx)
 			}
-			
+
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -325,11 +313,12 @@ func (a *AuthService) RequirePermissionInTenant(tenantID uint, permissions ...st
 //   - tenantID: Optional specific tenant ID (if not provided, extracted from request)
 //
 // Usage:
-//   r.With(authService.RequireTenant(1)).Get("/tenant/1/data", handler)
-//   r.With(authService.RequireTenant()).Get("/tenant/{tenantID}/data", handler)
+//
+//	r.With(authService.RequireTenant(1)).Get("/tenant/1/data", handler)
+//	r.With(authService.RequireTenant()).Get("/tenant/{tenantID}/data", handler)
 func (a *AuthService) RequireTenant(tenantID ...uint) func(http.Handler) http.Handler {
 	cfg := DefaultMiddlewareConfig()
-	
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Get user from context (should be set by RequireAuth)
@@ -338,7 +327,7 @@ func (a *AuthService) RequireTenant(tenantID ...uint) func(http.Handler) http.Ha
 				cfg.ErrorHandler(w, r, ErrUserNotFound, http.StatusUnauthorized)
 				return
 			}
-			
+
 			// Determine required tenant ID
 			var requiredTenantID uint
 			if len(tenantID) > 0 {
@@ -346,19 +335,19 @@ func (a *AuthService) RequireTenant(tenantID ...uint) func(http.Handler) http.Ha
 			} else {
 				requiredTenantID = cfg.TenantExtractor(r)
 			}
-			
+
 			if requiredTenantID == 0 {
 				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusBadRequest)
 				return
 			}
-			
+
 			// Check if user belongs to this tenant
 			userTenants, err := a.GetUserTenants(user.ID)
 			if err != nil {
 				cfg.ErrorHandler(w, r, err, http.StatusInternalServerError)
 				return
 			}
-			
+
 			belongsToTenant := false
 			var userTenant *UserTenant
 			for _, ut := range userTenants {
@@ -368,12 +357,12 @@ func (a *AuthService) RequireTenant(tenantID ...uint) func(http.Handler) http.Ha
 					break
 				}
 			}
-			
+
 			if !belongsToTenant {
 				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusForbidden)
 				return
 			}
-			
+
 			// Add tenant to context
 			ctx := context.WithValue(r.Context(), TenantContextKey, userTenant.Tenant)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -389,8 +378,9 @@ func (a *AuthService) RequireTenant(tenantID ...uint) func(http.Handler) http.Ha
 //   - middlewares: One or more middleware functions to chain together
 //
 // Usage:
-//   combined := authService.Chain(RequireAuth(), RequireRole("admin"), RequireTenant())
-//   r.With(combined).Get("/admin", handler)
+//
+//	combined := authService.Chain(RequireAuth(), RequireRole("admin"), RequireTenant())
+//	r.With(combined).Get("/admin", handler)
 func (a *AuthService) Chain(middlewares ...func(http.Handler) http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		for i := len(middlewares) - 1; i >= 0; i-- {
@@ -437,11 +427,11 @@ func GetTenantIDFromContext(r *http.Request) (uint, bool) {
 	if tenant, ok := GetTenantFromContext(r); ok && tenant != nil {
 		return tenant.ID, true
 	}
-	
+
 	if tenantID, ok := r.Context().Value(TenantContextKey).(uint); ok {
 		return tenantID, true
 	}
-	
+
 	return 0, false
 }
 
@@ -486,7 +476,8 @@ func MustGetTenantFromContext(r *http.Request) *Tenant {
 //   - roles: One or more role names that the user must have
 //
 // Usage:
-//   r.With(authService.RequireAuthAndRole("admin")).Get("/admin", handler)
+//
+//	r.With(authService.RequireAuthAndRole("admin")).Get("/admin", handler)
 func (a *AuthService) RequireAuthAndRole(roles ...string) func(http.Handler) http.Handler {
 	return a.Chain(
 		a.RequireAuth(),
@@ -501,7 +492,8 @@ func (a *AuthService) RequireAuthAndRole(roles ...string) func(http.Handler) htt
 //   - permissions: One or more permission names that the user must have
 //
 // Usage:
-//   r.With(authService.RequireAuthAndPermission("users.read")).Get("/users", handler)
+//
+//	r.With(authService.RequireAuthAndPermission("users.read")).Get("/users", handler)
 func (a *AuthService) RequireAuthAndPermission(permissions ...string) func(http.Handler) http.Handler {
 	return a.Chain(
 		a.RequireAuth(),
@@ -516,7 +508,8 @@ func (a *AuthService) RequireAuthAndPermission(permissions ...string) func(http.
 //   - tenantID: Optional specific tenant ID (if not provided, extracted from request)
 //
 // Usage:
-//   r.With(authService.RequireAuthAndTenant(1)).Get("/tenant/1/data", handler)
+//
+//	r.With(authService.RequireAuthAndTenant(1)).Get("/tenant/1/data", handler)
 func (a *AuthService) RequireAuthAndTenant(tenantID ...uint) func(http.Handler) http.Handler {
 	return a.Chain(
 		a.RequireAuth(),
@@ -532,7 +525,8 @@ func (a *AuthService) RequireAuthAndTenant(tenantID ...uint) func(http.Handler) 
 //   - roles: One or more role names that the user must have in the tenant
 //
 // Usage:
-//   r.With(authService.RequireAuthRoleAndTenant(1, "admin")).Get("/tenant/1/admin", handler)
+//
+//	r.With(authService.RequireAuthRoleAndTenant(1, "admin")).Get("/tenant/1/admin", handler)
 func (a *AuthService) RequireAuthRoleAndTenant(tenantID uint, roles ...string) func(http.Handler) http.Handler {
 	return a.Chain(
 		a.RequireAuth(),
@@ -548,7 +542,8 @@ func (a *AuthService) RequireAuthRoleAndTenant(tenantID uint, roles ...string) f
 //   - permissions: One or more permission names that the user must have in the tenant
 //
 // Usage:
-//   r.With(authService.RequireAuthPermissionAndTenant(1, "billing.read")).Get("/tenant/1/billing", handler)
+//
+//	r.With(authService.RequireAuthPermissionAndTenant(1, "billing.read")).Get("/tenant/1/billing", handler)
 func (a *AuthService) RequireAuthPermissionAndTenant(tenantID uint, permissions ...string) func(http.Handler) http.Handler {
 	return a.Chain(
 		a.RequireAuth(),
