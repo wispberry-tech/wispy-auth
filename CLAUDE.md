@@ -86,7 +86,6 @@ json.NewEncoder(w).Encode(result)
 
 **Main Config (`Config` struct)**:
 - `DatabaseDSN`: PostgreSQL connection string
-- `JWTSecret`: JWT signing secret
 - `EmailService`: Email service interface implementation
 - `SecurityConfig`: Password policies, lockout rules, session settings
 - `StorageConfig`: Table/column mapping customization
@@ -109,7 +108,6 @@ json.NewEncoder(w).Encode(result)
 - `multitenant.go` - Multi-tenant types and interfaces
 - `multitenant_setup.go` - Tenant/role/permission management
 - `oauth.go` - OAuth provider configurations
-- `jwt.go` - JWT token operations
 - `password_reset.go` - Password reset flow
 - `two_factor.go` - 2FA infrastructure
 - `login_security.go` - Account lockout and security tracking

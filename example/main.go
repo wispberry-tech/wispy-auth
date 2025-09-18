@@ -27,7 +27,6 @@ func main() {
 	// Initialize auth service with enhanced security and built-in email integration
 	cfg := auth.Config{
 		DatabaseDSN: os.Getenv("DATABASE_URL"), // Use PostgreSQL from environment
-		JWTSecret:   os.Getenv("JWT_SECRET"),
 
 		// Built-in email service integration - configured once, works everywhere!
 		EmailService: emailService,

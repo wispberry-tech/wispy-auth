@@ -7,9 +7,6 @@ import (
 
 // SetupDefaultTenant creates a default tenant and basic roles if they don't exist
 func (a *AuthService) SetupDefaultTenant() error {
-	if !a.storageConfig.MultiTenant.Enabled {
-		return nil // Skip if multi-tenant is disabled
-	}
 
 	// Check if default tenant exists
 	_, err := a.storage.GetTenantByID(a.storageConfig.MultiTenant.DefaultTenantID)

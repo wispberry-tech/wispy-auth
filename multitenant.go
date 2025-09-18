@@ -147,7 +147,7 @@ type MultiTenantConfig struct {
 // DefaultMultiTenantConfig returns a default multi-tenant configuration
 func DefaultMultiTenantConfig() MultiTenantConfig {
 	return MultiTenantConfig{
-		Enabled:         false, // Disabled by default for backward compatibility
+		Enabled:         true, // Enable multi-tenant by default
 		DefaultTenantID: 1,
 		
 		TenantsTable:         "tenants",

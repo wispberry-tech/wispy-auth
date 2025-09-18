@@ -119,7 +119,7 @@ func calculateSessionExpiry(config SecurityConfig) time.Time {
 	return time.Now().Add(config.SessionLifetime)
 }
 
-// extractTokenFromRequest extracts JWT token from Authorization header
+// extractTokenFromRequest extracts session token from Authorization header
 func extractTokenFromRequest(r *http.Request) string {
 	token := r.Header.Get("Authorization")
 	if token == "" {

@@ -3,7 +3,6 @@
 // This package includes:
 //   - Email/password authentication with advanced security
 //   - Multi-provider OAuth2 support (Google, GitHub, Discord)
-//   - JWT token generation and validation
 //   - Multi-tenant architecture with RBAC
 //   - Session management with device tracking
 //   - Email verification and password reset flows
@@ -21,7 +20,6 @@
 //
 //	cfg := auth.Config{
 //		DatabaseDSN: "postgresql://user:pass@localhost/db",
-//		JWTSecret:   "your-secret-key",
 //		EmailService: myEmailService,  // Built-in email integration!
 //		SecurityConfig: auth.SecurityConfig{
 //			RequireEmailVerification: true,
@@ -185,7 +183,6 @@ type EmailService interface {
 // middleware protection, and all other authentication-related functionality.
 type AuthService struct {
 	storage        StorageInterface
-	jwtSecret      []byte
 	oauthConfigs   map[string]*oauth2.Config
 	storageConfig  StorageConfig
 	securityConfig SecurityConfig
@@ -195,13 +192,12 @@ type AuthService struct {
 }
 
 // Config holds the main configuration for the authentication service.
-// This includes database connection details, JWT secret, OAuth provider
+// This includes database connection details, OAuth provider
 // configurations, security/storage settings, and email service integration.
 type Config struct {
 	// Storage configuration - can use either Storage interface or DatabaseDSN string
 	Storage        StorageInterface // Direct storage interface (takes precedence over DatabaseDSN)
 	DatabaseDSN    string           // Database connection string (used if Storage is nil)
-	JWTSecret      string
 	OAuthProviders map[string]OAuthProviderConfig
 	StorageConfig  StorageConfig
 	SecurityConfig SecurityConfig
@@ -245,7 +241,6 @@ func DefaultSecurityConfig() SecurityConfig {
 //
 //	cfg := auth.Config{
 //		DatabaseDSN: "postgresql://user:pass@localhost/db",
-//		JWTSecret:   "your-secret-key",
 //		SecurityConfig: auth.SecurityConfig{
 //			RequireEmailVerification: true,
 //		},
@@ -333,16 +328,23 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 		}
 	}
 
-	return &AuthService{
+	authService := &AuthService{
 		storage:        storage,
-		jwtSecret:      []byte(cfg.JWTSecret),
 		oauthConfigs:   oauthConfigs,
 		storageConfig:  cfg.StorageConfig,
 		securityConfig: cfg.SecurityConfig,
 		emailService:   cfg.EmailService,
 		validator:      validator.New(),
 		developmentMode: cfg.DevelopmentMode,
-	}, nil
+	}
+
+	// Setup default tenant if multi-tenant is enabled
+	if err := authService.SetupDefaultTenant(); err != nil {
+		slog.Error("Failed to setup default tenant", "error", err)
+		return nil, fmt.Errorf("failed to setup default tenant: %w", err)
+	}
+
+	return authService, nil
 }
 
 // GetAvailableProviders returns the list of configured OAuth providers
@@ -579,11 +581,8 @@ func (a *AuthService) logSecurityEvent(userID *uint, tenantID *uint, eventType, 
 
 // Multi-tenant helper methods
 func (a *AuthService) assignUserToDefaultTenant(user *User, tenantID uint) error {
-	// Get storage config to check if multi-tenant is enabled
+	// Get storage config for multi-tenant setup
 	storageConfig := a.getStorageConfig()
-	if !storageConfig.MultiTenant.Enabled {
-		return nil // Skip if multi-tenant is disabled
-	}
 
 	// Use provided tenantID or fall back to default
 	targetTenantID := tenantID

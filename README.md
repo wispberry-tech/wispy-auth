@@ -55,8 +55,6 @@ Create a `.env` file:
 # Database (PostgreSQL)
 DATABASE_URL=postgresql://username:password@localhost:5432/auth_db
 
-# JWT Secret (change this in production!)
-JWT_SECRET=your-super-secret-jwt-key-at-least-32-characters-long
 
 # Google OAuth
 GOOGLE_CLIENT_ID=your-google-oauth-client-id
@@ -115,7 +113,6 @@ func main() {
 	// Initialize with security-enhanced configuration
 	cfg := auth.Config{
 		DatabaseDSN: os.Getenv("DATABASE_URL"),
-		JWTSecret:   os.Getenv("JWT_SECRET"),
 		
 		// Built-in email service integration
 		EmailService: emailService,
@@ -624,7 +621,6 @@ cfg.StorageConfig = auth.StorageConfig{
 ## 🔐 Security Best Practices
 
 1. **Always use HTTPS** in production
-2. **Rotate JWT secrets** regularly
 3. **Monitor security events** for suspicious activity
 4. **Implement rate limiting** at the application level
 5. **Use strong password policies**
