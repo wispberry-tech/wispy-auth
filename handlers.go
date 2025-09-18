@@ -289,22 +289,22 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 	user, err := a.SignInWithContext(req.Email, req.Password, ip, userAgent, "")
 	if err != nil {
 		if errors.Is(err, ErrEmailNotVerified) {
-			// For unverified email, we still want to provide user info but no token
-			// so the frontend can handle the verification flow properly
+			// For unverified email, we return user info but no token
+			// Use 403 Forbidden as credentials are valid but access is restricted due to unverified email
 			user, getUserErr := a.storage.GetUserByEmailAnyProvider(req.Email)
 			if getUserErr == nil {
 				slog.Info("Login attempt with unverified email", "email", req.Email, "user_id", user.ID)
 				return SignInResponse{
 					User:                      user,
 					RequiresEmailVerification: true,
-					StatusCode:                200, // Success but requires verification
+					StatusCode:                403,
 					Error:                     "Email verification required. Please check your email and click the verification link.",
 				}
 			} else {
 				slog.Info("Login attempt with unverified email", "email", req.Email)
 				return SignInResponse{
 					RequiresEmailVerification: true,
-					StatusCode:                200,
+					StatusCode:                403,
 					Error:                     "Email verification required. Please check your email and click the verification link.",
 				}
 			}

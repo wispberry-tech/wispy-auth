@@ -468,12 +468,6 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 		return nil, fmt.Errorf("database error: %w", err)
 	}
 
-	// Check if email verification is required and not verified
-	if a.securityConfig.RequireEmailVerification && !user.EmailVerified {
-		slog.Warn("Login attempt with unverified email", "user_id", user.ID, "email", email)
-		return nil, ErrEmailNotVerified
-	}
-
 	// Validate login attempt (checks account status, suspension, lock, etc.)
 	if err := a.validateLoginAttempt(user, ip, userAgent); err != nil {
 		return nil, err
@@ -488,6 +482,12 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 			slog.Error("Failed to record failed login", "error", err, "user_id", user.ID, "email", email)
 		}
 		return nil, ErrInvalidCredentials
+	}
+
+	// Check if email verification is required and not verified (after password validation)
+	if a.securityConfig.RequireEmailVerification && !user.EmailVerified {
+		slog.Warn("Login attempt with unverified email", "user_id", user.ID, "email", email)
+		return nil, ErrEmailNotVerified
 	}
 
 	// Password is correct, record successful login

@@ -24,22 +24,10 @@ func main() {
 	// Initialize email service
 	emailService := NewEmailService()
 
-	// Create SQLite storage (automatically recreates database for testing)
-	storage, err := auth.NewSQLiteStorage("./auth_test.db", auth.DefaultStorageConfig())
-	if err != nil {
-		log.Fatalf("Failed to create SQLite storage: %v", err)
-	}
-	
-	// Recreate database for clean testing environment
-	if err := storage.RecreateDatabase(); err != nil {
-		log.Fatalf("Failed to recreate database: %v", err)
-	}
-	log.Println("Database recreated successfully")
-
 	// Initialize auth service with enhanced security and built-in email integration
 	cfg := auth.Config{
-		Storage:   storage, // Use SQLite instead of DatabaseDSN
-		JWTSecret: os.Getenv("JWT_SECRET"),
+		DatabaseDSN: os.Getenv("DATABASE_URL"), // Use PostgreSQL from environment
+		JWTSecret:   os.Getenv("JWT_SECRET"),
 
 		// Built-in email service integration - configured once, works everywhere!
 		EmailService: emailService,
