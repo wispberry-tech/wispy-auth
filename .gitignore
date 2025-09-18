@@ -1,2 +1,6 @@
 example/.env
 example/nucleus-auth-example
+example/auth_test.db
+.gitignore
+example/auth_test.db-shm
+example/auth_test.db-wal

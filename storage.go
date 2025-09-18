@@ -6,8 +6,9 @@ import (
 )
 
 var (
-	ErrSessionNotFound = errors.New("session not found")
-	ErrInvalidSession  = errors.New("invalid session")
+	ErrSessionNotFound  = errors.New("session not found")
+	ErrInvalidSession   = errors.New("invalid session")
+	ErrEmailNotVerified = errors.New("email not verified")
 )
 
 // Session represents a user session with enhanced security tracking

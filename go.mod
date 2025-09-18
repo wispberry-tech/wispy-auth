@@ -7,6 +7,7 @@ require (
 	github.com/go-playground/validator/v10 v10.22.1
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/jackc/pgx/v5 v5.6.0
+	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/pquerna/otp v1.5.0
 	golang.org/x/crypto v0.42.0
 	golang.org/x/oauth2 v0.31.0

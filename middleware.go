@@ -3,9 +3,11 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -46,7 +48,7 @@ func DefaultMiddlewareConfig() MiddlewareConfig {
 	}
 }
 
-// defaultTokenExtractor extracts JWT token from Authorization header.
+// defaultTokenExtractor extracts session token from Authorization header.
 // It removes the "Bearer " prefix if present and returns the clean token.
 func defaultTokenExtractor(r *http.Request) string {
 	token := r.Header.Get("Authorization")
@@ -101,7 +103,7 @@ func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error, stat
 }
 
 // RequireAuth middleware ensures user is authenticated before accessing protected routes.
-// It validates JWT tokens, extracts user information, and adds the user to request context.
+// It validates session tokens, extracts user information, and adds the user to request context.
 // Optionally accepts custom MiddlewareConfig for customized behavior.
 //
 // Usage:
@@ -128,11 +130,31 @@ func (a *AuthService) RequireAuth(config ...MiddlewareConfig) func(http.Handler)
 				return
 			}
 			
-			// Validate token
-			user, err := a.ValidateUser(token)
+			// Get session from token
+			session, err := a.storage.GetSession(token)
 			if err != nil {
 				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusUnauthorized)
 				return
+			}
+			
+			// Check if session is valid and active
+			if !session.IsActive || session.ExpiresAt.Before(time.Now()) {
+				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusUnauthorized)
+				return
+			}
+			
+			// Get user from session
+			user, err := a.storage.GetUserByID(session.UserID)
+			if err != nil {
+				cfg.ErrorHandler(w, r, ErrInvalidCredentials, http.StatusUnauthorized)
+				return
+			}
+			
+			// Update session activity
+			session.LastActivity = time.Now()
+			if updateErr := a.storage.UpdateSession(session); updateErr != nil {
+				// Log the error but don't fail the request
+				slog.Warn("Failed to update session activity", "error", updateErr, "session_id", session.ID)
 			}
 			
 			// Add user to context

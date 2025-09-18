@@ -14,7 +14,7 @@ import (
 
 // SignUpResponse represents the response for user registration
 type SignUpResponse struct {
-	Token                     string `json:"token"`                       // JWT token for authentication
+	Token                     string `json:"token"`                       // Session token for authentication
 	User                      *User  `json:"user"`                        // Created user information
 	RequiresEmailVerification bool   `json:"requires_email_verification"` // Whether email verification is required
 	StatusCode                int    `json:"-"`                           // HTTP status code (not serialized)
@@ -29,13 +29,14 @@ type SignInRequest struct {
 
 // SignInResponse represents the response for user authentication
 type SignInResponse struct {
-	Token            string    `json:"token"`              // JWT token for authentication
-	User             *User     `json:"user"`               // Authenticated user information
-	SessionID        string    `json:"session_id"`         // Session identifier
-	Requires2FA      bool      `json:"requires_2fa"`       // Whether two-factor authentication is required
-	SessionExpiresAt time.Time `json:"session_expires_at"` // When the session expires
-	StatusCode       int       `json:"-"`                  // HTTP status code (not serialized)
-	Error            string    `json:"error,omitempty"`    // Error message if any
+	Token                     string    `json:"token"`                        // Session token for authentication
+	User                      *User     `json:"user"`                         // Authenticated user information
+	SessionID                 string    `json:"session_id"`                   // Session identifier
+	Requires2FA               bool      `json:"requires_2fa"`                 // Whether two-factor authentication is required
+	RequiresEmailVerification bool      `json:"requires_email_verification"`  // Whether email verification is required
+	SessionExpiresAt          time.Time `json:"session_expires_at"`           // When the session expires
+	StatusCode                int       `json:"-"`                            // HTTP status code (not serialized)
+	Error                     string    `json:"error,omitempty"`              // Error message if any
 }
 
 // ValidateResponse represents the response for token validation
@@ -48,7 +49,7 @@ type ValidateResponse struct {
 // OAuthResponse represents the response for OAuth operations
 type OAuthResponse struct {
 	URL        string `json:"url,omitempty"`         // OAuth authorization URL (for initial request)
-	Token      string `json:"token,omitempty"`       // JWT token (for callback)
+	Token      string `json:"token,omitempty"`       // Session token (for callback)
 	User       *User  `json:"user,omitempty"`        // User information (for callback)
 	IsNewUser  bool   `json:"is_new_user,omitempty"` // Whether this is a new user registration
 	StatusCode int    `json:"-"`                     // HTTP status code (not serialized)
@@ -287,7 +288,27 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 
 	user, err := a.SignInWithContext(req.Email, req.Password, ip, userAgent, "")
 	if err != nil {
-		if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrInvalidCredentials) {
+		if errors.Is(err, ErrEmailNotVerified) {
+			// For unverified email, we still want to provide user info but no token
+			// so the frontend can handle the verification flow properly
+			user, getUserErr := a.storage.GetUserByEmailAnyProvider(req.Email)
+			if getUserErr == nil {
+				slog.Info("Login attempt with unverified email", "email", req.Email, "user_id", user.ID)
+				return SignInResponse{
+					User:                      user,
+					RequiresEmailVerification: true,
+					StatusCode:                200, // Success but requires verification
+					Error:                     "Email verification required. Please check your email and click the verification link.",
+				}
+			} else {
+				slog.Info("Login attempt with unverified email", "email", req.Email)
+				return SignInResponse{
+					RequiresEmailVerification: true,
+					StatusCode:                200,
+					Error:                     "Email verification required. Please check your email and click the verification link.",
+				}
+			}
+		} else if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrInvalidCredentials) {
 			slog.Warn("Invalid credentials attempt", "email", req.Email, "remote_addr", r.RemoteAddr)
 			return SignInResponse{
 				StatusCode: 401,
@@ -305,12 +326,6 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 			return SignInResponse{
 				StatusCode: 403,
 				Error:      fmt.Sprintf("Account access denied: %s", err.Error()),
-			}
-		} else if strings.Contains(err.Error(), "email not verified") {
-			slog.Info("Login attempt with unverified email", "email", req.Email)
-			return SignInResponse{
-				StatusCode: 403,
-				Error:      "Email verification required. Please check your email and click the verification link.",
 			}
 		} else {
 			slog.Error("Internal error during signin", "error", err, "email", req.Email, "remote_addr", r.RemoteAddr)
@@ -341,7 +356,7 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 	}
 }
 
-// ValidateHandler validates a JWT token from HTTP request and returns user information.
+// ValidateHandler validates a session token from HTTP request and returns user information.
 // It extracts the token from Authorization header, removes Bearer prefix if present,
 // and validates the user session to ensure the token is still valid.
 //
@@ -353,7 +368,7 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 //	    json.NewEncoder(w).Encode(result)
 //	})
 //
-// Expects Authorization header: "Bearer <jwt-token>"
+// Expects Authorization header: "Bearer <session-token>"
 // Returns ValidateResponse with user data and any validation errors
 func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
 	token := extractTokenFromRequest(r)
@@ -365,13 +380,39 @@ func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
 		}
 	}
 
-	user, err := a.ValidateUser(token)
+	// Get session from token
+	session, err := a.storage.GetSession(token)
 	if err != nil {
-		slog.Warn("Token validation failed", "error", err, "remote_addr", r.RemoteAddr)
+		slog.Warn("Session validation failed", "error", err, "remote_addr", r.RemoteAddr)
 		return ValidateResponse{
 			StatusCode: 401,
-			Error:      fmt.Sprintf("Invalid or expired token: %s", err.Error()),
+			Error:      fmt.Sprintf("Invalid or expired session: %s", err.Error()),
 		}
+	}
+
+	// Check if session is valid and active
+	if !session.IsActive || session.ExpiresAt.Before(time.Now()) {
+		slog.Warn("Session expired or inactive", "session_id", session.ID, "remote_addr", r.RemoteAddr)
+		return ValidateResponse{
+			StatusCode: 401,
+			Error:      "Session expired or inactive",
+		}
+	}
+
+	// Get user from session
+	user, err := a.storage.GetUserByID(session.UserID)
+	if err != nil {
+		slog.Warn("User not found for session", "error", err, "user_id", session.UserID, "session_id", session.ID)
+		return ValidateResponse{
+			StatusCode: 401,
+			Error:      "User not found",
+		}
+	}
+
+	// Update session activity
+	session.LastActivity = time.Now()
+	if updateErr := a.storage.UpdateSession(session); updateErr != nil {
+		slog.Warn("Failed to update session activity", "error", updateErr, "session_id", session.ID)
 	}
 
 	return ValidateResponse{
@@ -548,7 +589,7 @@ func (a *AuthService) VerifyEmailHandler(r *http.Request) EmailVerificationRespo
 //	    json.NewEncoder(w).Encode(result)
 //	})
 //
-// Expects Authorization header: "Bearer <jwt-token>"
+// Expects Authorization header: "Bearer <session-token>"
 // Returns EmailVerificationResponse with success message and any errors
 func (a *AuthService) ResendVerificationHandler(r *http.Request) EmailVerificationResponse {
 	token := extractTokenFromRequest(r)
@@ -613,7 +654,7 @@ func (a *AuthService) ResendVerificationHandler(r *http.Request) EmailVerificati
 //	    json.NewEncoder(w).Encode(result)
 //	})
 //
-// Expects Authorization header: "Bearer <jwt-token>"
+// Expects Authorization header: "Bearer <session-token>"
 // Returns SessionsResponse with list of sessions and any errors
 func (a *AuthService) GetSessionsHandler(r *http.Request) SessionsResponse {
 	token := extractTokenFromRequest(r)
@@ -701,7 +742,7 @@ func (a *AuthService) RevokeSessionHandler(r *http.Request, sessionID string) Re
 //	    json.NewEncoder(w).Encode(result)
 //	})
 //
-// Expects Authorization header: "Bearer <jwt-token>"
+// Expects Authorization header: "Bearer <session-token>"
 // Returns RevokeSessionResponse with success message and any errors
 func (a *AuthService) RevokeAllSessionsHandler(r *http.Request) RevokeSessionResponse {
 	token := extractTokenFromRequest(r)
@@ -843,12 +884,15 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, stat
 	// We'll consider a user new if they haven't logged in before or recently created
 	isNewUser := user.LastLoginAt == nil || user.CreatedAt.After(user.LastLoginAt.Add(-time.Minute))
 
-	token, err := a.GenerateToken(user)
+	// Create session for the OAuth user
+	ip := extractIP(r)
+	userAgent := r.Header.Get("User-Agent")
+	session, err := a.CreateSession(user.ID, ip, userAgent, "")
 	if err != nil {
-		slog.Error("Failed to generate token after OAuth", "error", err, "user_id", user.ID, "provider", provider)
+		slog.Error("Failed to create session after OAuth", "error", err, "user_id", user.ID, "provider", provider)
 		return OAuthResponse{
 			StatusCode: 500,
-			Error:      fmt.Sprintf("Failed to generate authentication token: %s", err.Error()),
+			Error:      fmt.Sprintf("Failed to create session: %s", err.Error()),
 		}
 	}
 
@@ -870,7 +914,7 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, stat
 	}
 
 	return OAuthResponse{
-		Token:      token,
+		Token:      session.Token,
 		User:       user,
 		IsNewUser:  isNewUser,
 		StatusCode: 200,

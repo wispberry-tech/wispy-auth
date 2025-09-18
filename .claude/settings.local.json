@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go mod:*)",
+      "Bash(go build:*)",
+      "Bash(go vet:*)",
+      "Bash(go run:*)",
+      "Bash(./nucleus-auth-example)",
+      "Bash(pkill:*)",
+      "Bash(curl:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -198,7 +198,9 @@ type AuthService struct {
 // This includes database connection details, JWT secret, OAuth provider
 // configurations, security/storage settings, and email service integration.
 type Config struct {
-	DatabaseDSN    string
+	// Storage configuration - can use either Storage interface or DatabaseDSN string
+	Storage        StorageInterface // Direct storage interface (takes precedence over DatabaseDSN)
+	DatabaseDSN    string           // Database connection string (used if Storage is nil)
 	JWTSecret      string
 	OAuthProviders map[string]OAuthProviderConfig
 	StorageConfig  StorageConfig
@@ -259,11 +261,22 @@ func init() {
 }
 
 func NewAuthService(cfg Config) (*AuthService, error) {
-	// Initialize storage interface with PostgreSQL
-	storage, err := NewPostgresStorage(cfg.DatabaseDSN, cfg.StorageConfig)
-	if err != nil {
-		slog.Error("Failed to initialize storage", "error", err, "dsn", cfg.DatabaseDSN)
-		return nil, fmt.Errorf("failed to initialize storage: %w", err)
+	var storage StorageInterface
+	var err error
+
+	// Use provided storage interface or create PostgreSQL storage from DSN
+	if cfg.Storage != nil {
+		storage = cfg.Storage
+		slog.Info("Using provided storage interface")
+	} else if cfg.DatabaseDSN != "" {
+		// Initialize storage interface with PostgreSQL
+		storage, err = NewPostgresStorage(cfg.DatabaseDSN, cfg.StorageConfig)
+		if err != nil {
+			slog.Error("Failed to initialize storage", "error", err, "dsn", cfg.DatabaseDSN)
+			return nil, fmt.Errorf("failed to initialize storage: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("either Storage or DatabaseDSN must be provided")
 	}
 
 	// Run auto-migrations if enabled
@@ -274,6 +287,13 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 				slog.Error("Auto-migration failed", "error", err)
 				return nil, fmt.Errorf("auto-migration failed: %w", err)
 			}
+			slog.Info("Database migrations completed successfully")
+		} else if sqliteStorage, ok := storage.(*SQLiteStorage); ok {
+			if err := sqliteStorage.CreateTables(); err != nil {
+				slog.Error("Auto-migration failed", "error", err)
+				return nil, fmt.Errorf("auto-migration failed: %w", err)
+			}
+			slog.Info("Database migrations completed successfully")
 		} else {
 			slog.Warn("Auto-migration requested but storage type doesn't support it")
 		}
@@ -451,7 +471,7 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 	// Check if email verification is required and not verified
 	if a.securityConfig.RequireEmailVerification && !user.EmailVerified {
 		slog.Warn("Login attempt with unverified email", "user_id", user.ID, "email", email)
-		return nil, fmt.Errorf("email not verified")
+		return nil, ErrEmailNotVerified
 	}
 
 	// Validate login attempt (checks account status, suspension, lock, etc.)
