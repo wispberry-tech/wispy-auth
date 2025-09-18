@@ -119,19 +119,24 @@ func calculateSessionExpiry(config SecurityConfig) time.Time {
 	return time.Now().Add(config.SessionLifetime)
 }
 
-// extractTokenFromRequest extracts session token from Authorization header
+// extractTokenFromRequest extracts session token from Authorization header or auth_token cookie
 func extractTokenFromRequest(r *http.Request) string {
+	// First, try to get token from Authorization header
 	token := r.Header.Get("Authorization")
-	if token == "" {
-		return ""
+	if token != "" {
+		// Remove "Bearer " prefix if present
+		if len(token) > 7 && token[:7] == "Bearer " {
+			return token[7:]
+		}
+		return token
 	}
 
-	// Remove "Bearer " prefix if present
-	if len(token) > 7 && token[:7] == "Bearer " {
-		return token[7:]
+	// If no Authorization header, try to get token from auth_token cookie
+	if cookie, err := r.Cookie("auth_token"); err == nil {
+		return cookie.Value
 	}
 
-	return token
+	return ""
 }
 
 // extractIP extracts client IP from HTTP request
