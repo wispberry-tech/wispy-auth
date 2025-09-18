@@ -796,6 +796,11 @@ func (a *AuthService) SendEmailVerification(userID uint) error {
 	return nil
 }
 
+// GetUserByVerificationToken retrieves a user by their verification token
+func (a *AuthService) GetUserByVerificationToken(token string) (*User, error) {
+	return a.storage.GetUserByVerificationToken(token)
+}
+
 func (a *AuthService) VerifyEmail(token string) error {
 	user, err := a.storage.GetUserByVerificationToken(token)
 	if err != nil {

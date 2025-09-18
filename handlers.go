@@ -207,22 +207,24 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 		}
 	}
 
-	// Create session for the new user
-	session, err := a.CreateSession(user.ID, ip, userAgent, "")
-	if err != nil {
-		slog.Error("Failed to create session after signup", "error", err, "user_id", user.ID, "email", user.Email)
-		return SignUpResponse{
-			StatusCode: 500,
-			Error:      fmt.Sprintf("Failed to create session: %s", err.Error()),
-		}
-	}
-
-	// Build response
+	// Build response - only create session if email verification is not required or already verified
 	response := SignUpResponse{
-		Token:                     session.Token,
 		User:                      user,
 		RequiresEmailVerification: a.securityConfig.RequireEmailVerification && !user.EmailVerified,
 		StatusCode:                200,
+	}
+
+	// Only create session if email verification is not required or email is already verified
+	if !response.RequiresEmailVerification {
+		session, err := a.CreateSession(user.ID, ip, userAgent, "")
+		if err != nil {
+			slog.Error("Failed to create session after signup", "error", err, "user_id", user.ID, "email", user.Email)
+			return SignUpResponse{
+				StatusCode: 500,
+				Error:      fmt.Sprintf("Failed to create session: %s", err.Error()),
+			}
+		}
+		response.Token = session.Token
 	}
 
 	// Send verification email if needed
