@@ -182,12 +182,12 @@ type EmailService interface {
 // It provides methods for user signup/signin, OAuth integration, session management,
 // middleware protection, and all other authentication-related functionality.
 type AuthService struct {
-	storage        StorageInterface
-	oauthConfigs   map[string]*oauth2.Config
-	storageConfig  StorageConfig
-	securityConfig SecurityConfig
-	emailService   EmailService
-	validator      *validator.Validate
+	storage         StorageInterface
+	oauthConfigs    map[string]*oauth2.Config
+	storageConfig   StorageConfig
+	securityConfig  SecurityConfig
+	emailService    EmailService
+	validator       *validator.Validate
 	developmentMode bool // Whether running in development mode
 }
 
@@ -202,10 +202,7 @@ type Config struct {
 	StorageConfig  StorageConfig
 	SecurityConfig SecurityConfig
 	EmailService   EmailService // Email service for sending verification/reset emails
-	
-	// Migration settings
-	AutoMigrate bool // Whether to automatically run migrations on startup
-	
+
 	// Environment configuration
 	DevelopmentMode bool // Whether running in development mode (affects cookie security)
 }
@@ -250,10 +247,6 @@ func DefaultSecurityConfig() SecurityConfig {
 //	if err != nil {
 //		log.Fatal(err)
 //	}
-func init() {
-	// Initialize random seed
-	mathrand.Seed(time.Now().UnixNano())
-}
 
 func NewAuthService(cfg Config) (*AuthService, error) {
 	var storage StorageInterface
@@ -272,26 +265,6 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 		}
 	} else {
 		return nil, fmt.Errorf("either Storage or DatabaseDSN must be provided")
-	}
-
-	// Run auto-migrations if enabled
-	if cfg.AutoMigrate {
-		slog.Info("Auto-migration enabled, running database migrations")
-		if pgStorage, ok := storage.(*PostgresStorage); ok {
-			if err := pgStorage.RunMigrations(); err != nil {
-				slog.Error("Auto-migration failed", "error", err)
-				return nil, fmt.Errorf("auto-migration failed: %w", err)
-			}
-			slog.Info("Database migrations completed successfully")
-		} else if sqliteStorage, ok := storage.(*SQLiteStorage); ok {
-			if err := sqliteStorage.CreateTables(); err != nil {
-				slog.Error("Auto-migration failed", "error", err)
-				return nil, fmt.Errorf("auto-migration failed: %w", err)
-			}
-			slog.Info("Database migrations completed successfully")
-		} else {
-			slog.Warn("Auto-migration requested but storage type doesn't support it")
-		}
 	}
 
 	// Set up OAuth2 configurations for multiple providers
@@ -329,12 +302,12 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 	}
 
 	authService := &AuthService{
-		storage:        storage,
-		oauthConfigs:   oauthConfigs,
-		storageConfig:  cfg.StorageConfig,
-		securityConfig: cfg.SecurityConfig,
-		emailService:   cfg.EmailService,
-		validator:      validator.New(),
+		storage:         storage,
+		oauthConfigs:    oauthConfigs,
+		storageConfig:   cfg.StorageConfig,
+		securityConfig:  cfg.SecurityConfig,
+		emailService:    cfg.EmailService,
+		validator:       validator.New(),
 		developmentMode: cfg.DevelopmentMode,
 	}
 
@@ -577,7 +550,6 @@ func (a *AuthService) logSecurityEvent(userID *uint, tenantID *uint, eventType, 
 	// Log security event (ignore errors to avoid blocking auth flow)
 	a.storage.CreateSecurityEvent(event)
 }
-
 
 // Multi-tenant helper methods
 func (a *AuthService) assignUserToDefaultTenant(user *User, tenantID uint) error {
