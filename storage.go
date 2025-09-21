@@ -2,7 +2,6 @@ package auth
 
 import (
 	"errors"
-	"time"
 )
 
 var (
@@ -11,118 +10,7 @@ var (
 	ErrEmailNotVerified = errors.New("email not verified")
 )
 
-// Session represents a user session with enhanced security tracking
-type Session struct {
-	ID        string    `json:"id"`
-	UserID    uint      `json:"user_id"`
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CSRF      string    `json:"csrf_token"` // Anti-CSRF token
 
-	// Device & Location Tracking
-	DeviceFingerprint string `json:"device_fingerprint"`
-	UserAgent         string `json:"user_agent"`
-	IPAddress         string `json:"ip_address"`
-	Location          string `json:"location"`
-
-	// Status
-	IsActive          bool      `json:"is_active"`
-	LastActivity      time.Time `json:"last_activity"`
-	RequiresTwoFactor bool      `json:"requires_two_factor"`
-	TwoFactorVerified bool      `json:"two_factor_verified"`
-
-	// Timestamps
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// StorageInterface defines the contract for data storage operations
-type StorageInterface interface {
-	// User operations
-	CreateUser(user *User) error
-	GetUserByEmail(email, provider string) (*User, error)
-	GetUserByEmailAnyProvider(email string) (*User, error)
-	GetUserByProviderID(provider, providerID string) (*User, error)
-	GetUserByID(id uint) (*User, error)
-	UpdateUser(user *User) error
-
-	// Session operations
-	CreateSession(session *Session) error
-	GetSession(token string) (*Session, error)
-	GetUserSessions(userID uint) ([]*Session, error)
-
-	// OAuth state operations
-	StoreOAuthState(state *OAuthState) error
-	GetOAuthState(state string) (*OAuthState, error)
-	DeleteOAuthState(state string) error
-	UpdateSession(session *Session) error
-	DeleteSession(token string) error
-	DeleteUserSessions(userID uint) error
-	CleanupExpiredSessions() error
-	CountActiveSessions(userID uint) (int, error)
-
-	// Multi-tenant operations
-	CreateTenant(tenant *Tenant) error
-	GetTenantByID(id uint) (*Tenant, error)
-	GetTenantBySlug(slug string) (*Tenant, error)
-	UpdateTenant(tenant *Tenant) error
-	ListTenants() ([]*Tenant, error)
-
-	// Role operations
-	CreateRole(role *Role) error
-	GetRoleByID(id uint) (*Role, error)
-	GetRolesByTenant(tenantID uint) ([]*Role, error)
-	UpdateRole(role *Role) error
-	DeleteRole(id uint) error
-
-	// Permission operations
-	CreatePermission(permission *Permission) error
-	GetPermissionByID(id uint) (*Permission, error)
-	GetPermissionByName(name string) (*Permission, error)
-	ListPermissions() ([]*Permission, error)
-	UpdatePermission(permission *Permission) error
-	DeletePermission(id uint) error
-
-	// Role-Permission operations
-	AssignPermissionToRole(roleID, permissionID uint) error
-	RemovePermissionFromRole(roleID, permissionID uint) error
-	GetRolePermissions(roleID uint) ([]*Permission, error)
-
-	// User-Tenant operations
-	AssignUserToTenant(userID, tenantID, roleID uint) error
-	RemoveUserFromTenant(userID, tenantID uint) error
-	GetUserTenants(userID uint) ([]*UserTenant, error)
-	GetTenantUsers(tenantID uint) ([]*UserTenant, error)
-	UpdateUserTenantRole(userID, tenantID, roleID uint) error
-
-	// Permission checking
-	UserHasPermission(userID, tenantID uint, permission string) (bool, error)
-	GetUserPermissionsInTenant(userID, tenantID uint) ([]*Permission, error)
-
-	// Security Event operations
-	CreateSecurityEvent(event *SecurityEvent) error
-	GetSecurityEvents(userID *uint, tenantID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error)
-	GetSecurityEventsByUser(userID uint, limit int, offset int) ([]*SecurityEvent, error)
-
-	// Password Reset operations
-	CreatePasswordResetToken(userID uint, token string, expiresAt time.Time) error
-	GetUserByPasswordResetToken(token string) (*User, error)
-	ClearPasswordResetToken(userID uint) error
-
-	// Email Verification operations
-	SetEmailVerificationToken(userID uint, token string) error
-	GetUserByVerificationToken(token string) (*User, error)
-	MarkEmailAsVerified(userID uint) error
-
-	// Login Attempt operations
-	IncrementLoginAttempts(userID uint) error
-	ResetLoginAttempts(userID uint) error
-	LockUser(userID uint, until time.Time) error
-	UnlockUser(userID uint) error
-
-	// Utility operations
-	Close() error
-}
 
 // StorageConfig holds configuration for table names and database settings
 type StorageConfig struct {

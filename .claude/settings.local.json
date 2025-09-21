@@ -7,7 +7,13 @@
       "Bash(go run:*)",
       "Bash(./nucleus-auth-example)",
       "Bash(pkill:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(mkdir:*)",
+      "Bash(CGO_ENABLED=1 go run isolated_demo.go)",
+      "Bash(go get:*)",
+      "Bash(sed:*)",
+      "Bash(go test:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []

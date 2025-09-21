@@ -1,11 +1,11 @@
--- Wispy Auth SQLite Schema
+-- Wispy Auth PostgreSQL Schema
 -- Complete database schema for the wispy-auth authentication system
 -- This file contains all tables needed for a complete authentication system with multi-tenancy, RBAC, and security features
 
 -- Users table - Core user authentication and security
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT UNIQUE NOT NULL DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+    id SERIAL PRIMARY KEY,
+    uuid UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
     username VARCHAR(100),
     first_name VARCHAR(100),
@@ -17,19 +17,19 @@ CREATE TABLE IF NOT EXISTS users (
 
     -- Email Security
     email_verified BOOLEAN DEFAULT FALSE,
-    email_verified_at DATETIME,
+    email_verified_at TIMESTAMP WITH TIME ZONE,
     verification_token VARCHAR(255),
 
     -- Password Security
     password_reset_token VARCHAR(255),
-    password_reset_expires_at DATETIME,
-    password_changed_at DATETIME,
+    password_reset_expires_at TIMESTAMP WITH TIME ZONE,
+    password_changed_at TIMESTAMP WITH TIME ZONE,
 
     -- Login Security
     login_attempts INTEGER DEFAULT 0,
-    last_failed_login_at DATETIME,
-    locked_until DATETIME,
-    last_login_at DATETIME,
+    last_failed_login_at TIMESTAMP WITH TIME ZONE,
+    locked_until TIMESTAMP WITH TIME ZONE,
+    last_login_at TIMESTAMP WITH TIME ZONE,
 
     -- Location & Device Tracking
     last_known_ip VARCHAR(45),
@@ -43,11 +43,14 @@ CREATE TABLE IF NOT EXISTS users (
     -- Account Security
     is_active BOOLEAN DEFAULT TRUE,
     is_suspended BOOLEAN DEFAULT FALSE,
-    suspended_at DATETIME,
+    suspended_at TIMESTAMP WITH TIME ZONE,
     suspend_reason TEXT,
 
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    -- Referral System
+    referred_by_code VARCHAR(50),
+
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for users table
@@ -56,13 +59,14 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_provider_id ON users(provider, provider_id);
 CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token);
 CREATE INDEX IF NOT EXISTS idx_users_password_reset_token ON users(password_reset_token);
+CREATE INDEX IF NOT EXISTS idx_users_referred_by_code ON users(referred_by_code);
 
 -- Sessions table - User session management with device tracking
 CREATE TABLE IF NOT EXISTS sessions (
     id VARCHAR(255) PRIMARY KEY,
-    user_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token VARCHAR(512) UNIQUE NOT NULL,
-    expires_at DATETIME NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
 
     -- Device & Location Tracking
     device_fingerprint VARCHAR(255),
@@ -72,14 +76,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 
     -- Security Features
     is_active BOOLEAN DEFAULT TRUE,
-    last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_activity TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     requires_two_factor BOOLEAN DEFAULT FALSE,
     two_factor_verified BOOLEAN DEFAULT FALSE,
 
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for sessions table
@@ -89,18 +91,16 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
 -- Security Events table - Comprehensive audit logging
 CREATE TABLE IF NOT EXISTS security_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     tenant_id INTEGER,
     event_type VARCHAR(100) NOT NULL,
     description TEXT,
     ip_address VARCHAR(45),
     user_agent TEXT,
     location VARCHAR(255),
-    metadata TEXT, -- JSON stored as TEXT in SQLite
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for security_events table
@@ -112,8 +112,8 @@ CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(cre
 CREATE TABLE IF NOT EXISTS oauth_states (
     state_id VARCHAR(255) PRIMARY KEY,
     csrf_token VARCHAR(255) NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    expires_at DATETIME NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
 -- Create index for oauth_states table
@@ -121,15 +121,15 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires_at ON oauth_states(expires_a
 
 -- Tenants table - Multi-tenant organization management
 CREATE TABLE IF NOT EXISTS tenants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT UNIQUE NOT NULL DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+    id SERIAL PRIMARY KEY,
+    uuid UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
     slug VARCHAR(100) UNIQUE NOT NULL,
     domain VARCHAR(255),
     is_active BOOLEAN DEFAULT TRUE,
-    settings TEXT DEFAULT '{}', -- JSON stored as TEXT in SQLite
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    settings JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for tenants table
@@ -139,16 +139,15 @@ CREATE INDEX IF NOT EXISTS idx_tenants_domain ON tenants(domain);
 
 -- Roles table - Role-based access control within tenants
 CREATE TABLE IF NOT EXISTS roles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tenant_id INTEGER NOT NULL,
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
     description TEXT,
     is_system BOOLEAN DEFAULT FALSE,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
-    UNIQUE(tenant_id, name),
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    UNIQUE(tenant_id, name)
 );
 
 -- Create indexes for roles table
@@ -156,13 +155,13 @@ CREATE INDEX IF NOT EXISTS idx_roles_tenant_id ON roles(tenant_id);
 
 -- Permissions table - System-wide permissions for granular access control
 CREATE TABLE IF NOT EXISTS permissions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     name VARCHAR(100) UNIQUE NOT NULL,
     resource VARCHAR(100) NOT NULL,
     action VARCHAR(100) NOT NULL,
     description TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for permissions table
@@ -171,36 +170,70 @@ CREATE INDEX IF NOT EXISTS idx_permissions_resource_action ON permissions(resour
 
 -- Role Permissions table - Many-to-many relationship between roles and permissions
 CREATE TABLE IF NOT EXISTS role_permissions (
-    role_id INTEGER NOT NULL,
-    permission_id INTEGER NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    permission_id INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
-    PRIMARY KEY (role_id, permission_id),
-    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
-    FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+    PRIMARY KEY (role_id, permission_id)
 );
 
 -- User Tenants table - Many-to-many relationship between users and tenants with roles
 CREATE TABLE IF NOT EXISTS user_tenants (
-    user_id INTEGER NOT NULL,
-    tenant_id INTEGER NOT NULL,
-    role_id INTEGER NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
-    PRIMARY KEY (user_id, tenant_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+    PRIMARY KEY (user_id, tenant_id)
 );
 
 -- Create indexes for user_tenants table
 CREATE INDEX IF NOT EXISTS idx_user_tenants_user_id ON user_tenants(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_tenants_tenant_id ON user_tenants(tenant_id);
 
+-- Referral Codes table - Store referral codes with role-based generation tracking
+CREATE TABLE IF NOT EXISTS referral_codes (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(50) UNIQUE NOT NULL,
+    generated_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    generated_by_role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    max_uses INTEGER DEFAULT 1,
+    current_uses INTEGER DEFAULT 0,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indexes for referral_codes table
+CREATE INDEX IF NOT EXISTS idx_referral_codes_code ON referral_codes(code);
+CREATE INDEX IF NOT EXISTS idx_referral_codes_generated_by_user_id ON referral_codes(generated_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_referral_codes_tenant_id ON referral_codes(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_referral_codes_is_active ON referral_codes(is_active);
+
+-- User Referrals table - Track referral relationships with role context
+CREATE TABLE IF NOT EXISTS user_referrals (
+    id SERIAL PRIMARY KEY,
+    referrer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    referred_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    referral_code_id INTEGER NOT NULL REFERENCES referral_codes(id) ON DELETE CASCADE,
+    referrer_role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(referred_user_id) -- Each user can only be referred once
+);
+
+-- Create indexes for user_referrals table
+CREATE INDEX IF NOT EXISTS idx_user_referrals_referrer_user_id ON user_referrals(referrer_user_id);
+CREATE INDEX IF NOT EXISTS idx_user_referrals_referred_user_id ON user_referrals(referred_user_id);
+CREATE INDEX IF NOT EXISTS idx_user_referrals_tenant_id ON user_referrals(tenant_id);
+
 -- Schema Migrations table - Track applied migrations
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     description TEXT,
-    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

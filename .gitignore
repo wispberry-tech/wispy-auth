@@ -5,3 +5,4 @@ example/auth_test.db
 example/auth_test.db-shm
 example/auth_test.db-wal
 .claude/settings.local.json
+example/*.exe

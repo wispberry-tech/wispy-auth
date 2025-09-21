@@ -4,20 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-### Running the Example Application
+### Running Example Applications
 ```bash
-# Start the example server
-cd example
+# Complete web application
+cd example/app
 go run main.go services.go
 
-# Or using the Makefile
-make run
+# OAuth provider examples
+cd example/oauth
+go run main.go
 
-# Build the application
-make build
+# Referral system demonstration
+cd example/referrals
+go run main.go
 
-# Run with migrations
-make dev
+# Testing patterns
+cd example/testing
+go run oauth_dynamic_demo.go
+
+# Build the main library
+go build .
 ```
 
 ### Testing
@@ -25,18 +31,11 @@ make dev
 # Run all tests
 go test -v ./...
 
-# Run specific test file
-go run test/test_api.go
-```
-
-### Database Operations
-```bash
-# Run database migrations (from example directory)
-cd example/migrations
-go run migrate.go
-
-# Or using make
-make migrate
+# Test specific examples
+cd example/app && go build .
+cd example/oauth && go build .
+cd example/referrals && go build .
+cd example/testing && go build oauth_dynamic_demo.go
 ```
 
 ### Development Environment
@@ -44,8 +43,11 @@ make migrate
 # Install dependencies
 go mod tidy
 
-# Setup environment file
-make setup-env
+# Verify all examples compile
+cd example/app && go mod tidy && go build .
+cd example/oauth && go mod tidy && go build .
+cd example/referrals && go mod tidy && go build .
+cd example/testing && go mod tidy && go build oauth_dynamic_demo.go
 ```
 
 ## Core Architecture
@@ -64,6 +66,8 @@ make setup-env
 **Middleware (`middleware.go`)**: Chi router middleware for authentication, role-based access, and tenant isolation. Includes context helpers like `MustGetUserFromContext()`.
 
 **Multi-tenant System (`multitenant.go`, `multitenant_setup.go`)**: Complete RBAC system with tenants, roles, and permissions. Supports tenant-scoped user roles and permissions.
+
+**Referral System (`referrals.go`)**: Role-based referral code system with invitation limits, code generation, validation, and tracking. Integrated with the multi-tenant and RBAC systems.
 
 ### Key Architecture Patterns
 
@@ -85,13 +89,13 @@ json.NewEncoder(w).Encode(result)
 ### Configuration System
 
 **Main Config (`Config` struct)**:
-- `DatabaseDSN`: PostgreSQL connection string
+- `DatabaseDSN`: PostgreSQL/SQLite connection string
 - `EmailService`: Email service interface implementation
-- `SecurityConfig`: Password policies, lockout rules, session settings
+- `SecurityConfig`: Password policies, lockout rules, session settings, referral configuration
 - `StorageConfig`: Table/column mapping customization
-- `OAuthProviders`: OAuth provider configurations
+- `OAuthProviders`: Dynamic OAuth provider configurations
 
-**Security Config**: Configurable password policies, login attempt limits, session lifetimes, and email verification requirements.
+**Security Config**: Configurable password policies, login attempt limits, session lifetimes, email verification requirements, and referral system settings (role-based limits, code format, expiry).
 
 **Storage Config**: Allows remapping table names and column names to work with existing database schemas.
 
@@ -99,33 +103,53 @@ json.NewEncoder(w).Encode(result)
 
 **Core Files**:
 - `auth.go` - Main service and configuration
-- `handlers.go` - HTTP handlers with structured responses  
+- `handlers.go` - HTTP handlers with structured responses
 - `storage.go` - Storage interface and session types
-- `postgres_storage.go` - PostgreSQL implementation
 - `middleware.go` - Chi middleware and context helpers
+
+**Storage Implementations**:
+- `storage/postgres.go` - PostgreSQL implementation
+- `storage/sqlite.go` - SQLite implementation
 
 **Feature Modules**:
 - `multitenant.go` - Multi-tenant types and interfaces
 - `multitenant_setup.go` - Tenant/role/permission management
+- `referrals.go` - Referral code system with role-based limits
 - `oauth.go` - OAuth provider configurations
 - `password_reset.go` - Password reset flow
 - `two_factor.go` - 2FA infrastructure
 - `login_security.go` - Account lockout and security tracking
 
 **Infrastructure**:
-- `migrations.go` - Database schema migrations
+- `migrations/` - Database schema migrations (PostgreSQL & SQLite)
 - `common.go` - Shared types and utilities
 - `crypto.go` - Cryptographic utilities
+- `callbacks.go` - OAuth callback handling
 
-**Example Application** (`example/`): Complete working example showing integration patterns, email service implementation, and routing setup.
+**Example Applications** (`example/`):
+- `example/app/` - Complete web application with all features
+- `example/oauth/` - OAuth provider configuration examples
+- `example/referrals/` - Referral system demonstration
+- `example/testing/` - Testing patterns and mock implementations
 
 ## Database Schema
 
-The system uses PostgreSQL with these core tables:
-- `users` - User accounts with 25+ security fields
+The system supports PostgreSQL and SQLite with these core tables:
+
+**Core Authentication:**
+- `users` - User accounts with 25+ security fields, referral tracking
 - `sessions` - Session tracking with device fingerprinting
 - `security_events` - Comprehensive security audit log
-- `tenants`, `roles`, `permissions` - Multi-tenant RBAC system
-- `user_tenants`, `role_permissions` - Relationship tables
+- `oauth_states` - OAuth CSRF protection
 
-Auto-migration is supported via `AutoMigrate: true` in config.
+**Multi-Tenant RBAC:**
+- `tenants` - Organization/tenant management
+- `roles` - Role definitions per tenant
+- `permissions` - System-wide permissions
+- `user_tenants` - User-tenant-role relationships
+- `role_permissions` - Role-permission assignments
+
+**Referral System:**
+- `referral_codes` - Generated referral codes with role-based metadata
+- `user_referrals` - Referral relationship tracking
+

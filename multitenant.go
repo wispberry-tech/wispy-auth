@@ -4,40 +4,6 @@ import (
 	"time"
 )
 
-// Tenant represents a tenant/organization in the system
-type Tenant struct {
-	ID          uint      `json:"id"`
-	Name        string    `json:"name"`
-	Slug        string    `json:"slug"`        // URL-friendly identifier
-	Domain      string    `json:"domain"`      // Custom domain (optional)
-	IsActive    bool      `json:"is_active"`
-	Settings    string    `json:"settings"`    // JSON settings specific to tenant
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-// Role represents a role within a tenant
-type Role struct {
-	ID          uint      `json:"id"`
-	TenantID    uint      `json:"tenant_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	IsSystem    bool      `json:"is_system"`   // System roles can't be deleted
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-// Permission represents a permission that can be assigned to roles
-type Permission struct {
-	ID          uint      `json:"id"`
-	Name        string    `json:"name"`         // e.g., "users.read", "posts.write"
-	Resource    string    `json:"resource"`     // e.g., "users", "posts"
-	Action      string    `json:"action"`       // e.g., "read", "write", "delete"
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
 // RolePermission links roles to permissions
 type RolePermission struct {
 	ID           uint      `json:"id"`
@@ -45,21 +11,6 @@ type RolePermission struct {
 	PermissionID uint      `json:"permission_id"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-// UserTenant links users to tenants with roles
-type UserTenant struct {
-	ID       uint `json:"id"`
-	UserID   uint `json:"user_id"`
-	TenantID uint `json:"tenant_id"`
-	RoleID   uint `json:"role_id"`
-	IsActive bool `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	
-	// Populated by joins
-	Tenant *Tenant `json:"tenant,omitempty"`
-	Role   *Role   `json:"role,omitempty"`
 }
 
 // UserPermissionCheck represents a user's permission in a specific tenant context

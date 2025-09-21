@@ -1,43 +1,25 @@
-# Wispy Auth
+# 🔐 Wispy Auth
 
-A production-ready Go authentication library with comprehensive security features, flexible architecture, and multi-tenant support. Built with pure SQL (PostgreSQL) for maximum performance and compatibility.
+**Enterprise-grade Go authentication library with comprehensive security features, multi-tenant architecture, and referral system.**
 
-## 🚀 Features
+[![Go Version](https://img.shields.io/badge/Go-1.21%2B-blue)](https://golang.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-comprehensive-brightgreen)](./docs/)
 
-### Core Authentication
-- ✅ **Email/Password authentication** with advanced security
-- ✅ **Multiple OAuth2 providers** (Google, GitHub, Discord)
-- ✅ **Session token generation & validation**
-- ✅ **Password hashing with bcrypt**
-- ✅ **Multiple provider support per user**
+Built with pure SQL (PostgreSQL/SQLite) for maximum performance, security, and compatibility. No ORM dependencies, maximum control.
 
-### 🔒 Advanced Security Features
-- ✅ **Password reset flow** with secure token generation
-- ✅ **Email verification system** with customizable expiry
-- ✅ **Account lockout mechanism** with configurable attempts
-- ✅ **Login attempt tracking** and security audit logging
-- ✅ **Session management** with device tracking
-- ✅ **IP address logging** and location tracking
-- ✅ **Device fingerprinting** for enhanced security
-- ✅ **Security event auditing** for comprehensive logging
-- ✅ **Configurable security policies** (password strength, lockout duration, etc.)
-- ✅ **Two-factor authentication ready** (infrastructure in place)
+---
 
-### 🏢 Multi-Tenant Architecture
-- ✅ **Complete multi-tenant support** with roles & permissions
-- ✅ **Role-based access control (RBAC)**
-- ✅ **Granular permission system**
-- ✅ **Tenant isolation** and management
-- ✅ **Flexible tenant assignment**
+## 🚀 Why Wispy Auth?
 
-### 🛠 Developer Experience
-- ✅ **Pure SQL implementation** (no ORM dependencies)
-- ✅ **Flexible database schema support**
-- ✅ **Simplified HTTP handlers** with structured responses
-- ✅ **Configurable table and column names**
-- ✅ **Comprehensive error handling**
-- ✅ **Production-ready defaults**
-- ✅ **Built-in email integration**
+- **🏢 Enterprise-Ready**: Multi-tenant architecture with RBAC out of the box
+- **🔒 Security-First**: 25+ security fields per user, comprehensive audit logging
+- **🎯 Referral System**: Built-in referral codes with role-based limits
+- **⚡ High Performance**: Pure SQL implementation, no ORM overhead
+- **🛠 Developer-Friendly**: Structured HTTP responses, minimal setup required
+- **🔧 Highly Configurable**: Customize everything from table names to security policies
+
+---
 
 ## 📦 Installation
 
@@ -45,845 +27,701 @@ A production-ready Go authentication library with comprehensive security feature
 go get github.com/wispberry-tech/wispy-auth
 ```
 
-## 🔧 Configuration
-
-### Environment Variables
-
-Create a `.env` file:
-
-```bash
-# Database (PostgreSQL)
-DATABASE_URL=postgresql://username:password@localhost:5432/auth_db
-
-
-# Google OAuth
-GOOGLE_CLIENT_ID=your-google-oauth-client-id
-GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
-
-# GitHub OAuth
-GITHUB_CLIENT_ID=your-github-oauth-client-id
-GITHUB_CLIENT_SECRET=your-github-oauth-client-secret
-
-# Discord OAuth
-DISCORD_CLIENT_ID=your-discord-oauth-client-id
-DISCORD_CLIENT_SECRET=your-discord-oauth-client-secret
-```
-
-## 🚦 Quick Start
-
-The following is a quick start example. For a more complete, production-ready example, see the `example` directory.
+## 🎯 Quick Start
 
 ```go
 package main
 
 import (
-	"encoding/json"
-	"log"
-	"net/http"
-	"os"
-	"time"
+    "encoding/json"
+    "net/http"
+    "time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	auth "github.com/wispberry-tech/wispy-auth"
-)
-
-// Implement your email service
-type YourEmailService struct{}
-
-func (e *YourEmailService) SendVerificationEmail(email, token string) error {
-	log.Printf("📧 Sending verification email to %s with token %s", email, token)
-	return nil
-}
-
-func (e *YourEmailService) SendPasswordResetEmail(email, token string) error {
-	log.Printf("📧 Sending password reset email to %s with token %s", email, token)
-	return nil
-}
-
-func (e *YourEmailService) SendWelcomeEmail(email, name string) error {
-	log.Printf("📧 Sending welcome email to %s (%s)", name, email)
-	return nil
-}
-
-func main() {
-	// Initialize email service
-	emailService := &YourEmailService{}
-
-	// Initialize with security-enhanced configuration
-	cfg := auth.Config{
-		DatabaseDSN: os.Getenv("DATABASE_URL"),
-		
-		// Built-in email service integration
-		EmailService: emailService,
-
-		// Storage configuration with flexible schema
-		StorageConfig: auth.DefaultStorageConfig(),
-		
-		// Enhanced security configuration
-		SecurityConfig: auth.DefaultSecurityConfig(),
-		
-		// OAuth providers
-		OAuthProviders: map[string]auth.OAuthProviderConfig{
-			"google": {
-				ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-				ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-				RedirectURL:  "http://localhost:8080/api/auth/oauth/callback?provider=google",
-			},
-			// Add other providers as needed...
-		},
-	}
-
-	// Initialize auth service
-	authService, err := auth.NewAuthService(cfg)
-	if err != nil {
-		log.Fatalf("Failed to initialize auth service: %v", err)
-	}
-
-	// Initialize Chi router
-	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-
-	// Mount auth routes with the new simplified API
-	r.Route("/api/auth", func(r chi.Router) {
-		// Public routes - single API, maximum simplicity!
-		r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
-			result := authService.SignUpHandler(r)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(result.StatusCode)
-			json.NewEncoder(w).Encode(result)
-		})
-		
-		r.Post("/signin", func(w http.ResponseWriter, r *http.Request) {
-			result := authService.SignInHandler(r)
-			w.Header().Set("Content-Type", "application/json") 
-			w.WriteHeader(result.StatusCode)
-			json.NewEncoder(w).Encode(result)
-		})
-		
-		r.Get("/validate", func(w http.ResponseWriter, r *http.Request) {
-			result := authService.ValidateHandler(r)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(result.StatusCode)
-			json.NewEncoder(w).Encode(result)
-		})
-		
-		// OAuth with redirect handling  
-		r.Get("/oauth", func(w http.ResponseWriter, r *http.Request) {
-			provider := r.URL.Query().Get("provider")
-			result := authService.OAuthHandler(w, r, provider)
-			if result.URL != "" {
-				http.Redirect(w, r, result.URL, http.StatusTemporaryRedirect)
-				return
-			}
-			w.WriteHeader(result.StatusCode)
-			json.NewEncoder(w).Encode(result)
-		})
-
-		// ... other routes follow the same pattern
-	})
-
-	// Your protected app routes
-	r.Group(func(r chi.Router) {
-		r.Use(authService.RequireAuth())
-		
-		r.Get("/api/profile", func(w http.ResponseWriter, r *http.Request) {
-			user := auth.MustGetUserFromContext(r)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(user)
-		})
-		
-		// Admin routes with role protection
-		r.Group(func(r chi.Router) {
-			r.Use(authService.RequireRole("admin"))
-			
-			r.Get("/api/admin/users", func(w http.ResponseWriter, r *http.Request) {
-				json.NewEncoder(w).Encode(map[string]string{
-					"message": "Admin access granted!",
-				})
-			})
-		})
-	})
-
-	log.Println("🚀 Server starting on :8080")
-	log.Println("📍 Auth endpoints: http://localhost:8080/api/auth/*")
-	log.Fatal(http.ListenAndServe(":8080", r))
-}
-```
-
-**Your authentication system is ready with a great developer experience:**
-
-✅ **Simplified Handlers** - One line per endpoint, `authService.SignUpHandler(r)` and you're done!  
-✅ **Full Control** - You control the HTTP response, status code, and encoding.
-✅ **Built-in Email Integration** - Configure your email service once, and it works for verification, password resets, and welcome emails.
-✅ **Zero Boilerplate** - Each handler handles validation, emails, and errors automatically.
-✅ **Enterprise Security** - Built-in protection, audit logging, and compliance features.
-✅ **Production Ready** - OAuth, sessions, multi-tenant, RBAC out of the box.
-
-### Available Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/signup` | User registration |
-| POST | `/api/auth/signin` | User login |
-| GET | `/api/auth/validate` | Validate session token |
-| POST | `/api/auth/forgot-password` | Request password reset |
-| POST | `/api/auth/reset-password` | Reset password with token |
-| POST | `/api/auth/verify-email` | Verify email address with token |
-| GET | `/api/auth/oauth` | OAuth redirect (e.g., `/api/auth/oauth?provider=google`) |
-| GET | `/api/auth/oauth/callback` | OAuth callback |
-| GET | `/api/auth/providers` | List available OAuth providers |
-| POST | `/api/auth/resend-verification` | Resend verification email (protected) |
-| GET | `/api/auth/sessions` | List user sessions (protected) |
-| DELETE | `/api/auth/sessions/{id}` | Revoke specific session (protected) |
-| POST | `/api/auth/logout-all` | Revoke all sessions (protected) |
-
-## 🎯 Simplified HTTP Handlers
-
-### 🚀 Perfect Balance: Control + Simplicity
-
-Mount auth routes exactly where you want them with **perfect control**:
-
-```go
-// Mount routes exactly where you want them - super flexible!
-r.Route("/api/auth", func(r chi.Router) {
-    // Public routes - perfect balance of control and simplicity!
-    r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
-        result := authService.SignUpHandler(r)         // ✅ Returns structured response
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(result.StatusCode)               // ✅ You control the HTTP response
-        json.NewEncoder(w).Encode(result)              // ✅ You choose how to encode
-    })
-    
-    r.Post("/signin", func(w http.ResponseWriter, r *http.Request) {
-        result := authService.SignInHandler(r)         // ✅ Complete login logic
-        w.Header().Set("Content-Type", "application/json") 
-        w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
-    })
-    
-    r.Post("/forgot-password", func(w http.ResponseWriter, r *http.Request) {
-        result := authService.ForgotPasswordHandler(r) // ✅ Handles validation + emails
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(result.StatusCode) 
-        json.NewEncoder(w).Encode(result)
-    })
-    
-    // OAuth with redirect handling  
-    r.Get("/oauth", func(w http.ResponseWriter, r *http.Request) {
-        provider := r.URL.Query().Get("provider")
-        result := authService.OAuthHandler(w, r, provider)
-        if result.URL != "" {
-            http.Redirect(w, r, result.URL, http.StatusTemporaryRedirect) // ✅ You control redirects
-            return
-        }
-        w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
-    })
-})
-
-// You can still add custom logic around the handlers
-r.Post("/auth/register", func(w http.ResponseWriter, r *http.Request) {
-    result := authService.SignUpHandler(r)
-    // Add custom business logic here
-    if result.User != nil {
-        // createUserProfile(result.User.ID)           // ✅ Your custom logic
-        // trackSignupEvent(result.User.Email)         // ✅ Your analytics
-    }
-    w.WriteHeader(result.StatusCode)
-    json.NewEncoder(w).Encode(result)
-})
-```
-
-### 🛡️ Built-in Middleware Protection
-
-Create protected routes with role/permission-based access:
-
-```go
-// Your app routes with auth protection
-r.Group(func(r chi.Router) {
-    r.Use(authService.RequireAuth())  // Basic authentication
-    
-    r.Get("/profile", func(w http.ResponseWriter, r *http.Request) {
-        user := auth.MustGetUserFromContext(r)  // Get authenticated user
-        json.NewEncoder(w).Encode(user)
-    })
-    
-    // Admin-only routes
-    r.Group(func(r chi.Router) {
-        r.Use(authService.RequireRole("admin"))
-        
-        r.Get("/admin/users", adminUsersHandler)
-        r.Delete("/admin/users/{id}", deleteUserHandler)
-    })
-    
-    // Permission-based routes
-    r.Group(func(r chi.Router) {
-        r.Use(authService.RequirePermission("billing.manage"))
-        
-        r.Get("/billing", billingHandler)
-        r.Post("/billing/invoice", createInvoiceHandler)
-    })
-})
-```
-
-### 🎨 Every Handler Includes
-
-Each handler method automatically handles:
-
-- ✅ **Input validation** using `go-playground/validator`
-- ✅ **JSON request/response** parsing and formatting
-- ✅ **Error handling** with proper HTTP status codes
-- ✅ **Email integration** (verification, password reset, welcome)
-- ✅ **Security features** (IP tracking, rate limiting, etc.)
-- ✅ **Async email sending** to prevent blocking
-
-### 🔧 Custom Integration
-
-Need more control? You can still call the core service methods directly:
-
-```go
-// Custom signup with your own business logic
-r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
-    // Parse request however you want
-    var req MyCustomSignUpRequest
-    json.NewDecoder(r.Body).Decode(&req)
-    
-    // Call the auth service directly
-    user, err := authService.SignUp(auth.SignUpRequest{
-        Email:     req.Email,
-        Password:  req.Password,
-        Username:  req.Username,
-        FirstName: req.FirstName,
-        LastName:  req.LastName,
-    })
-    
-    // Handle response with your custom logic
-    if err != nil {
-        // Your custom error handling
-        return
-    }
-    
-    // Your custom success logic
-    // createUserProfile(user.ID, req.AdditionalData)
-    // sendWelcomeSlackMessage(req.Email)
-    
-    json.NewEncoder(w).Encode(user)
-})
-```
-
-## 🔒 Security Features
-
-### Password Reset Flow
-```go
-// 1. Initiate password reset (via handler)
-// POST /api/auth/forgot-password with {"email": "user@example.com"}
-// The handler calls authService.InitiatePasswordReset and sends an email.
-
-// 2. Reset password with token (via handler)
-// POST /api/auth/reset-password with {"token": "...", "new_password": "..."}
-// The handler calls authService.ResetPassword.
-```
-
-### Email Verification
-```go
-// 1. Resend verification email (via handler, protected route)
-// POST /api/auth/resend-verification
-
-// 2. Verify email with token (via handler)
-// POST /api/auth/verify-email with {"token": "..."}
-```
-
-### Session Management
-```go
-// Get all user sessions (via handler, protected route)
-// GET /api/auth/sessions
-
-// Revoke specific session (via handler, protected route)
-// DELETE /api/auth/sessions/{sessionID}
-
-// Revoke all sessions (logout everywhere) (via handler, protected route)
-// POST /api/auth/logout-all
-```
-
-### Security Event Logging
-All security-related events are automatically logged to the `security_events` table:
-- Login attempts (successful/failed)
-- Account lockouts
-- Password resets
-- Email verifications
-- Session creation/termination
-
-## 🗄 Database Schema
-
-### Users Table
-```sql
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash TEXT,
-    username VARCHAR(255),
-    first_name VARCHAR(255),
-    last_name VARCHAR(255),
-    avatar_url TEXT,
-    provider VARCHAR(50),
-    provider_id VARCHAR(255),
-    
-    -- Email Security
-    email_verified BOOLEAN DEFAULT false,
-    email_verified_at TIMESTAMP,
-    verification_token TEXT,
-    
-    -- Password Security
-    password_reset_token TEXT,
-    password_reset_expires_at TIMESTAMP,
-    password_changed_at TIMESTAMP,
-    
-    -- Login Security
-    login_attempts INTEGER DEFAULT 0,
-    last_failed_login_at TIMESTAMP,
-    locked_until TIMESTAMP,
-    last_login_at TIMESTAMP,
-    
-    -- Location & Device Tracking
-    last_known_ip VARCHAR(45),
-    last_login_location VARCHAR(255),
-    
-    -- Two-Factor Authentication (ready)
-    two_factor_enabled BOOLEAN DEFAULT false,
-    two_factor_secret TEXT,
-    backup_codes TEXT, -- JSON array
-    
-    -- Account Security
-    is_active BOOLEAN DEFAULT true,
-    is_suspended BOOLEAN DEFAULT false,
-    suspended_at TIMESTAMP,
-    suspend_reason TEXT,
-    
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-### Sessions Table
-```sql
-CREATE TABLE sessions (
-    id VARCHAR(255) PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id),
-    token VARCHAR(255) UNIQUE,
-    expires_at TIMESTAMP,
-    csrf_token TEXT,
-    
-    -- Device & Location Tracking
-    device_fingerprint VARCHAR(255),
-    user_agent TEXT,
-    ip_address VARCHAR(45),
-    location VARCHAR(255),
-    
-    -- Security Features
-    is_active BOOLEAN DEFAULT true,
-    last_activity TIMESTAMP,
-    requires_two_factor BOOLEAN DEFAULT false,
-    two_factor_verified BOOLEAN DEFAULT false,
-    
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-### Security Events Table
-```sql
-CREATE TABLE security_events (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id),
-    tenant_id INTEGER, -- For multi-tenant setups
-    event_type VARCHAR(50) NOT NULL, -- login_success, login_failed, etc.
-    description TEXT,
-    ip_address VARCHAR(45),
-    user_agent TEXT,
-    location VARCHAR(255),
-    metadata JSONB, -- Additional context
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-## 🏢 Multi-Tenant Support
-
-### Enable Multi-Tenant Mode
-```go
-cfg.StorageConfig.MultiTenant = auth.MultiTenantConfig{
-    Enabled:         true,
-    DefaultTenantID: 1,
-    
-    // Customize table names if needed
-    TenantsTable:         "tenants",
-    RolesTable:           "roles",
-    PermissionsTable:     "permissions",
-    RolePermissionsTable: "role_permissions",
-    UserTenantsTable:     "user_tenants",
-}
-```
-
-### Multi-Tenant Operations
-```go
-// Create tenant
-tenant, err := authService.CreateTenant("Acme Corp", "acme", "acme.example.com")
-
-// Create roles
-adminRole, err := authService.CreateRole(tenant.ID, "admin", "Administrator", false)
-memberRole, err := authService.CreateRole(tenant.ID, "member", "Team Member", false)
-
-// Create permissions
-userReadPerm, err := authService.CreatePermission("users.read", "users", "read", "Read users")
-userWritePerm, err := authService.CreatePermission("users.write", "users", "write", "Manage users")
-
-// Assign permissions to roles
-authService.AssignPermissionToRole(adminRole.ID, userReadPerm.ID)
-authService.AssignPermissionToRole(adminRole.ID, userWritePerm.ID)
-
-// Assign user to tenant with role
-authService.AssignUserToTenant(userID, tenant.ID, adminRole.ID)
-
-// Check permissions
-hasPermission, err := authService.UserHasPermission(userID, tenant.ID, "users.write")
-```
-
-## 📊 Response Types
-
-All handlers return structured response types:
-
-```go
-type SignUpResponse struct {
-    Token                      string `json:"token"`
-    User                       *User  `json:"user"`
-    RequiresEmailVerification bool   `json:"requires_email_verification"`
-    StatusCode                int    `json:"-"`
-    Error                     string `json:"error,omitempty"`
-}
-
-type SignInResponse struct {
-    Token            string     `json:"token"`
-    User             *User      `json:"user"`
-    SessionID        string     `json:"session_id"`
-    Requires2FA      bool       `json:"requires_2fa"`
-    SessionExpiresAt time.Time  `json:"session_expires_at"`
-    StatusCode       int        `json:"-"`
-    Error            string     `json:"error,omitempty"`
-}
-```
-
-## ⚙️ Configuration Options
-
-### Security Configuration
-```go
-type SecurityConfig struct {
-	// Email verification
-	RequireEmailVerification bool
-	VerificationTokenExpiry  time.Duration
-
-	// Password security
-	PasswordMinLength      int
-	PasswordRequireUpper   bool
-	PasswordRequireLower   bool
-	PasswordRequireNumber  bool
-	PasswordRequireSpecial bool
-	PasswordResetExpiry    time.Duration
-
-	// Login security
-	MaxLoginAttempts int
-	LockoutDuration  time.Duration
-	SessionLifetime  time.Duration
-	RequireTwoFactor bool
-}
-```
-
-### Flexible Schema Configuration
-```go
-cfg.StorageConfig = auth.StorageConfig{
-    UsersTable:    "members",           // Your existing user table
-    SessionsTable: "auth_sessions",     // Your session table
-    SecurityEventsTable: "audit_log",  // Your security events table
-    
-    UserColumns: auth.UserColumnMapping{
-        ID:           "member_id",      // Your primary key column
-        Email:        "email_address",  // Your email column
-        PasswordHash: "pwd_hash",       // Your password column
-        Username:     "username",      // Your username column
-        FirstName:    "first_name",    // Your first name column
-        LastName:     "last_name",     // Your last name column
-        // ... map all required fields to your schema
-    },
-    // ... other column mappings
-}
-```
-
-## 🔐 Security Best Practices
-
-1. **Always use HTTPS** in production
-3. **Monitor security events** for suspicious activity
-4. **Implement rate limiting** at the application level
-5. **Use strong password policies**
-6. **Enable email verification** for new accounts
-7. **Set appropriate session timeouts**
-8. **Implement proper logging and monitoring**
-
-## 🚀 Production Recommendations
-
-1. **Database**: Use connection pooling and read replicas
-2. **Caching**: Consider Redis for session storage in high-traffic applications
-3. **Monitoring**: Set up security event alerts
-4. **Backup**: Regular database backups with encryption
-5. **Updates**: Keep dependencies updated
-6. **Testing**: Comprehensive security testing
-
-## 🛡️ Chi Middleware Support
-
-The library includes comprehensive middleware for the [Chi router](https://github.com/go-chi/chi) with authentication, role-based, permission-based, and tenant-based protection.
-
-### Basic Authentication Middleware
-
-```go
-package main
-
-import (
     "github.com/go-chi/chi/v5"
     auth "github.com/wispberry-tech/wispy-auth"
 )
 
 func main() {
+    // Configure the auth service
+    config := auth.Config{
+        DatabaseDSN: "postgresql://user:pass@localhost/db",
+        EmailService: &YourEmailService{}, // Implement auth.EmailService
+        SecurityConfig: auth.SecurityConfig{
+            RequireEmailVerification: true,
+            PasswordMinLength:        8,
+            MaxLoginAttempts:         5,
+            LockoutDuration:          15 * time.Minute,
+            SessionLifetime:          24 * time.Hour,
+
+            // Referral System (NEW!)
+            DefaultUserRoleName: "default-user",
+            MaxInviteesPerRole: map[string]int{
+                "default-user": 5,
+                "premium":      20,
+                "admin":        100,
+            },
+        },
+        // Dynamic OAuth providers
+        OAuthProviders: map[string]auth.OAuthProviderConfig{
+            "google": auth.NewGoogleOAuthProvider(
+                "your-client-id",
+                "your-client-secret",
+                "http://localhost:8080/oauth/callback",
+            ),
+        },
+    }
+
+    authService, err := auth.NewAuthService(config)
+    if err != nil {
+        panic(err)
+    }
+
     r := chi.NewRouter()
-    
-    // Initialize auth service...
-    
-    // Protected routes requiring authentication
+
+    // Simple, powerful handlers
+    r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
+        result := authService.SignUpHandler(r)  // Single line!
+        w.WriteHeader(result.StatusCode)
+        json.NewEncoder(w).Encode(result)
+    })
+
+    r.Post("/signin", func(w http.ResponseWriter, r *http.Request) {
+        result := authService.SignInHandler(r)
+        w.WriteHeader(result.StatusCode)
+        json.NewEncoder(w).Encode(result)
+    })
+
+    // Protected routes with middleware
     r.Group(func(r chi.Router) {
         r.Use(authService.RequireAuth())
-        
-        r.Get("/profile", getUserProfile)
-        r.Put("/profile", updateUserProfile)
-        r.Get("/dashboard", getDashboard)
-    })
-}
-```
 
-### Role-Based Protection
-
-```go
-// Protect routes requiring specific roles
-r.Group(func(r chi.Router) {
-    r.Use(authService.RequireAuthAndRole("admin", "moderator"))
-    
-    r.Get("/admin", adminDashboard)
-    r.Delete("/users/{userID}", deleteUser)
-})
-
-// Role-based protection in specific tenant
-r.Group(func(r chi.Router) {
-    r.Use(authService.RequireAuthRoleAndTenant(tenantID, "admin"))
-    
-    r.Get("/tenant/{tenantID}/settings", getTenantSettings)
-    r.Put("/tenant/{tenantID}/settings", updateTenantSettings)
-})
-```
-
-### Permission-Based Protection
-
-```go
-// Protect routes requiring specific permissions
-r.Group(func(r chi.Router) {
-    r.Use(authService.RequireAuthAndPermission("users.read", "users.write"))
-    
-    r.Get("/users", listUsers)
-    r.Post("/users", createUser)
-})
-
-// Permission-based protection in specific tenant
-r.Group(func(r chi.Router) {
-    r.Use(authService.RequireAuthPermissionAndTenant(tenantID, "billing.manage"))
-    
-    r.Get("/tenant/{tenantID}/billing", getBilling)
-    r.Post("/tenant/{tenantID}/billing/invoice", createInvoice)
-})
-```
-
-### Tenant-Based Protection
-
-```go
-// Ensure user belongs to a specific tenant
-r.Group(func(r chi.Router) {
-    r.Use(authService.RequireAuthAndTenant(tenantID))
-    
-    r.Get("/tenant/{tenantID}/data", getTenantData)
-    r.Post("/tenant/{tenantID}/resources", createResource)
-})
-
-// Dynamic tenant extraction from URL or headers
-r.Group(func(r chi.Router) {
-    r.Use(authService.RequireAuth())
-    r.Use(authService.RequireTenant()) // Extracts from X-Tenant-ID header or URL params
-    
-    r.Get("/data", getTenantSpecificData)
-})
-```
-
-### Custom Middleware Configuration
-
-```go
-// Custom token extraction and error handling
-config := auth.MiddlewareConfig{
-    TokenExtractor: func(r *http.Request) string {
-        // Custom logic: check cookie, query param, etc.
-        if token := r.Header.Get("X-API-Key"); token != "" {
-            return token
-        }
-        return r.URL.Query().Get("token")
-    },
-    
-    TenantExtractor: func(r *http.Request) uint {
-        // Extract tenant from subdomain
-        host := r.Host
-        if strings.Contains(host, ".") {
-            subdomain := strings.Split(host, ".")[0]
-            // return getTenantIDBySubdomain(subdomain)
-        }
-        return 0
-    },
-    
-    ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error, statusCode int) {
-        // Custom error response format
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(statusCode)
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "success": false,
-            "error": err.Error(),
-            "code": statusCode,
-            "timestamp": time.Now().UTC(),
+        r.Post("/referrals/generate", func(w http.ResponseWriter, r *http.Request) {
+            result := authService.GenerateReferralCodeHandler(r)
+            w.WriteHeader(result.StatusCode)
+            json.NewEncoder(w).Encode(result)
         })
-    },
-    
-    SkipAuth: func(r *http.Request) bool {
-        // Skip auth for health checks, webhooks, etc.
-        return r.URL.Path == "/health" || 
-               r.URL.Path == "/webhooks/stripe" ||
-               strings.HasPrefix(r.URL.Path, "/public/")
-    },
-}
+    })
 
-r.Use(authService.RequireAuth(config))
-```
-
-### Context Helper Functions
-
-Extract authenticated user and tenant data from request context:
-
-```go
-func getUserProfile(w http.ResponseWriter, r *http.Request) {
-    // Get authenticated user from context
-    user, ok := auth.GetUserFromContext(r)
-    if !ok {
-        http.Error(w, "User not found in context", http.StatusInternalServerError)
-        return
-    }
-    
-    // Get tenant from context (if using tenant middleware)
-    tenant, ok := auth.GetTenantFromContext(r)
-    if ok {
-        log.Printf("User %d accessing tenant %s", user.ID, tenant.Name)
-    }
-    
-    // Or just get tenant ID
-    if tenantID, ok := auth.GetTenantIDFromContext(r); ok {
-        log.Printf("User %d in tenant %d", user.ID, tenantID)
-    }
-    
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(user)
-}
-
-// Panic-style helpers for when you're certain context is set
-func adminDashboard(w http.ResponseWriter, r *http.Request) {
-    user := auth.MustGetUserFromContext(r)    // Panics if not found
-    tenant := auth.MustGetTenantFromContext(r) // Panics if not found
-    
-    // Handle admin dashboard logic...
+    http.ListenAndServe(":8080", r)
 }
 ```
-
-### Middleware Chaining
-
-```go
-// Chain multiple middleware together
-r.Group(func(r chi.Router) {
-    r.Use(authService.Chain(
-        authService.RequireAuth(),
-        authService.RequireTenant(),
-        authService.RequireRole("admin", "manager"),
-    ))
-    
-    r.Get("/management", managementPanel)
-})
-
-// Or use convenience combinations
-r.Group(func(r chi.Router) {
-    // Combines auth + role checking
-    r.Use(authService.RequireAuthAndRole("admin"))
-    r.Get("/admin", adminPanel)
-})
-
-r.Group(func(r chi.Router) {
-    // Combines auth + permission checking
-    r.Use(authService.RequireAuthAndPermission("reports.view"))
-    r.Get("/reports", viewReports)
-})
-
-r.Group(func(r chi.Router) {
-    // Combines auth + tenant checking
-    r.Use(authService.RequireAuthAndTenant(tenantID))
-    r.Get("/tenant-data", getTenantData)
-})
-```
-
-### Available Middleware Functions
-
-| Middleware | Purpose | Usage |
-|------------|---------|-------|
-| `RequireAuth()` | Basic authentication | Validates session token |
-| `RequireRole(roles...)` | Role-based protection | Check user has any of the specified roles |
-| `RequireRoleInTenant(tenantID, roles...)` | Tenant-specific role protection | Check role in specific tenant |
-| `RequirePermission(permissions...)` | Permission-based protection | Check user has all specified permissions |
-| `RequirePermissionInTenant(tenantID, permissions...)` | Tenant-specific permission protection | Check permissions in specific tenant |
-| `RequireTenant(tenantID...)` | Tenant membership validation | Ensure user belongs to tenant |
-| `Chain(middlewares...)` | Combine multiple middleware | Execute middleware in sequence |
-
-### Convenience Combinations
-
-| Middleware | Combines |
-|------------|----------|
-| `RequireAuthAndRole(roles...)` | `RequireAuth()` + `RequireRole()` |
-| `RequireAuthAndPermission(permissions...)` | `RequireAuth()` + `RequirePermission()` |
-| `RequireAuthAndTenant(tenantID...)` | `RequireAuth()` + `RequireTenant()` |
-| `RequireAuthRoleAndTenant(tenantID, roles...)` | `RequireAuth()` + `RequireRoleInTenant()` |
-| `RequireAuthPermissionAndTenant(tenantID, permissions...)` | `RequireAuth()` + `RequirePermissionInTenant()` |
-
-## 📚 Dependencies
-
-```go
-require (
-    github.com/go-chi/chi/v5 v5.0.12
-    github.com/go-playground/validator/v10 v10.22.1
-    github.com/golang-jwt/jwt/v5 v5.3.0
-    github.com/jackc/pgx/v5 v5.6.0
-    github.com/pquerna/otp v1.5.0
-    golang.org/x/crypto v0.42.0
-    golang.org/x/oauth2 v0.31.0
-)
-```
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
 
-**Wispy Auth** - Production-ready authentication with security at its core. 🛡️
+## 🌟 Core Features
+
+### 🔐 Authentication & Security
+
+| Feature | Description | Status |
+|---------|-------------|---------|
+| **Email/Password Auth** | Secure authentication with bcrypt hashing | ✅ |
+| **OAuth2 Integration** | Dynamic provider support (Google, GitHub, Discord, custom) | ✅ |
+| **Session Management** | JWT-like tokens with device tracking | ✅ |
+| **Password Reset** | Secure token-based password reset flow | ✅ |
+| **Email Verification** | Configurable email verification system | ✅ |
+| **Account Lockout** | Brute force protection with configurable attempts | ✅ |
+| **Security Auditing** | Comprehensive security event logging | ✅ |
+| **2FA Ready** | Infrastructure in place for two-factor authentication | ✅ |
+
+### 🏢 Multi-Tenant Architecture
+
+| Feature | Description | Status |
+|---------|-------------|---------|
+| **Tenant Management** | Complete multi-tenant organization support | ✅ |
+| **Role-Based Access Control** | Granular RBAC with custom roles and permissions | ✅ |
+| **Tenant Isolation** | Complete data isolation between tenants | ✅ |
+| **Permission System** | Fine-grained permission management | ✅ |
+| **Default Roles** | Automatic role assignment for new users | ✅ |
+
+### 🎯 Referral System (NEW!)
+
+| Feature | Description | Status |
+|---------|-------------|---------|
+| **Role-Based Limits** | Different invitation limits per user role | ✅ |
+| **Configurable Codes** | Custom length, prefix, and expiry settings | ✅ |
+| **Referral Tracking** | Complete audit trail of referral relationships | ✅ |
+| **Management API** | Generate, view, and manage referral codes | ✅ |
+| **Optional/Required** | Can be made mandatory or optional for signup | ✅ |
+
+### 🛠 Developer Experience
+
+| Feature | Description | Status |
+|---------|-------------|---------|
+| **Pure SQL** | No ORM dependencies, maximum performance | ✅ |
+| **Structured Responses** | Consistent HTTP response handling | ✅ |
+| **Configurable Schema** | Customize table and column names | ✅ |
+| **Comprehensive Examples** | Production-ready examples and documentation | ✅ |
+| **Built-in Email Integration** | Interface-based email service integration | ✅ |
+
+---
+
+## 📚 Complete API Reference
+
+### 🔑 Authentication Endpoints
+
+```go
+// User Registration
+r.Post("/signup", authService.SignUpHandler)
+// Body: {"email": "user@example.com", "password": "pass123", "referral_code": "REF12345"}
+
+// User Login
+r.Post("/signin", authService.SignInHandler)
+// Body: {"email": "user@example.com", "password": "pass123"}
+
+// Token Validation
+r.Get("/validate", authService.ValidateHandler)
+// Headers: Authorization: Bearer <token>
+
+// Password Reset Flow
+r.Post("/forgot-password", authService.ForgotPasswordHandler)
+r.Post("/reset-password", authService.ResetPasswordHandler)
+
+// Email Verification
+r.Post("/verify-email", authService.VerifyEmailHandler)
+r.Post("/resend-verification", authService.ResendVerificationHandler)
+```
+
+### 📱 Session Management
+
+```go
+// Get User Sessions
+r.Get("/sessions", authService.GetSessionsHandler)
+
+// Revoke Specific Session
+r.Delete("/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+    sessionID := chi.URLParam(r, "id")
+    result := authService.RevokeSessionHandler(r, sessionID)
+    w.WriteHeader(result.StatusCode)
+    json.NewEncoder(w).Encode(result)
+})
+
+// Revoke All Sessions
+r.Delete("/sessions", authService.RevokeAllSessionsHandler)
+```
+
+### 🌐 OAuth Integration
+
+```go
+// Initiate OAuth Flow
+r.Get("/oauth/{provider}", func(w http.ResponseWriter, r *http.Request) {
+    provider := chi.URLParam(r, "provider")
+    result := authService.OAuthHandler(w, r, provider)
+    // Handles redirect automatically
+})
+
+// OAuth Callback
+r.Get("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+    provider := r.URL.Query().Get("provider")
+    code := r.URL.Query().Get("code")
+    state := r.URL.Query().Get("state")
+    result := authService.OAuthCallbackHandler(r, provider, code, state)
+    w.WriteHeader(result.StatusCode)
+    json.NewEncoder(w).Encode(result)
+})
+
+// Get Available Providers
+r.Get("/oauth/providers", authService.GetProvidersHandler)
+```
+
+### 🎯 Referral System
+
+```go
+// Generate Referral Code
+r.Post("/referrals/generate", authService.GenerateReferralCodeHandler)
+// Body: {"tenant_id": 1, "max_uses": 5}
+
+// Get My Referral Codes
+r.Get("/referrals/my-codes", authService.GetMyReferralCodesHandler)
+
+// Get My Referrals (users I referred)
+r.Get("/referrals/my-referrals", authService.GetMyReferralsHandler)
+
+// Get Referral Statistics
+r.Get("/referrals/stats", authService.GetReferralStatsHandler)
+```
+
+---
+
+## 🛡️ Security Configuration
+
+```go
+type SecurityConfig struct {
+    // Email verification
+    RequireEmailVerification bool
+    VerificationTokenExpiry  time.Duration
+
+    // Password security
+    PasswordMinLength      int
+    PasswordRequireUpper   bool
+    PasswordRequireLower   bool
+    PasswordRequireNumber  bool
+    PasswordRequireSpecial bool
+    PasswordResetExpiry    time.Duration
+
+    // Login security
+    MaxLoginAttempts int
+    LockoutDuration  time.Duration
+    SessionLifetime  time.Duration
+    RequireTwoFactor bool
+
+    // Referral System
+    RequireReferralCode  bool
+    DefaultUserRoleName  string
+    MaxInviteesPerRole   map[string]int
+    ReferralCodeLength   int
+    ReferralCodePrefix   string
+    ReferralCodeExpiry   time.Duration
+}
+```
+
+### Example Security Configuration
+
+```go
+SecurityConfig: auth.SecurityConfig{
+    // Strong password requirements
+    PasswordMinLength:      12,
+    PasswordRequireUpper:   true,
+    PasswordRequireLower:   true,
+    PasswordRequireNumber:  true,
+    PasswordRequireSpecial: true,
+
+    // Account security
+    MaxLoginAttempts: 3,
+    LockoutDuration:  30 * time.Minute,
+    SessionLifetime:  2 * time.Hour,
+
+    // Email verification
+    RequireEmailVerification: true,
+    VerificationTokenExpiry:  24 * time.Hour,
+
+    // Referral system
+    RequireReferralCode: false,
+    DefaultUserRoleName: "member",
+    MaxInviteesPerRole: map[string]int{
+        "member":    5,
+        "premium":   25,
+        "admin":     0, // Unlimited
+    },
+    ReferralCodeLength: 8,
+    ReferralCodePrefix: "INVITE",
+    ReferralCodeExpiry: 7 * 24 * time.Hour,
+}
+```
+
+---
+
+## 🔧 OAuth Provider Configuration
+
+### Built-in Provider Helpers
+
+```go
+OAuthProviders: map[string]auth.OAuthProviderConfig{
+    // Helper functions for common providers
+    "google": auth.NewGoogleOAuthProvider(
+        "client-id", "client-secret", "redirect-url",
+    ),
+    "github": auth.NewGitHubOAuthProvider(
+        "client-id", "client-secret", "redirect-url",
+    ),
+    "discord": auth.NewDiscordOAuthProvider(
+        "client-id", "client-secret", "redirect-url",
+    ),
+}
+```
+
+### Custom Providers
+
+```go
+OAuthProviders: map[string]auth.OAuthProviderConfig{
+    // Enterprise providers
+    "microsoft": auth.NewCustomOAuthProvider(
+        clientID, clientSecret, redirectURL,
+        "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        []string{"openid", "profile", "email", "User.Read"},
+    ),
+
+    // Custom SSO
+    "company-sso": auth.NewCustomOAuthProvider(
+        clientID, clientSecret, redirectURL,
+        "https://sso.company.com/oauth2/authorize",
+        "https://sso.company.com/oauth2/token",
+        []string{"profile", "email", "groups"},
+    ),
+}
+```
+
+---
+
+## 🏗️ Multi-Tenant Setup
+
+### Creating Tenants
+
+```go
+// Create a new tenant
+tenant, err := authService.CreateTenant("Acme Corp", "acme", "acme.com")
+
+// Create roles for the tenant
+adminRole, err := authService.CreateRole(tenant.ID, "admin", "Administrator")
+userRole, err := authService.CreateRole(tenant.ID, "user", "Regular User")
+
+// Create permissions
+readPerm, err := authService.CreatePermission("read", "documents", "read")
+writePerm, err := authService.CreatePermission("write", "documents", "write")
+
+// Assign permissions to roles
+err = authService.AssignPermissionToRole(adminRole.ID, readPerm.ID)
+err = authService.AssignPermissionToRole(adminRole.ID, writePerm.ID)
+err = authService.AssignPermissionToRole(userRole.ID, readPerm.ID)
+```
+
+### Middleware with Tenant Context
+
+```go
+// Require authentication + specific permission
+r.Group(func(r chi.Router) {
+    r.Use(authService.RequireAuth())
+    r.Use(authService.RequirePermission("documents", "read"))
+
+    r.Get("/documents", getDocumentsHandler)
+})
+
+// In your handler
+func getDocumentsHandler(w http.ResponseWriter, r *http.Request) {
+    user := auth.MustGetUserFromContext(r.Context())
+    tenant := auth.MustGetTenantFromContext(r.Context())
+
+    // User and tenant are guaranteed to be available
+    log.Printf("User %s accessing documents in tenant %s", user.Email, tenant.Name)
+}
+```
+
+---
+
+## 🎯 Referral System Usage
+
+### Basic Setup
+
+```go
+// Configure referral system
+SecurityConfig: auth.SecurityConfig{
+    RequireReferralCode:  false,  // Optional referrals
+    DefaultUserRoleName:  "user",
+    ReferralCodeLength:   8,
+    ReferralCodePrefix:   "REF",
+    ReferralCodeExpiry:   30 * 24 * time.Hour,
+    MaxInviteesPerRole: map[string]int{
+        "user":     5,    // Basic users: 5 invites
+        "premium":  20,   // Premium users: 20 invites
+        "admin":    100,  // Admins: 100 invites
+    },
+}
+```
+
+### API Usage Flow
+
+```bash
+# 1. User signs up and gets authenticated
+curl -X POST /signup -d '{"email":"user@test.com","password":"pass123"}'
+
+# 2. User generates referral code
+curl -X POST /referrals/generate \
+  -H "Authorization: Bearer <token>" \
+  -d '{"tenant_id":1,"max_uses":5}'
+
+# Response: {"code":"REF12345678","max_uses":5,"expires_at":"2024-10-21T..."}
+
+# 3. New user signs up with referral code
+curl -X POST /signup -d '{
+  "email":"friend@test.com",
+  "password":"pass123",
+  "referral_code":"REF12345678"
+}'
+
+# 4. Original user can view their referrals
+curl -X GET /referrals/my-referrals \
+  -H "Authorization: Bearer <token>"
+```
+
+### Role-Based Limits
+
+```go
+// Check how many invites a user can still send
+stats, err := authService.GetReferralStats(userID)
+// Returns: totalReferred, activeReferrals, error
+
+// Generate code (automatically checks limits)
+response := authService.GenerateReferralCode(auth.GenerateReferralCodeRequest{
+    UserID:   userID,
+    TenantID: tenantID,
+    MaxUses:  5,
+})
+// Will return 403 if user has reached their role's limit
+```
+
+---
+
+## 📊 Database Schema
+
+The library creates and manages these tables:
+
+### Core Authentication
+- `users` - User accounts with 25+ security fields
+- `sessions` - Session management with device tracking
+- `security_events` - Comprehensive audit logging
+
+### Multi-Tenant System
+- `tenants` - Organization/tenant management
+- `roles` - Role definitions per tenant
+- `permissions` - System-wide permissions
+- `user_tenants` - User-tenant-role relationships
+- `role_permissions` - Role-permission assignments
+
+### Referral System
+- `referral_codes` - Generated referral codes with metadata
+- `user_referrals` - Referral relationship tracking
+
+### OAuth Integration
+- `oauth_states` - OAuth CSRF protection
+
+---
+
+## 📂 Examples
+
+Comprehensive examples are provided in the `/example` directory:
+
+### 🏗️ [`example/app/`](./example/app/) - Complete Web Application
+Production-ready example with:
+- Full authentication flow
+- Database integration
+- Email service implementation
+- Multi-tenant setup
+- Security best practices
+
+```bash
+cd example/app
+go mod tidy
+go run main.go services.go
+# Visit http://localhost:8080
+```
+
+### 🔐 [`example/oauth/`](./example/oauth/) - OAuth Integration
+Dynamic OAuth provider examples:
+- Google, GitHub, Discord
+- Custom enterprise providers
+- Mixed configuration approaches
+
+```bash
+cd example/oauth
+go mod tidy
+go run main.go
+```
+
+### 🎯 [`example/referrals/`](./example/referrals/) - Referral System
+Referral system demonstration:
+- Role-based invitation limits
+- Referral code generation and tracking
+- Management API endpoints
+
+```bash
+cd example/referrals
+go mod tidy
+go run main.go
+# Visit http://localhost:8080
+```
+
+### 🧪 [`example/testing/`](./example/testing/) - Testing Patterns
+Testing examples with:
+- In-memory SQLite for isolated tests
+- Mock services
+- Configuration validation
+
+```bash
+cd example/testing
+go mod tidy
+go run oauth_dynamic_demo.go
+```
+
+---
+
+## 🔒 Security Features
+
+### User Security Fields (25+)
+- Email verification status and timestamps
+- Password security (hash, reset tokens, change tracking)
+- Login security (attempts, lockout, last login tracking)
+- Device and location tracking
+- Two-factor authentication infrastructure
+- Account status and suspension handling
+- Provider-based authentication support
+
+### Security Events Auditing
+All security-related actions are automatically logged:
+- Login attempts (success/failure)
+- Password changes and resets
+- Email verification events
+- Account lockouts and unlocks
+- Session creation and termination
+- Suspicious activity detection
+- Referral code generation and usage
+
+### Built-in Protection
+- **Brute Force Protection**: Configurable login attempt limits
+- **CSRF Protection**: OAuth state validation with secure tokens
+- **Session Security**: Device fingerprinting and IP tracking
+- **Password Security**: Configurable strength requirements
+- **SQL Injection Protection**: Prepared statements throughout
+- **Timing Attack Protection**: Constant-time comparisons
+
+---
+
+## 📈 Performance
+
+- **Pure SQL**: No ORM overhead, direct database queries
+- **Prepared Statements**: All queries use prepared statements for security and performance
+- **Connection Pooling**: Built-in PostgreSQL connection pooling
+- **Minimal Dependencies**: Only essential dependencies for maximum compatibility
+- **Memory Efficient**: Struct-based responses, minimal allocations
+
+---
+
+## 🛠 Configuration Options
+
+### Database Configuration
+```go
+type StorageConfig struct {
+    // Customize table names
+    UsersTable          string `json:"users_table"`
+    SessionsTable       string `json:"sessions_table"`
+    SecurityEventsTable string `json:"security_events_table"`
+
+    // Customize column mappings
+    UserColumns    UserColumnMapping    `json:"user_columns"`
+    SessionColumns SessionColumnMapping `json:"session_columns"`
+
+    // Multi-tenant settings
+    MultiTenant MultiTenantConfig `json:"multi_tenant"`
+}
+```
+
+### Email Service Integration
+```go
+type EmailService interface {
+    SendVerificationEmail(email, token string) error
+    SendPasswordResetEmail(email, token string) error
+    SendWelcomeEmail(email, name string) error
+}
+
+// Implement this interface with your email provider
+type YourEmailService struct {
+    // Your email service configuration
+}
+
+func (e *YourEmailService) SendVerificationEmail(email, token string) error {
+    // Send verification email using your preferred service
+    // (SendGrid, SES, Mailgun, etc.)
+    return nil
+}
+```
+
+---
+
+## 🚀 Deployment
+
+### Environment Variables
+```bash
+# Required
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+
+# OAuth (optional)
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret
+
+# Email Service (implement based on your provider)
+SMTP_HOST=smtp.yourprovider.com
+SMTP_PORT=587
+SMTP_USERNAME=your-smtp-username
+SMTP_PASSWORD=your-smtp-password
+```
+
+### Docker Support
+```dockerfile
+FROM golang:1.21-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o main .
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /app/main .
+CMD ["./main"]
+```
+
+### Production Checklist
+- ✅ Configure strong password requirements
+- ✅ Enable email verification
+- ✅ Set up proper session lifetimes
+- ✅ Configure account lockout policies
+- ✅ Implement proper email service
+- ✅ Set up database backups
+- ✅ Configure HTTPS/TLS
+- ✅ Monitor security events
+- ✅ Set up rate limiting (if needed)
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🆘 Support
+
+- 📖 **Documentation**: Check the comprehensive examples in `/example`
+- 🐛 **Issues**: [GitHub Issues](https://github.com/wispberry-tech/wispy-auth/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/wispberry-tech/wispy-auth/discussions)
+
+---
+
+## 🗺 Roadmap
+
+### Current Version (v1.0)
+- ✅ Core authentication (email/password, OAuth)
+- ✅ Multi-tenant architecture with RBAC
+- ✅ Referral system with role-based limits
+- ✅ Comprehensive security features
+- ✅ Production-ready examples
+
+### Future Versions
+- 🔄 WebAuthn/Passkey support
+- 🔄 Advanced 2FA methods (TOTP, SMS)
+- 🔄 Social login providers expansion
+<!-- - 🔄 Admin dashboard for user management -->
+<!-- - 🔄 Advanced analytics and reporting -->
+<!-- - 🔄 Rate limiting and DDoS protection -->
+
+---
+
+<div align="center">
+
+<!-- **Built with ❤️ for the Go community** -->
+
+[⭐ Star us on GitHub](https://github.com/wispberry-tech/wispy-auth) • [📖 Read the Docs](./docs/) • [🚀 Get Started](#-quick-start)
+
+</div>
