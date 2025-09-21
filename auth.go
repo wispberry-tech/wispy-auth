@@ -465,29 +465,44 @@ func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User,
 	}
 
 	now := time.Now()
+	// Create core user record
 	user := User{
-		Email:             req.Email,
-		Username:          req.Username,
-		FirstName:         req.FirstName,
-		LastName:          req.LastName,
-		PasswordHash:      hashedPassword,
-		Provider:          "email",
-		EmailVerified:     !a.securityConfig.RequireEmailVerification, // Auto-verify if not required
-		VerificationToken: verificationToken,
-		PasswordChangedAt: &now,
-		IsActive:          true,
-		IsSuspended:       false,
-		ReferredByCode:    req.ReferralCode, // Store the referral code used
-		CreatedAt:         now,
-		UpdatedAt:         now,
-	} // Set email as verified if verification is not required
-	if !a.securityConfig.RequireEmailVerification {
-		user.EmailVerifiedAt = &now
+		Email:         req.Email,
+		Username:      req.Username,
+		FirstName:     req.FirstName,
+		LastName:      req.LastName,
+		PasswordHash:  hashedPassword,
+		Provider:      "email",
+		EmailVerified: !a.securityConfig.RequireEmailVerification, // Auto-verify if not required
+		IsActive:      true,
+		IsSuspended:   false,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 
 	if err := a.storage.CreateUser(&user); err != nil {
 		slog.Error("Failed to create user", "error", err, "email", req.Email, "username", req.Username)
 		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	// Create security record
+	userSecurity := storage.UserSecurity{
+		UserID:            user.ID,
+		VerificationToken: verificationToken,
+		PasswordChangedAt: &now,
+		ReferredByCode:    req.ReferralCode,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+
+	// Set email verification timestamp if not required
+	if !a.securityConfig.RequireEmailVerification {
+		userSecurity.EmailVerifiedAt = &now
+	}
+
+	if err := a.storage.CreateUserSecurity(&userSecurity); err != nil {
+		slog.Error("Failed to create user security", "error", err, "userID", user.ID)
+		return nil, fmt.Errorf("failed to create user security: %w", err)
 	}
 
 	// Assign user to tenant if multi-tenant is enabled
@@ -821,10 +836,27 @@ func (a *AuthService) InitiatePasswordReset(email string) error {
 	}
 
 	expiresAt := time.Now().Add(a.securityConfig.PasswordResetExpiry)
-	user.PasswordResetToken = token
-	user.PasswordResetExpiresAt = &expiresAt
 
-	if err := a.storage.UpdateUser(user); err != nil {
+	// Get or create user security record
+	userSecurity, err := a.storage.GetUserSecurity(user.ID)
+	if err != nil {
+		// Create new security record if it doesn't exist
+		userSecurity = &storage.UserSecurity{
+			UserID:    user.ID,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := a.storage.CreateUserSecurity(userSecurity); err != nil {
+			slog.Error("Failed to create user security", "error", err, "user_id", user.ID)
+			return fmt.Errorf("failed to create user security: %w", err)
+		}
+	}
+
+	userSecurity.PasswordResetToken = token
+	userSecurity.PasswordResetExpiresAt = &expiresAt
+	userSecurity.UpdatedAt = time.Now()
+
+	if err := a.storage.UpdateUserSecurity(userSecurity); err != nil {
 		slog.Error("Failed to save reset token", "error", err, "user_id", user.ID, "email", email)
 		return fmt.Errorf("failed to save reset token: %w", err)
 	}
@@ -842,9 +874,16 @@ func (a *AuthService) ResetPassword(token, newPassword string) error {
 		return fmt.Errorf("invalid reset token")
 	}
 
+	// Get user security record to check token expiry
+	userSecurity, err := a.storage.GetUserSecurity(user.ID)
+	if err != nil {
+		slog.Warn("No security record found for reset token", "user_id", user.ID, "token", token)
+		return fmt.Errorf("invalid reset token")
+	}
+
 	// Check if token is expired
-	if user.PasswordResetExpiresAt == nil || time.Now().After(*user.PasswordResetExpiresAt) {
-		slog.Warn("Expired reset token used", "user_id", user.ID, "token", token, "expired_at", user.PasswordResetExpiresAt)
+	if userSecurity.PasswordResetExpiresAt == nil || time.Now().After(*userSecurity.PasswordResetExpiresAt) {
+		slog.Warn("Expired reset token used", "user_id", user.ID, "token", token, "expired_at", userSecurity.PasswordResetExpiresAt)
 		return fmt.Errorf("reset token has expired")
 	}
 
@@ -861,16 +900,25 @@ func (a *AuthService) ResetPassword(token, newPassword string) error {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	// Update user
+	// Update user password
 	user.PasswordHash = hashedPassword
-	now := time.Now()
-	user.PasswordChangedAt = &now
-	user.PasswordResetToken = ""
-	user.PasswordResetExpiresAt = nil
+	user.UpdatedAt = time.Now()
 
 	if err := a.storage.UpdateUser(user); err != nil {
 		slog.Error("Failed to update password", "error", err, "user_id", user.ID)
 		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	// Clear reset token and update security record
+	now := time.Now()
+	userSecurity.PasswordChangedAt = &now
+	userSecurity.PasswordResetToken = ""
+	userSecurity.PasswordResetExpiresAt = nil
+	userSecurity.UpdatedAt = now
+
+	if err := a.storage.UpdateUserSecurity(userSecurity); err != nil {
+		slog.Error("Failed to update user security after password reset", "error", err, "user_id", user.ID)
+		return fmt.Errorf("failed to update user security: %w", err)
 	}
 
 	a.logSecurityEvent(&user.ID, nil, EventPasswordChanged,
@@ -898,9 +946,25 @@ func (a *AuthService) SendEmailVerification(userID uint) error {
 		return fmt.Errorf("failed to generate verification token: %w", err)
 	}
 
-	user.VerificationToken = token
+	// Get or create user security record
+	userSecurity, err := a.storage.GetUserSecurity(user.ID)
+	if err != nil {
+		// Create new security record if it doesn't exist
+		userSecurity = &storage.UserSecurity{
+			UserID:    user.ID,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := a.storage.CreateUserSecurity(userSecurity); err != nil {
+			slog.Error("Failed to create user security", "error", err, "user_id", user.ID)
+			return fmt.Errorf("failed to create user security: %w", err)
+		}
+	}
 
-	if err := a.storage.UpdateUser(user); err != nil {
+	userSecurity.VerificationToken = token
+	userSecurity.UpdatedAt = time.Now()
+
+	if err := a.storage.UpdateUserSecurity(userSecurity); err != nil {
 		slog.Error("Failed to save verification token", "error", err, "user_id", userID)
 		return fmt.Errorf("failed to save verification token: %w", err)
 	}
@@ -926,21 +990,37 @@ func (a *AuthService) VerifyEmail(token string) error {
 		return fmt.Errorf("email already verified")
 	}
 
-	// Check if token has expired (48 hours)
-	if user.VerificationToken == "" || user.EmailVerifiedAt != nil {
+	// Get user security record to check verification token
+	userSecurity, err := a.storage.GetUserSecurity(user.ID)
+	if err != nil {
+		slog.Warn("No security record found for verification token", "user_id", user.ID, "token", token)
+		return fmt.Errorf("invalid verification token")
+	}
+
+	// Check if token has expired
+	if userSecurity.VerificationToken == "" || userSecurity.EmailVerifiedAt != nil {
 		slog.Warn("Invalid or expired verification token", "user_id", user.ID, "token", token)
 		return fmt.Errorf("invalid verification token")
 	}
 
 	// Mark email as verified
 	user.EmailVerified = true
-	now := time.Now()
-	user.EmailVerifiedAt = &now
-	user.VerificationToken = "" // Clear the token after use
+	user.UpdatedAt = time.Now()
 
 	if err := a.storage.UpdateUser(user); err != nil {
-		slog.Error("Failed to verify email", "error", err, "user_id", user.ID)
+		slog.Error("Failed to update user email verification", "error", err, "user_id", user.ID)
 		return fmt.Errorf("failed to verify email: %w", err)
+	}
+
+	// Update security record
+	now := time.Now()
+	userSecurity.EmailVerifiedAt = &now
+	userSecurity.VerificationToken = "" // Clear the token after use
+	userSecurity.UpdatedAt = now
+
+	if err := a.storage.UpdateUserSecurity(userSecurity); err != nil {
+		slog.Error("Failed to update user security after email verification", "error", err, "user_id", user.ID)
+		return fmt.Errorf("failed to update user security: %w", err)
 	}
 
 	// Log the verification

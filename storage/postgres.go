@@ -42,12 +42,14 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 // User operations
 func (p *PostgresStorage) CreateUser(user *User) error {
 	query := `INSERT INTO users (email, username, first_name, last_name, password_hash,
-			  provider, provider_id, email_verified, created_at, updated_at)
-			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`
+			  provider, provider_id, email_verified, is_active, is_suspended,
+			  created_at, updated_at)
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`
 
 	err := p.db.QueryRow(query,
 		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash,
-		user.Provider, user.ProviderID, user.EmailVerified, time.Now(), time.Now()).Scan(&user.ID)
+		user.Provider, user.ProviderID, user.EmailVerified, user.IsActive, user.IsSuspended,
+		time.Now(), time.Now()).Scan(&user.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
@@ -58,18 +60,15 @@ func (p *PostgresStorage) CreateUser(user *User) error {
 
 func (p *PostgresStorage) GetUserByEmail(email, provider string) (*User, error) {
 	query := `SELECT id, email, username, first_name, last_name, password_hash,
-			  provider, provider_id, email_verified, failed_login_attempts, locked_until,
-			  last_login_at, last_login_ip, is_active, is_suspended, created_at, updated_at
+			  provider, provider_id, email_verified, is_active, is_suspended,
+			  created_at, updated_at
 			  FROM users WHERE email = $1 AND provider = $2`
 
 	user := &User{}
-	var lockedUntil, lastLoginAt sql.NullTime
-	var lastKnownIP sql.NullString
 
 	err := p.db.QueryRow(query, email, provider).Scan(
 		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
 		&user.PasswordHash, &user.Provider, &user.ProviderID, &user.EmailVerified,
-		&user.LoginAttempts, &lockedUntil, &lastLoginAt, &lastKnownIP,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
 	)
 
@@ -78,17 +77,6 @@ func (p *PostgresStorage) GetUserByEmail(email, provider string) (*User, error) 
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-
-	// Handle nullable fields
-	if lockedUntil.Valid {
-		user.LockedUntil = &lockedUntil.Time
-	}
-	if lastLoginAt.Valid {
-		user.LastLoginAt = &lastLoginAt.Time
-	}
-	if lastKnownIP.Valid {
-		user.LastKnownIP = lastKnownIP.String
 	}
 
 	return user, nil
@@ -104,18 +92,15 @@ func (p *PostgresStorage) GetUserByProviderID(provider, providerID string) (*Use
 
 func (p *PostgresStorage) GetUserByID(id uint) (*User, error) {
 	query := `SELECT id, email, username, first_name, last_name, password_hash,
-			  provider, provider_id, email_verified, failed_login_attempts, locked_until,
-			  last_login_at, last_login_ip, is_active, is_suspended, created_at, updated_at
+			  provider, provider_id, email_verified, is_active, is_suspended,
+			  created_at, updated_at
 			  FROM users WHERE id = $1`
 
 	user := &User{}
-	var lockedUntil, lastLoginAt sql.NullTime
-	var lastKnownIP sql.NullString
 
 	err := p.db.QueryRow(query, id).Scan(
 		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
 		&user.PasswordHash, &user.Provider, &user.ProviderID, &user.EmailVerified,
-		&user.LoginAttempts, &lockedUntil, &lastLoginAt, &lastKnownIP,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
 	)
 
@@ -126,27 +111,172 @@ func (p *PostgresStorage) GetUserByID(id uint) (*User, error) {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	// Handle nullable fields
-	if lockedUntil.Valid {
-		user.LockedUntil = &lockedUntil.Time
-	}
-	if lastLoginAt.Valid {
-		user.LastLoginAt = &lastLoginAt.Time
-	}
-	if lastKnownIP.Valid {
-		user.LastKnownIP = lastKnownIP.String
-	}
-
 	return user, nil
 }
 
 func (p *PostgresStorage) UpdateUser(user *User) error {
 	query := `UPDATE users SET username = $1, first_name = $2, last_name = $3,
-			  password_hash = $4, email_verified = $5, updated_at = $6 WHERE id = $7`
+			  password_hash = $4, email_verified = $5, is_active = $6, is_suspended = $7,
+			  updated_at = $8 WHERE id = $9`
 
 	_, err := p.db.Exec(query, user.Username, user.FirstName, user.LastName,
-		user.PasswordHash, user.EmailVerified, time.Now(), user.ID)
+		user.PasswordHash, user.EmailVerified, user.IsActive, user.IsSuspended,
+		time.Now(), user.ID)
 
+	return err
+}
+
+// UserSecurity operations
+func (p *PostgresStorage) CreateUserSecurity(security *UserSecurity) error {
+	query := `INSERT INTO user_security (user_id, email_verified_at, verification_token,
+			  password_reset_token, password_reset_expires_at, password_changed_at,
+			  login_attempts, last_failed_login_at, locked_until, last_login_at,
+			  last_known_ip, last_login_location, two_factor_enabled, two_factor_secret,
+			  backup_codes, suspended_at, suspend_reason, referred_by_code,
+			  created_at, updated_at)
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`
+
+	_, err := p.db.Exec(query,
+		security.UserID, security.EmailVerifiedAt, security.VerificationToken,
+		security.PasswordResetToken, security.PasswordResetExpiresAt, security.PasswordChangedAt,
+		security.LoginAttempts, security.LastFailedLoginAt, security.LockedUntil, security.LastLoginAt,
+		security.LastKnownIP, security.LastLoginLocation, security.TwoFactorEnabled, security.TwoFactorSecret,
+		security.BackupCodes, security.SuspendedAt, security.SuspendReason, security.ReferredByCode,
+		time.Now(), time.Now())
+
+	if err != nil {
+		return fmt.Errorf("failed to create user security: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
+	query := `SELECT user_id, email_verified_at, verification_token,
+			  password_reset_token, password_reset_expires_at, password_changed_at,
+			  login_attempts, last_failed_login_at, locked_until, last_login_at,
+			  last_known_ip, last_login_location, two_factor_enabled, two_factor_secret,
+			  backup_codes, suspended_at, suspend_reason, referred_by_code,
+			  created_at, updated_at
+			  FROM user_security WHERE user_id = $1`
+
+	security := &UserSecurity{}
+	var emailVerifiedAt, passwordResetExpiresAt, passwordChangedAt sql.NullTime
+	var lastFailedLoginAt, lockedUntil, lastLoginAt, suspendedAt sql.NullTime
+	var verificationToken, passwordResetToken sql.NullString
+	var lastKnownIP, lastLoginLocation, twoFactorSecret, backupCodes sql.NullString
+	var suspendReason, referredByCode sql.NullString
+
+	err := p.db.QueryRow(query, userID).Scan(
+		&security.UserID, &emailVerifiedAt, &verificationToken,
+		&passwordResetToken, &passwordResetExpiresAt, &passwordChangedAt,
+		&security.LoginAttempts, &lastFailedLoginAt, &lockedUntil, &lastLoginAt,
+		&lastKnownIP, &lastLoginLocation, &security.TwoFactorEnabled, &twoFactorSecret,
+		&backupCodes, &suspendedAt, &suspendReason, &referredByCode,
+		&security.CreatedAt, &security.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("user security not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user security: %w", err)
+	}
+
+	// Handle nullable fields (same logic as SQLite)
+	if emailVerifiedAt.Valid {
+		security.EmailVerifiedAt = &emailVerifiedAt.Time
+	}
+	if verificationToken.Valid {
+		security.VerificationToken = verificationToken.String
+	}
+	if passwordResetToken.Valid {
+		security.PasswordResetToken = passwordResetToken.String
+	}
+	if passwordResetExpiresAt.Valid {
+		security.PasswordResetExpiresAt = &passwordResetExpiresAt.Time
+	}
+	if passwordChangedAt.Valid {
+		security.PasswordChangedAt = &passwordChangedAt.Time
+	}
+	if lastFailedLoginAt.Valid {
+		security.LastFailedLoginAt = &lastFailedLoginAt.Time
+	}
+	if lockedUntil.Valid {
+		security.LockedUntil = &lockedUntil.Time
+	}
+	if lastLoginAt.Valid {
+		security.LastLoginAt = &lastLoginAt.Time
+	}
+	if lastKnownIP.Valid {
+		security.LastKnownIP = lastKnownIP.String
+	}
+	if lastLoginLocation.Valid {
+		security.LastLoginLocation = lastLoginLocation.String
+	}
+	if twoFactorSecret.Valid {
+		security.TwoFactorSecret = twoFactorSecret.String
+	}
+	if backupCodes.Valid {
+		security.BackupCodes = backupCodes.String
+	}
+	if suspendedAt.Valid {
+		security.SuspendedAt = &suspendedAt.Time
+	}
+	if suspendReason.Valid {
+		security.SuspendReason = suspendReason.String
+	}
+	if referredByCode.Valid {
+		security.ReferredByCode = referredByCode.String
+	}
+
+	return security, nil
+}
+
+func (p *PostgresStorage) UpdateUserSecurity(security *UserSecurity) error {
+	query := `UPDATE user_security SET email_verified_at = $1, verification_token = $2,
+			  password_reset_token = $3, password_reset_expires_at = $4, password_changed_at = $5,
+			  login_attempts = $6, last_failed_login_at = $7, locked_until = $8, last_login_at = $9,
+			  last_known_ip = $10, last_login_location = $11, two_factor_enabled = $12, two_factor_secret = $13,
+			  backup_codes = $14, suspended_at = $15, suspend_reason = $16, referred_by_code = $17,
+			  updated_at = $18 WHERE user_id = $19`
+
+	_, err := p.db.Exec(query,
+		security.EmailVerifiedAt, security.VerificationToken,
+		security.PasswordResetToken, security.PasswordResetExpiresAt, security.PasswordChangedAt,
+		security.LoginAttempts, security.LastFailedLoginAt, security.LockedUntil, security.LastLoginAt,
+		security.LastKnownIP, security.LastLoginLocation, security.TwoFactorEnabled, security.TwoFactorSecret,
+		security.BackupCodes, security.SuspendedAt, security.SuspendReason, security.ReferredByCode,
+		time.Now(), security.UserID)
+
+	return err
+}
+
+// Optimized security operations for common use cases
+func (p *PostgresStorage) IncrementLoginAttempts(userID uint) error {
+	query := `UPDATE user_security SET login_attempts = login_attempts + 1,
+			  last_failed_login_at = $1, updated_at = $2 WHERE user_id = $3`
+	_, err := p.db.Exec(query, time.Now(), time.Now(), userID)
+	return err
+}
+
+func (p *PostgresStorage) ResetLoginAttempts(userID uint) error {
+	query := `UPDATE user_security SET login_attempts = 0, locked_until = NULL,
+			  updated_at = $1 WHERE user_id = $2`
+	_, err := p.db.Exec(query, time.Now(), userID)
+	return err
+}
+
+func (p *PostgresStorage) SetUserLocked(userID uint, until time.Time) error {
+	query := `UPDATE user_security SET locked_until = $1, updated_at = $2 WHERE user_id = $3`
+	_, err := p.db.Exec(query, until, time.Now(), userID)
+	return err
+}
+
+func (p *PostgresStorage) UpdateLastLogin(userID uint, ipAddress string) error {
+	query := `UPDATE user_security SET last_login_at = $1, last_known_ip = $2,
+			  updated_at = $3 WHERE user_id = $4`
+	_, err := p.db.Exec(query, time.Now(), ipAddress, time.Now(), userID)
 	return err
 }
 
@@ -302,15 +432,8 @@ func (p *PostgresStorage) GetSecurityEventsByUser(userID uint, limit int, offset
 func (p *PostgresStorage) CreatePasswordResetToken(userID uint, token string, expiresAt time.Time) error {
 	return nil
 }
-func (p *PostgresStorage) GetUserByPasswordResetToken(token string) (*User, error)   { return nil, nil }
-func (p *PostgresStorage) ClearPasswordResetToken(userID uint) error                 { return nil }
-func (p *PostgresStorage) SetEmailVerificationToken(userID uint, token string) error { return nil }
-func (p *PostgresStorage) GetUserByVerificationToken(token string) (*User, error)    { return nil, nil }
-func (p *PostgresStorage) MarkEmailAsVerified(userID uint) error                     { return nil }
-func (p *PostgresStorage) IncrementLoginAttempts(userID uint) error                  { return nil }
-func (p *PostgresStorage) ResetLoginAttempts(userID uint) error                      { return nil }
-func (p *PostgresStorage) LockUser(userID uint, until time.Time) error               { return nil }
-func (p *PostgresStorage) UnlockUser(userID uint) error                              { return nil }
+func (p *PostgresStorage) GetUserByPasswordResetToken(token string) (*User, error) { return nil, nil }
+func (p *PostgresStorage) GetUserByVerificationToken(token string) (*User, error)  { return nil, nil }
 
 // Referral Code operations - Stub implementations for now
 func (p *PostgresStorage) CreateReferralCode(code *ReferralCode) error {

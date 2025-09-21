@@ -42,7 +42,8 @@ type Session struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// User represents a user in the authentication system with comprehensive security features.
+// User represents core user identity and authentication information.
+// Security details are handled separately via UserSecurity.
 type User struct {
 	ID        uint   `json:"id"`
 	Email     string `json:"email"`
@@ -55,17 +56,29 @@ type User struct {
 	Provider     string `json:"provider"` // "email", "google", "github", "discord"
 	ProviderID   string `json:"provider_id"`
 
-	// Email Security
-	EmailVerified     bool       `json:"email_verified"`
+	// Core Security (frequently accessed)
+	EmailVerified bool `json:"email_verified"`
+	IsActive      bool `json:"is_active"`
+	IsSuspended   bool `json:"is_suspended"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// UserSecurity represents detailed security tracking and sensitive data for a user.
+type UserSecurity struct {
+	UserID uint `json:"user_id"`
+
+	// Email Security Details
 	EmailVerifiedAt   *time.Time `json:"email_verified_at,omitempty"`
 	VerificationToken string     `json:"-"` // Hidden from JSON
 
 	// Password Security
-	PasswordResetToken     string     `json:"-"`                             // Hidden from JSON
+	PasswordResetToken     string     `json:"-"` // Hidden from JSON
 	PasswordResetExpiresAt *time.Time `json:"password_reset_expires_at,omitempty"`
 	PasswordChangedAt      *time.Time `json:"password_changed_at,omitempty"`
 
-	// Login Security
+	// Login Security Tracking
 	LoginAttempts     int        `json:"login_attempts"`
 	LastFailedLoginAt *time.Time `json:"last_failed_login_at,omitempty"`
 	LockedUntil       *time.Time `json:"locked_until,omitempty"`
@@ -80,15 +93,12 @@ type User struct {
 	TwoFactorSecret  string `json:"-"` // Hidden from JSON
 	BackupCodes      string `json:"-"` // Hidden from JSON
 
-	// Account Security
-	IsActive      bool       `json:"is_active"`
-	IsSuspended   bool       `json:"is_suspended"`
+	// Account Management
 	SuspendedAt   *time.Time `json:"suspended_at,omitempty"`
 	SuspendReason string     `json:"suspend_reason,omitempty"`
 
 	// Referral System
-	ReferredByCode  string `json:"referred_by_code,omitempty"`
-	DefaultRoleID   *uint  `json:"default_role_id,omitempty"`
+	ReferredByCode string `json:"referred_by_code,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -96,14 +106,14 @@ type User struct {
 
 // Tenant represents a tenant/organization in the system
 type Tenant struct {
-	ID          uint      `json:"id"`
-	Name        string    `json:"name"`
-	Slug        string    `json:"slug"`        // URL-friendly identifier
-	Domain      string    `json:"domain"`      // Custom domain (optional)
-	IsActive    bool      `json:"is_active"`
-	Settings    string    `json:"settings"`    // JSON settings specific to tenant
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID        uint      `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`   // URL-friendly identifier
+	Domain    string    `json:"domain"` // Custom domain (optional)
+	IsActive  bool      `json:"is_active"`
+	Settings  string    `json:"settings"` // JSON settings specific to tenant
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Role represents a role within a tenant
@@ -112,7 +122,7 @@ type Role struct {
 	TenantID    uint      `json:"tenant_id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	IsSystem    bool      `json:"is_system"`   // System roles can't be deleted
+	IsSystem    bool      `json:"is_system"` // System roles can't be deleted
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -120,9 +130,9 @@ type Role struct {
 // Permission represents a permission that can be assigned to roles
 type Permission struct {
 	ID          uint      `json:"id"`
-	Name        string    `json:"name"`         // e.g., "users.read", "posts.write"
-	Resource    string    `json:"resource"`     // e.g., "users", "posts"
-	Action      string    `json:"action"`       // e.g., "read", "write", "delete"
+	Name        string    `json:"name"`     // e.g., "users.read", "posts.write"
+	Resource    string    `json:"resource"` // e.g., "users", "posts"
+	Action      string    `json:"action"`   // e.g., "read", "write", "delete"
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -130,11 +140,11 @@ type Permission struct {
 
 // UserTenant links users to tenants with roles
 type UserTenant struct {
-	ID       uint `json:"id"`
-	UserID   uint `json:"user_id"`
-	TenantID uint `json:"tenant_id"`
-	RoleID   uint `json:"role_id"`
-	IsActive bool `json:"is_active"`
+	ID        uint      `json:"id"`
+	UserID    uint      `json:"user_id"`
+	TenantID  uint      `json:"tenant_id"`
+	RoleID    uint      `json:"role_id"`
+	IsActive  bool      `json:"is_active"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 
@@ -167,17 +177,17 @@ type OAuthState struct {
 
 // ReferralCode represents a referral code generated by a user
 type ReferralCode struct {
-	ID                  uint       `json:"id"`
-	Code                string     `json:"code"`
-	GeneratedByUserID   uint       `json:"generated_by_user_id"`
-	GeneratedByRoleID   uint       `json:"generated_by_role_id"`
-	TenantID            uint       `json:"tenant_id"`
-	MaxUses             int        `json:"max_uses"`
-	CurrentUses         int        `json:"current_uses"`
-	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
-	IsActive            bool       `json:"is_active"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	ID                uint       `json:"id"`
+	Code              string     `json:"code"`
+	GeneratedByUserID uint       `json:"generated_by_user_id"`
+	GeneratedByRoleID uint       `json:"generated_by_role_id"`
+	TenantID          uint       `json:"tenant_id"`
+	MaxUses           int        `json:"max_uses"`
+	CurrentUses       int        `json:"current_uses"`
+	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
+	IsActive          bool       `json:"is_active"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 
 	// Populated by joins
 	GeneratedByUser *User   `json:"generated_by_user,omitempty"`
@@ -187,13 +197,13 @@ type ReferralCode struct {
 
 // UserReferral represents a referral relationship between users
 type UserReferral struct {
-	ID              uint         `json:"id"`
-	ReferrerUserID  uint         `json:"referrer_user_id"`
-	ReferredUserID  uint         `json:"referred_user_id"`
-	ReferralCodeID  uint         `json:"referral_code_id"`
-	ReferrerRoleID  uint         `json:"referrer_role_id"`
-	TenantID        uint         `json:"tenant_id"`
-	CreatedAt       time.Time    `json:"created_at"`
+	ID             uint      `json:"id"`
+	ReferrerUserID uint      `json:"referrer_user_id"`
+	ReferredUserID uint      `json:"referred_user_id"`
+	ReferralCodeID uint      `json:"referral_code_id"`
+	ReferrerRoleID uint      `json:"referrer_role_id"`
+	TenantID       uint      `json:"tenant_id"`
+	CreatedAt      time.Time `json:"created_at"`
 
 	// Populated by joins
 	ReferrerUser *User         `json:"referrer_user,omitempty"`
@@ -205,13 +215,24 @@ type UserReferral struct {
 
 // Interface defines the contract for data storage operations
 type Interface interface {
-	// User operations
+	// User operations - core identity only
 	CreateUser(user *User) error
 	GetUserByEmail(email, provider string) (*User, error)
 	GetUserByEmailAnyProvider(email string) (*User, error)
 	GetUserByProviderID(provider, providerID string) (*User, error)
 	GetUserByID(id uint) (*User, error)
 	UpdateUser(user *User) error
+
+	// User Security operations - separate and explicit
+	CreateUserSecurity(security *UserSecurity) error
+	GetUserSecurity(userID uint) (*UserSecurity, error)
+	UpdateUserSecurity(security *UserSecurity) error
+
+	// Optimized methods for common security operations
+	IncrementLoginAttempts(userID uint) error
+	ResetLoginAttempts(userID uint) error
+	SetUserLocked(userID uint, until time.Time) error
+	UpdateLastLogin(userID uint, ipAddress string) error
 
 	// Session operations
 	CreateSession(session *Session) error
@@ -271,21 +292,9 @@ type Interface interface {
 	GetSecurityEvents(userID *uint, tenantID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error)
 	GetSecurityEventsByUser(userID uint, limit int, offset int) ([]*SecurityEvent, error)
 
-	// Password Reset operations
-	CreatePasswordResetToken(userID uint, token string, expiresAt time.Time) error
+	// Token-based operations (work directly with UserSecurity)
 	GetUserByPasswordResetToken(token string) (*User, error)
-	ClearPasswordResetToken(userID uint) error
-
-	// Email Verification operations
-	SetEmailVerificationToken(userID uint, token string) error
 	GetUserByVerificationToken(token string) (*User, error)
-	MarkEmailAsVerified(userID uint) error
-
-	// Login Attempt operations
-	IncrementLoginAttempts(userID uint) error
-	ResetLoginAttempts(userID uint) error
-	LockUser(userID uint, until time.Time) error
-	UnlockUser(userID uint) error
 
 	// Referral Code operations
 	CreateReferralCode(code *ReferralCode) error

@@ -13,7 +13,7 @@ Built with pure SQL (PostgreSQL/SQLite) for maximum performance, security, and c
 ## 🚀 Why Wispy Auth?
 
 - **🏢 Enterprise-Ready**: Multi-tenant architecture with RBAC out of the box
-- **🔒 Security-First**: 25+ security fields per user, comprehensive audit logging
+- **🔒 Security-First**: Separated user/security tables, 25+ security fields, comprehensive audit logging
 - **🎯 Referral System**: Built-in referral codes with role-based limits
 - **⚡ High Performance**: Pure SQL implementation, no ORM overhead
 - **🛠 Developer-Friendly**: Structured HTTP responses, minimal setup required
@@ -148,6 +148,7 @@ func main() {
 | Feature | Description | Status |
 |---------|-------------|---------|
 | **Pure SQL** | No ORM dependencies, maximum performance | ✅ |
+| **Separated Architecture** | Clean user/security separation for performance | ✅ |
 | **Structured Responses** | Consistent HTTP response handling | ✅ |
 | **Configurable Schema** | Customize table and column names | ✅ |
 | **Comprehensive Examples** | Production-ready examples and documentation | ✅ |
@@ -463,10 +464,11 @@ response := authService.GenerateReferralCode(auth.GenerateReferralCodeRequest{
 
 ## 📊 Database Schema
 
-The library creates and manages these tables:
+The library creates and manages these tables with a clean, separated architecture:
 
 ### Core Authentication
-- `users` - User accounts with 25+ security fields
+- `users` - Core user identity (email, username, password, provider info)
+- `user_security` - Security tracking (login attempts, 2FA, audit fields)
 - `sessions` - Session management with device tracking
 - `security_events` - Comprehensive audit logging
 
@@ -546,14 +548,16 @@ go run oauth_dynamic_demo.go
 
 ## 🔒 Security Features
 
-### User Security Fields (25+)
+### Separated Security Architecture
+**Core User Table**: Contains only essential identity fields (email, username, password_hash, provider)
+**User Security Table**: Contains 25+ security tracking fields:
 - Email verification status and timestamps
-- Password security (hash, reset tokens, change tracking)
+- Password security (reset tokens, change tracking)
 - Login security (attempts, lockout, last login tracking)
 - Device and location tracking
 - Two-factor authentication infrastructure
 - Account status and suspension handling
-- Provider-based authentication support
+- Referral system integration
 
 ### Security Events Auditing
 All security-related actions are automatically logged:

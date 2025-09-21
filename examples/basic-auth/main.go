@@ -65,7 +65,7 @@ func main() {
 	fmt.Println("✅ Database migrations completed")
 
 	// Create storage with the prepared database
-	sqliteStorage, err := storage.NewSQLiteStorage(":memory:")
+	sqliteStorage, err := storage.NewSQLiteStorageFromDB(db)
 	if err != nil {
 		log.Fatal("Failed to create storage:", err)
 	}

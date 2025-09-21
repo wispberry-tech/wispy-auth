@@ -231,7 +231,9 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 
 	// Send verification email if needed
 	if response.RequiresEmailVerification && a.emailService != nil {
-		go a.emailService.SendVerificationEmail(response.User.Email, response.User.VerificationToken)
+		if userSecurity, err := a.storage.GetUserSecurity(response.User.ID); err == nil && userSecurity.VerificationToken != "" {
+			go a.emailService.SendVerificationEmail(response.User.Email, userSecurity.VerificationToken)
+		}
 	}
 
 	// Send welcome email
@@ -463,8 +465,10 @@ func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordRespo
 	// Send reset email if successful and user exists
 	if err == nil && a.emailService != nil {
 		user, getUserErr := a.storage.GetUserByEmailAnyProvider(req.Email)
-		if getUserErr == nil && user != nil && user.PasswordResetToken != "" {
-			go a.emailService.SendPasswordResetEmail(user.Email, user.PasswordResetToken)
+		if getUserErr == nil && user != nil {
+			if userSecurity, secErr := a.storage.GetUserSecurity(user.ID); secErr == nil && userSecurity.PasswordResetToken != "" {
+				go a.emailService.SendPasswordResetEmail(user.Email, userSecurity.PasswordResetToken)
+			}
 		}
 	}
 
@@ -632,11 +636,15 @@ func (a *AuthService) ResendVerificationHandler(r *http.Request) EmailVerificati
 		user, ok := GetUserFromContext(r)
 		if !ok {
 			// Get user from session if not in context
-			if user, err := a.storage.GetUserByID(session.UserID); err == nil && user.VerificationToken != "" {
-				go a.emailService.SendVerificationEmail(user.Email, user.VerificationToken)
+			if user, err := a.storage.GetUserByID(session.UserID); err == nil {
+				if userSecurity, secErr := a.storage.GetUserSecurity(user.ID); secErr == nil && userSecurity.VerificationToken != "" {
+					go a.emailService.SendVerificationEmail(user.Email, userSecurity.VerificationToken)
+				}
 			}
-		} else if user.VerificationToken != "" {
-			go a.emailService.SendVerificationEmail(user.Email, user.VerificationToken)
+		} else {
+			if userSecurity, secErr := a.storage.GetUserSecurity(user.ID); secErr == nil && userSecurity.VerificationToken != "" {
+				go a.emailService.SendVerificationEmail(user.Email, userSecurity.VerificationToken)
+			}
 		}
 	}
 
@@ -886,7 +894,10 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, stat
 
 	// Check if user already exists to determine if they're new
 	// We'll consider a user new if they haven't logged in before or recently created
-	isNewUser := user.LastLoginAt == nil || user.CreatedAt.After(user.LastLoginAt.Add(-time.Minute))
+	isNewUser := true
+	if userSecurity, err := a.storage.GetUserSecurity(user.ID); err == nil && userSecurity.LastLoginAt != nil {
+		isNewUser = user.CreatedAt.After(userSecurity.LastLoginAt.Add(-time.Minute))
+	}
 
 	// Create session for the OAuth user
 	ip := extractIP(r)
