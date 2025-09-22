@@ -97,6 +97,28 @@ type Role = storage.Role
 // Permission is an alias to the storage Permission type
 type Permission = storage.Permission
 
+// StorageConfig is an alias to storage.Config for backward compatibility
+type StorageConfig = storage.Config
+
+// UserColumnMapping is an alias to storage.UserColumnMapping for backward compatibility
+type UserColumnMapping = storage.UserColumnMapping
+
+// SessionColumnMapping is an alias to storage.SessionColumnMapping for backward compatibility
+type SessionColumnMapping = storage.SessionColumnMapping
+
+// SecurityEventColumnMapping is an alias to storage.SecurityEventColumnMapping for backward compatibility
+type SecurityEventColumnMapping = storage.SecurityEventColumnMapping
+
+// DefaultStorageConfig returns a default storage configuration
+func DefaultStorageConfig() StorageConfig {
+	return storage.DefaultConfig()
+}
+
+// Error aliases for backward compatibility
+var (
+	ErrEmailNotVerified = storage.ErrEmailNotVerified
+)
+
 // UserTenant is an alias to the storage UserTenant type
 type UserTenant = storage.UserTenant
 
@@ -123,13 +145,18 @@ type SecurityConfig struct {
 	SessionLifetime  time.Duration // How long sessions remain valid
 	RequireTwoFactor bool          // Whether 2FA is required for all users
 
+	// 2FA Security Settings
+	TwoFactorCodeExpiry      time.Duration // How long 2FA codes remain valid (default: 5 minutes)
+	Max2FAAttempts           int           // Maximum failed 2FA attempts before lockout (default: 3)
+	TwoFactorLockoutDuration time.Duration // How long to lock 2FA after max failures (default: 15 minutes)
+
 	// Referral System
-	RequireReferralCode  bool              `json:"require_referral_code"`    // Make referral codes mandatory for signup
-	DefaultUserRoleName  string            `json:"default_user_role_name"`   // Role assigned to new users (e.g., "default-user")
-	MaxInviteesPerRole   map[string]int    `json:"max_invitees_per_role"`    // Max referrals per role {"default-user": 5, "premium": 20}
-	ReferralCodeLength   int               `json:"referral_code_length"`     // Length of generated codes (default: 8)
-	ReferralCodePrefix   string            `json:"referral_code_prefix"`     // Optional prefix for branding (e.g., "REF")
-	ReferralCodeExpiry   time.Duration     `json:"referral_code_expiry"`     // How long codes remain valid (0 = no expiry)
+	RequireReferralCode bool           `json:"require_referral_code"`  // Make referral codes mandatory for signup
+	DefaultUserRoleName string         `json:"default_user_role_name"` // Role assigned to new users (e.g., "default-user")
+	MaxInviteesPerRole  map[string]int `json:"max_invitees_per_role"`  // Max referrals per role {"default-user": 5, "premium": 20}
+	ReferralCodeLength  int            `json:"referral_code_length"`   // Length of generated codes (default: 8)
+	ReferralCodePrefix  string         `json:"referral_code_prefix"`   // Optional prefix for branding (e.g., "REF")
+	ReferralCodeExpiry  time.Duration  `json:"referral_code_expiry"`   // How long codes remain valid (0 = no expiry)
 }
 
 // OAuthProviderConfig defines the configuration for an OAuth2 provider.
@@ -200,6 +227,11 @@ type EmailService interface {
 	SendVerificationEmail(email, token string) error
 	SendPasswordResetEmail(email, token string) error
 	SendWelcomeEmail(email, name string) error
+
+	// 2FA Email Methods
+	Send2FACode(email, code string) error
+	Send2FAEnabled(email string) error
+	Send2FADisabled(email string) error
 }
 
 // AuthService is the main service for handling authentication operations.
@@ -208,7 +240,7 @@ type EmailService interface {
 type AuthService struct {
 	storage         storage.Interface
 	oauthConfigs    map[string]*oauth2.Config
-	storageConfig   StorageConfig
+	storageConfig   storage.Config
 	securityConfig  SecurityConfig
 	emailService    EmailService
 	validator       *validator.Validate
@@ -221,9 +253,9 @@ type AuthService struct {
 type Config struct {
 	// Storage configuration - can use either Storage interface or DatabaseDSN string
 	Storage        storage.Interface // Direct storage interface (takes precedence over DatabaseDSN)
-	DatabaseDSN    string           // Database connection string (used if Storage is nil)
+	DatabaseDSN    string            // Database connection string (used if Storage is nil)
 	OAuthProviders map[string]OAuthProviderConfig
-	StorageConfig  StorageConfig
+	StorageConfig  storage.Config
 	SecurityConfig SecurityConfig
 	EmailService   EmailService // Email service for sending verification/reset emails
 
@@ -251,6 +283,31 @@ func DefaultSecurityConfig() SecurityConfig {
 		LockoutDuration:  15 * time.Minute,
 		SessionLifetime:  24 * time.Hour,
 		RequireTwoFactor: false,
+
+		// 2FA Security Defaults
+		TwoFactorCodeExpiry:      5 * time.Minute,
+		Max2FAAttempts:           3,
+		TwoFactorLockoutDuration: 15 * time.Minute,
+
+		// Referral System Defaults
+		RequireReferralCode: false,
+		DefaultUserRoleName: "user",
+		MaxInviteesPerRole:  map[string]int{"user": 10, "premium": 50},
+		ReferralCodeLength:  8,
+		ReferralCodePrefix:  "",
+		ReferralCodeExpiry:  0, // No expiry by default
+	}
+}
+
+// DefaultConfig returns sensible defaults for the main Config struct.
+// This provides a starting point with secure defaults that users can override as needed.
+// Note: You will need to set Storage or DatabaseDSN, and EmailService for a complete setup.
+func DefaultConfig() Config {
+	return Config{
+		StorageConfig:   DefaultStorageConfig(),
+		SecurityConfig:  DefaultSecurityConfig(),
+		OAuthProviders:  make(map[string]OAuthProviderConfig),
+		DevelopmentMode: false,
 	}
 }
 
@@ -366,6 +423,11 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 		}
 
 		slog.Info("Configured OAuth provider", "provider", provider, "scopes", scopes)
+	}
+
+	// Validate security config
+	if cfg.SecurityConfig.DefaultUserRoleName == "" {
+		return nil, fmt.Errorf("DefaultUserRoleName in SecurityConfig cannot be empty")
 	}
 
 	authService := &AuthService{
@@ -662,13 +724,22 @@ func (a *AuthService) logSecurityEvent(userID *uint, tenantID *uint, eventType, 
 
 // Multi-tenant helper methods
 func (a *AuthService) assignUserToDefaultTenant(user *User, tenantID uint) error {
-	// Get storage config for multi-tenant setup
-	storageConfig := a.getStorageConfig()
-
-	// Use provided tenantID or fall back to default
+	// Use provided tenantID or find the actual default tenant
 	targetTenantID := tenantID
 	if targetTenantID == 0 {
-		targetTenantID = storageConfig.MultiTenant.DefaultTenantID
+		// Find the actual default tenant by looking for the first tenant
+		// This is more robust than relying on configured IDs
+		tenants, err := a.storage.ListTenants()
+		if err != nil {
+			return fmt.Errorf("failed to list tenants: %w", err)
+		}
+
+		if len(tenants) == 0 {
+			return fmt.Errorf("no tenants found - multi-tenant system not properly initialized")
+		}
+
+		// Use the first tenant as default
+		targetTenantID = tenants[0].ID
 	}
 
 	// Ensure default role exists and get its ID
@@ -723,7 +794,7 @@ func (a *AuthService) ensureDefaultRole(tenantID uint) (uint, error) {
 	return defaultRole.ID, nil
 }
 
-func (a *AuthService) getStorageConfig() *StorageConfig {
+func (a *AuthService) getStorageConfig() *storage.Config {
 	return &a.storageConfig
 }
 
@@ -1050,8 +1121,15 @@ func (a *AuthService) CreateSession(userID uint, ip, userAgent, location string)
 		return nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
 
+	// Generate a unique session ID using random token to avoid collisions
+	sessionID, err := generateSecureToken(16)
+	if err != nil {
+		slog.Error("Failed to generate session ID", "error", err, "user_id", userID)
+		return nil, fmt.Errorf("failed to generate session ID: %w", err)
+	}
+
 	session := &Session{
-		ID:                fmt.Sprintf("%d_%d", userID, time.Now().Unix()),
+		ID:                sessionID,
 		UserID:            userID,
 		Token:             token,
 		ExpiresAt:         calculateSessionExpiry(a.securityConfig),

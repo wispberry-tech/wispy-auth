@@ -13,7 +13,10 @@
       "Bash(go get:*)",
       "Bash(sed:*)",
       "Bash(go test:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(./basic-auth)",
+      "Bash(find:*)",
+      "Bash(go tool cover:*)"
     ],
     "deny": [],
     "ask": []

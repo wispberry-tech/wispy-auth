@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -32,6 +31,21 @@ func (m *MockEmailService) SendPasswordResetEmail(email, token string) error {
 
 func (m *MockEmailService) SendWelcomeEmail(email, name string) error {
 	fmt.Printf("👋 Welcome email sent to %s (%s)\n", email, name)
+	return nil
+}
+
+func (m *MockEmailService) Send2FACode(email, code string) error {
+	fmt.Printf("🔐 2FA code sent to %s: %s\n", email, code)
+	return nil
+}
+
+func (m *MockEmailService) Send2FAEnabled(email string) error {
+	fmt.Printf("🔒 2FA enabled notification sent to %s\n", email)
+	return nil
+}
+
+func (m *MockEmailService) Send2FADisabled(email string) error {
+	fmt.Printf("🔓 2FA disabled notification sent to %s\n", email)
 	return nil
 }
 
@@ -71,31 +85,13 @@ func main() {
 	}
 
 	// Configure auth service with security settings
-	config := auth.Config{
-		Storage:      sqliteStorage,
-		EmailService: &MockEmailService{},
-		SecurityConfig: auth.SecurityConfig{
-			// Password requirements
-			PasswordMinLength:      8,
-			PasswordRequireUpper:   true,
-			PasswordRequireLower:   true,
-			PasswordRequireNumber:  true,
-			PasswordRequireSpecial: false,
+	// Start with default configuration and customize as needed
+	config := auth.DefaultConfig()
+	config.Storage = sqliteStorage
+	config.EmailService = &MockEmailService{}
 
-			// Session settings
-			SessionLifetime: 24 * time.Hour,
-
-			// Email verification (optional for this example)
-			RequireEmailVerification: false,
-
-			// Account security
-			MaxLoginAttempts: 5,
-			LockoutDuration:  15 * time.Minute,
-
-			// Default role
-			DefaultUserRoleName: "user",
-		},
-	}
+	// Override default settings for this example
+	config.SecurityConfig.RequireEmailVerification = false // Disabled for this simple example
 
 	// Initialize auth service
 	authService, err := auth.NewAuthService(config)

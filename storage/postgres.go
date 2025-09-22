@@ -328,7 +328,7 @@ func (p *PostgresStorage) GetSession(token string) (*Session, error) {
 
 // OAuth operations
 func (p *PostgresStorage) StoreOAuthState(state *OAuthState) error {
-	query := `INSERT INTO oauth_states (state_id, csrf_token, created_at, expires_at)
+	query := `INSERT INTO oauth_states (state, csrf_token, created_at, expires_at)
 			  VALUES ($1, $2, $3, $4)`
 
 	_, err := p.db.Exec(query, state.State, state.CSRF, state.CreatedAt, state.ExpiresAt)
@@ -340,8 +340,8 @@ func (p *PostgresStorage) StoreOAuthState(state *OAuthState) error {
 }
 
 func (p *PostgresStorage) GetOAuthState(stateID string) (*OAuthState, error) {
-	query := `SELECT state_id, csrf_token, created_at, expires_at
-			  FROM oauth_states WHERE state_id = $1`
+	query := `SELECT state, csrf_token, created_at, expires_at
+			  FROM oauth_states WHERE state = $1`
 
 	var state OAuthState
 	err := p.db.QueryRow(query, stateID).Scan(
@@ -362,7 +362,7 @@ func (p *PostgresStorage) GetOAuthState(stateID string) (*OAuthState, error) {
 }
 
 func (p *PostgresStorage) DeleteOAuthState(stateID string) error {
-	query := `DELETE FROM oauth_states WHERE state_id = $1`
+	query := `DELETE FROM oauth_states WHERE state = $1`
 
 	result, err := p.db.Exec(query, stateID)
 	if err != nil {
@@ -476,3 +476,96 @@ func (p *PostgresStorage) GetUserReferralByReferred(referredUserID uint) (*UserR
 func (p *PostgresStorage) GetReferralStatsByUser(userID uint) (int, int, error) {
 	return 0, 0, nil
 }
+
+// Two Factor Code operations
+func (p *PostgresStorage) CreateTwoFactorCode(code *TwoFactorCode) error {
+	query := `INSERT INTO two_factor_codes 
+		(user_id, code, expires_at, created_at, attempt_count) 
+		VALUES ($1, $2, $3, $4, $5) RETURNING id`
+
+	err := p.db.QueryRow(query,
+		code.UserID,
+		code.Code,
+		code.ExpiresAt,
+		code.CreatedAt,
+		code.AttemptCount).Scan(&code.ID)
+
+	if err != nil {
+		return fmt.Errorf("failed to create 2FA code: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) GetActiveTwoFactorCodeByUserID(userID uint) (*TwoFactorCode, error) {
+	query := `SELECT id, user_id, code, expires_at, created_at, used_at, attempt_count, locked_until 
+		FROM two_factor_codes 
+		WHERE user_id = $1 AND (used_at IS NULL OR used_at > NOW() - INTERVAL '1 hour') 
+		ORDER BY created_at DESC LIMIT 1`
+
+	var code TwoFactorCode
+	var usedAt sql.NullTime
+	var lockedUntil sql.NullTime
+
+	err := p.db.QueryRow(query, userID).Scan(
+		&code.ID,
+		&code.UserID,
+		&code.Code,
+		&code.ExpiresAt,
+		&code.CreatedAt,
+		&usedAt,
+		&code.AttemptCount,
+		&lockedUntil,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get 2FA code: %w", err)
+	}
+
+	if usedAt.Valid {
+		code.UsedAt = &usedAt.Time
+	}
+
+	if lockedUntil.Valid {
+		code.LockedUntil = &lockedUntil.Time
+	}
+
+	return &code, nil
+}
+
+func (p *PostgresStorage) UpdateTwoFactorCode(code *TwoFactorCode) error {
+	query := `UPDATE two_factor_codes 
+		SET used_at = $1, attempt_count = $2, locked_until = $3 
+		WHERE id = $4`
+
+	_, err := p.db.Exec(query,
+		code.UsedAt,
+		code.AttemptCount,
+		code.LockedUntil,
+		code.ID)
+
+	if err != nil {
+		return fmt.Errorf("failed to update 2FA code: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) DeleteExpiredTwoFactorCodes() error {
+	query := `DELETE FROM two_factor_codes 
+		WHERE expires_at < NOW() 
+		OR (used_at IS NOT NULL AND used_at < NOW() - INTERVAL '1 hour')`
+
+	_, err := p.db.Exec(query)
+	if err != nil {
+		return fmt.Errorf("failed to delete expired 2FA codes: %w", err)
+	}
+
+	return nil
+}
+
+// Utility operations

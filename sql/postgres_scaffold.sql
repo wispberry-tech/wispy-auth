@@ -245,3 +245,19 @@ CREATE TABLE IF NOT EXISTS user_referrals (
 CREATE INDEX IF NOT EXISTS idx_user_referrals_referrer_user_id ON user_referrals(referrer_user_id);
 CREATE INDEX IF NOT EXISTS idx_user_referrals_referred_user_id ON user_referrals(referred_user_id);
 CREATE INDEX IF NOT EXISTS idx_user_referrals_tenant_id ON user_referrals(tenant_id);
+
+-- Two Factor Codes table - For storing temporary 2FA verification codes
+CREATE TABLE IF NOT EXISTS two_factor_codes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code VARCHAR(10) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    used_at TIMESTAMP WITH TIME ZONE,
+    attempt_count INTEGER DEFAULT 0,
+    locked_until TIMESTAMP WITH TIME ZONE
+);
+
+-- Create indexes for two_factor_codes table
+CREATE INDEX IF NOT EXISTS idx_two_factor_codes_user_id ON two_factor_codes(user_id);
+CREATE INDEX IF NOT EXISTS idx_two_factor_codes_expires_at ON two_factor_codes(expires_at);

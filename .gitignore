@@ -6,3 +6,5 @@ example/auth_test.db-shm
 example/auth_test.db-wal
 .claude/settings.local.json
 *.exe
+coverage
+coverage.out

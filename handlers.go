@@ -29,14 +29,14 @@ type SignInRequest struct {
 
 // SignInResponse represents the response for user authentication
 type SignInResponse struct {
-	Token                     string    `json:"token"`                        // Session token for authentication
-	User                      *User     `json:"user"`                         // Authenticated user information
-	SessionID                 string    `json:"session_id"`                   // Session identifier
-	Requires2FA               bool      `json:"requires_2fa"`                 // Whether two-factor authentication is required
-	RequiresEmailVerification bool      `json:"requires_email_verification"`  // Whether email verification is required
-	SessionExpiresAt          time.Time `json:"session_expires_at"`           // When the session expires
-	StatusCode                int       `json:"-"`                            // HTTP status code (not serialized)
-	Error                     string    `json:"error,omitempty"`              // Error message if any
+	Token                     string    `json:"token"`                       // Session token for authentication
+	User                      *User     `json:"user"`                        // Authenticated user information
+	SessionID                 string    `json:"session_id"`                  // Session identifier
+	Requires2FA               bool      `json:"requires_2fa"`                // Whether two-factor authentication is required
+	RequiresEmailVerification bool      `json:"requires_email_verification"` // Whether email verification is required
+	SessionExpiresAt          time.Time `json:"session_expires_at"`          // When the session expires
+	StatusCode                int       `json:"-"`                           // HTTP status code (not serialized)
+	Error                     string    `json:"error,omitempty"`             // Error message if any
 }
 
 // ValidateResponse represents the response for token validation
@@ -204,7 +204,7 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 			slog.Error("Failed to create user during signup", "error", err, "email", req.Email, "remote_addr", r.RemoteAddr)
 			return SignUpResponse{
 				StatusCode: 500,
-				Error:      fmt.Sprintf("Failed to create user: %s", err.Error()),
+				Error:      "An internal error occurred during account creation. Please try again later.",
 			}
 		}
 	}
@@ -220,10 +220,10 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 	if !response.RequiresEmailVerification {
 		session, err := a.CreateSession(user.ID, ip, userAgent, "")
 		if err != nil {
-			slog.Error("Failed to create session after signup", "error", err, "user_id", user.ID, "email", user.Email)
+			slog.Error("Failed to create session after signup", "error", err, "user_id", user.ID, "email", user.Email, "remote_addr", r.RemoteAddr)
 			return SignUpResponse{
 				StatusCode: 500,
-				Error:      fmt.Sprintf("Failed to create session: %s", err.Error()),
+				Error:      "An internal error occurred during session creation. Please try again later.",
 			}
 		}
 		response.Token = session.Token
@@ -337,7 +337,7 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 			slog.Error("Internal error during signin", "error", err, "email", req.Email, "remote_addr", r.RemoteAddr)
 			return SignInResponse{
 				StatusCode: 500,
-				Error:      fmt.Sprintf("Authentication failed: %s", err.Error()),
+				Error:      "An internal authentication error occurred. Please try again later.",
 			}
 		}
 	}
@@ -345,10 +345,10 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 	// Create session for the authenticated user
 	session, err := a.CreateSession(user.ID, ip, userAgent, "")
 	if err != nil {
-		slog.Error("Failed to create session after signin", "error", err, "user_id", user.ID, "email", user.Email)
+		slog.Error("Failed to create session after signin", "error", err, "user_id", user.ID, "email", user.Email, "remote_addr", r.RemoteAddr)
 		return SignInResponse{
 			StatusCode: 500,
-			Error:      fmt.Sprintf("Failed to create session: %s", err.Error()),
+			Error:      "An internal error occurred during session creation. Please try again later.",
 		}
 	}
 
@@ -389,10 +389,10 @@ func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
 	// Get session from token
 	session, err := a.storage.GetSession(token)
 	if err != nil {
-		slog.Warn("Session validation failed", "error", err, "remote_addr", r.RemoteAddr)
+		slog.Warn("Session validation failed", "error", err, "token_prefix", token[:min(8, len(token))], "remote_addr", r.RemoteAddr)
 		return ValidateResponse{
 			StatusCode: 401,
-			Error:      fmt.Sprintf("Invalid or expired session: %s", err.Error()),
+			Error:      "Invalid or expired session",
 		}
 	}
 
@@ -408,17 +408,17 @@ func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
 	// Get user from session
 	user, err := a.storage.GetUserByID(session.UserID)
 	if err != nil {
-		slog.Warn("User not found for session", "error", err, "user_id", session.UserID, "session_id", session.ID)
+		slog.Error("User not found for valid session - data inconsistency", "error", err, "user_id", session.UserID, "session_id", session.ID, "remote_addr", r.RemoteAddr)
 		return ValidateResponse{
 			StatusCode: 401,
-			Error:      "User not found",
+			Error:      "Session validation failed",
 		}
 	}
 
 	// Update session activity
 	session.LastActivity = time.Now()
 	if updateErr := a.storage.UpdateSession(session); updateErr != nil {
-		slog.Warn("Failed to update session activity", "error", updateErr, "session_id", session.ID)
+		slog.Error("Failed to update session activity", "error", updateErr, "session_id", session.ID, "user_id", session.UserID)
 	}
 
 	return ValidateResponse{
@@ -528,7 +528,7 @@ func (a *AuthService) ResetPasswordHandler(r *http.Request) ResetPasswordRespons
 			slog.Error("Failed to reset password", "error", err, "remote_addr", r.RemoteAddr)
 			return ResetPasswordResponse{
 				StatusCode: 500,
-				Error:      fmt.Sprintf("Password reset failed: %s", err.Error()),
+				Error:      "An internal error occurred during password reset. Please try again later.",
 			}
 		}
 	}
@@ -688,6 +688,7 @@ func (a *AuthService) GetSessionsHandler(r *http.Request) SessionsResponse {
 
 	sessions, err := a.GetUserSessions(session.UserID)
 	if err != nil {
+		slog.Error("Failed to fetch user sessions", "error", err, "user_id", session.UserID, "session_id", session.ID)
 		return SessionsResponse{
 			StatusCode: 500,
 			Error:      "Failed to fetch sessions",
@@ -729,6 +730,7 @@ func (a *AuthService) RevokeSessionHandler(r *http.Request, sessionID string) Re
 				Error:      "Session not found",
 			}
 		} else {
+			slog.Error("Failed to revoke session", "error", err, "session_id", sessionID, "remote_addr", r.RemoteAddr)
 			return RevokeSessionResponse{
 				StatusCode: 500,
 				Error:      "Failed to revoke session",
@@ -775,6 +777,7 @@ func (a *AuthService) RevokeAllSessionsHandler(r *http.Request) RevokeSessionRes
 	}
 
 	if err := a.RevokeAllUserSessions(session.UserID); err != nil {
+		slog.Error("Failed to revoke all user sessions", "error", err, "user_id", session.UserID, "remote_addr", r.RemoteAddr)
 		return RevokeSessionResponse{
 			StatusCode: 500,
 			Error:      "Failed to revoke sessions",
@@ -888,7 +891,7 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, stat
 		slog.Error("OAuth callback processing failed", "error", err, "provider", provider, "remote_addr", r.RemoteAddr)
 		return OAuthResponse{
 			StatusCode: 500,
-			Error:      fmt.Sprintf("OAuth authentication failed: %s", err.Error()),
+			Error:      "OAuth authentication failed. Please try again later.",
 		}
 	}
 
@@ -904,10 +907,10 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, stat
 	userAgent := r.Header.Get("User-Agent")
 	session, err := a.CreateSession(user.ID, ip, userAgent, "")
 	if err != nil {
-		slog.Error("Failed to create session after OAuth", "error", err, "user_id", user.ID, "provider", provider)
+		slog.Error("Failed to create session after OAuth", "error", err, "user_id", user.ID, "provider", provider, "remote_addr", r.RemoteAddr)
 		return OAuthResponse{
 			StatusCode: 500,
-			Error:      fmt.Sprintf("Failed to create session: %s", err.Error()),
+			Error:      "Failed to create session. Please try again later.",
 		}
 	}
 
@@ -969,17 +972,17 @@ type MyReferralCodesResponse struct {
 
 // MyReferralsResponse represents the response for user's referrals
 type MyReferralsResponse struct {
-	Referrals []*UserReferral `json:"referrals"`
-	StatusCode int            `json:"-"`
-	Error      string         `json:"error,omitempty"`
+	Referrals  []*UserReferral `json:"referrals"`
+	StatusCode int             `json:"-"`
+	Error      string          `json:"error,omitempty"`
 }
 
 // ReferralStatsResponse represents the response for referral statistics
 type ReferralStatsResponse struct {
-	TotalReferred    int `json:"total_referred"`
-	ActiveReferrals  int `json:"active_referrals"`
-	StatusCode       int `json:"-"`
-	Error            string `json:"error,omitempty"`
+	TotalReferred   int    `json:"total_referred"`
+	ActiveReferrals int    `json:"active_referrals"`
+	StatusCode      int    `json:"-"`
+	Error           string `json:"error,omitempty"`
 }
 
 // GenerateReferralCodeHandler generates a new referral code for the authenticated user.
@@ -1181,4 +1184,239 @@ func (a *AuthService) GetReferralStatsHandler(r *http.Request) ReferralStatsResp
 		ActiveReferrals: activeReferrals,
 		StatusCode:      200,
 	}
+}
+
+// ===== 2FA HANDLERS =====
+
+// Enable2FARequest represents the request to enable 2FA
+type Enable2FARequest struct {
+	UserID uint `json:"user_id" validate:"required"`
+}
+
+// Enable2FAResponse represents the response from enabling 2FA
+type Enable2FAResponse struct {
+	BackupCodes []string `json:"backup_codes,omitempty"`
+	Message     string   `json:"message"`
+	Error       string   `json:"error,omitempty"`
+	StatusCode  int      `json:"-"`
+}
+
+// Send2FACodeRequest represents the request to send a 2FA code
+type Send2FACodeRequest struct {
+	UserID uint `json:"user_id" validate:"required"`
+}
+
+// Send2FACodeResponse represents the response from sending 2FA code
+type Send2FACodeResponse struct {
+	Message    string `json:"message"`
+	Error      string `json:"error,omitempty"`
+	StatusCode int    `json:"-"`
+}
+
+// Verify2FACodeRequest represents the request to verify a 2FA code
+type Verify2FACodeRequest struct {
+	UserID uint   `json:"user_id" validate:"required"`
+	Code   string `json:"code" validate:"required"`
+}
+
+// Verify2FACodeResponse represents the response from verifying 2FA code
+type Verify2FACodeResponse struct {
+	Message    string `json:"message"`
+	Error      string `json:"error,omitempty"`
+	StatusCode int    `json:"-"`
+}
+
+// Generate2FABackupCodesRequest represents the request to generate backup codes
+type Generate2FABackupCodesRequest struct {
+	UserID uint `json:"user_id" validate:"required"`
+}
+
+// Generate2FABackupCodesResponse represents the response with backup codes
+type Generate2FABackupCodesResponse struct {
+	BackupCodes []string `json:"backup_codes,omitempty"`
+	Message     string   `json:"message"`
+	Error       string   `json:"error,omitempty"`
+	StatusCode  int      `json:"-"`
+}
+
+// Disable2FARequest represents the request to disable 2FA
+type Disable2FARequest struct {
+	UserID uint `json:"user_id" validate:"required"`
+}
+
+// Disable2FAResponse represents the response from disabling 2FA
+type Disable2FAResponse struct {
+	Message    string `json:"message"`
+	Error      string `json:"error,omitempty"`
+	StatusCode int    `json:"-"`
+}
+
+// Enable2FAHandler handles enabling 2FA for a user
+func (a *AuthService) Enable2FAHandler(r *http.Request) Enable2FAResponse {
+	var req Enable2FARequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return Enable2FAResponse{
+			Error:      "Invalid request format",
+			StatusCode: 400,
+		}
+	}
+
+	if err := a.validator.Struct(req); err != nil {
+		return Enable2FAResponse{
+			Error:      "Validation failed: " + err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	setup, err := a.Enable2FAForUser(req.UserID)
+	if err != nil {
+		slog.Error("Failed to enable 2FA", "error", err, "user_id", req.UserID)
+		return Enable2FAResponse{
+			Error:      err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	return Enable2FAResponse{
+		BackupCodes: setup.BackupCodes,
+		Message:     setup.Message,
+		StatusCode:  200,
+	}
+}
+
+// Send2FACodeHandler handles sending a 2FA code to a user
+func (a *AuthService) Send2FACodeHandler(r *http.Request) Send2FACodeResponse {
+	var req Send2FACodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return Send2FACodeResponse{
+			Error:      "Invalid request format",
+			StatusCode: 400,
+		}
+	}
+
+	if err := a.validator.Struct(req); err != nil {
+		return Send2FACodeResponse{
+			Error:      "Validation failed: " + err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	err := a.Send2FACode(req.UserID)
+	if err != nil {
+		slog.Error("Failed to send 2FA code", "error", err, "user_id", req.UserID)
+		return Send2FACodeResponse{
+			Error:      err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	return Send2FACodeResponse{
+		Message:    "2FA verification code sent to your email",
+		StatusCode: 200,
+	}
+}
+
+// Verify2FACodeHandler handles verifying a 2FA code
+func (a *AuthService) Verify2FACodeHandler(r *http.Request) Verify2FACodeResponse {
+	var req Verify2FACodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return Verify2FACodeResponse{
+			Error:      "Invalid request format",
+			StatusCode: 400,
+		}
+	}
+
+	if err := a.validator.Struct(req); err != nil {
+		return Verify2FACodeResponse{
+			Error:      "Validation failed: " + err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	err := a.Verify2FACode(req.UserID, req.Code)
+	if err != nil {
+		slog.Error("Failed to verify 2FA code", "error", err, "user_id", req.UserID)
+		return Verify2FACodeResponse{
+			Error:      err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	return Verify2FACodeResponse{
+		Message:    "2FA code verified successfully",
+		StatusCode: 200,
+	}
+}
+
+// Generate2FABackupCodesHandler handles generating new backup codes
+func (a *AuthService) Generate2FABackupCodesHandler(r *http.Request) Generate2FABackupCodesResponse {
+	var req Generate2FABackupCodesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return Generate2FABackupCodesResponse{
+			Error:      "Invalid request format",
+			StatusCode: 400,
+		}
+	}
+
+	if err := a.validator.Struct(req); err != nil {
+		return Generate2FABackupCodesResponse{
+			Error:      "Validation failed: " + err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	backupCodes, err := a.Generate2FABackupCodes(req.UserID)
+	if err != nil {
+		slog.Error("Failed to generate backup codes", "error", err, "user_id", req.UserID)
+		return Generate2FABackupCodesResponse{
+			Error:      err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	return Generate2FABackupCodesResponse{
+		BackupCodes: backupCodes,
+		Message:     "New backup codes generated successfully",
+		StatusCode:  200,
+	}
+}
+
+// Disable2FAHandler handles disabling 2FA for a user
+func (a *AuthService) Disable2FAHandler(r *http.Request) Disable2FAResponse {
+	var req Disable2FARequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return Disable2FAResponse{
+			Error:      "Invalid request format",
+			StatusCode: 400,
+		}
+	}
+
+	if err := a.validator.Struct(req); err != nil {
+		return Disable2FAResponse{
+			Error:      "Validation failed: " + err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	err := a.Disable2FAForUser(req.UserID)
+	if err != nil {
+		slog.Error("Failed to disable 2FA", "error", err, "user_id", req.UserID)
+		return Disable2FAResponse{
+			Error:      err.Error(),
+			StatusCode: 400,
+		}
+	}
+
+	return Disable2FAResponse{
+		Message:    "2FA has been disabled successfully",
+		StatusCode: 200,
+	}
+}
+
+// Helper function for min
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

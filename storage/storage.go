@@ -10,6 +10,136 @@ import (
 	"time"
 )
 
+// Column mapping types for database operations
+type UserColumnMapping struct {
+	Table               string
+	IDColumn            string
+	EmailColumn         string
+	UsernameColumn      string
+	FirstNameColumn     string
+	LastNameColumn      string
+	PasswordHashColumn  string
+	ProviderColumn      string
+	ProviderIDColumn    string
+	EmailVerifiedColumn string
+	IsActiveColumn      string
+	IsSuspendedColumn   string
+	CreatedAtColumn     string
+	UpdatedAtColumn     string
+}
+
+type SessionColumnMapping struct {
+	Table                   string
+	IDColumn                string
+	UserIDColumn            string
+	TokenColumn             string
+	ExpiresAtColumn         string
+	CSRFColumn              string
+	DeviceFingerprintColumn string
+	UserAgentColumn         string
+	IPAddressColumn         string
+	LocationColumn          string
+	IsActiveColumn          string
+	LastActivityColumn      string
+	RequiresTwoFactorColumn string
+	TwoFactorVerifiedColumn string
+	CreatedAtColumn         string
+	UpdatedAtColumn         string
+}
+
+type SecurityEventColumnMapping struct {
+	Table             string
+	IDColumn          string
+	UserIDColumn      string
+	TenantIDColumn    string
+	EventTypeColumn   string
+	DescriptionColumn string
+	IPAddressColumn   string
+	UserAgentColumn   string
+	LocationColumn    string
+	MetadataColumn    string
+	CreatedAtColumn   string
+}
+
+// MultiTenantConfig contains configuration for multi-tenant mode
+type MultiTenantConfig struct {
+	Enabled         bool
+	DefaultTenantID uint
+}
+
+// Config contains storage configuration options
+type Config struct {
+	DatabaseDSN        string
+	MaxOpenConnections int
+	MaxIdleConnections int
+	ConnMaxLifetime    time.Duration
+	UserColumns        UserColumnMapping
+	SessionColumns     SessionColumnMapping
+	EventColumns       SecurityEventColumnMapping
+	MultiTenant        MultiTenantConfig
+	UsersTable         string
+	SessionsTable      string
+}
+
+// DefaultConfig returns the default storage configuration
+func DefaultConfig() Config {
+	return Config{
+		MaxOpenConnections: 25,
+		MaxIdleConnections: 5,
+		ConnMaxLifetime:    time.Hour,
+		MultiTenant:        MultiTenantConfig{Enabled: false, DefaultTenantID: 1},
+		UsersTable:         "users",
+		SessionsTable:      "sessions",
+		UserColumns: UserColumnMapping{
+			Table:               "users",
+			IDColumn:            "id",
+			EmailColumn:         "email",
+			UsernameColumn:      "username",
+			FirstNameColumn:     "first_name",
+			LastNameColumn:      "last_name",
+			PasswordHashColumn:  "password_hash",
+			ProviderColumn:      "provider",
+			ProviderIDColumn:    "provider_id",
+			EmailVerifiedColumn: "email_verified",
+			IsActiveColumn:      "is_active",
+			IsSuspendedColumn:   "is_suspended",
+			CreatedAtColumn:     "created_at",
+			UpdatedAtColumn:     "updated_at",
+		},
+		SessionColumns: SessionColumnMapping{
+			Table:                   "sessions",
+			IDColumn:                "id",
+			UserIDColumn:            "user_id",
+			TokenColumn:             "token",
+			ExpiresAtColumn:         "expires_at",
+			CSRFColumn:              "csrf_token",
+			DeviceFingerprintColumn: "device_fingerprint",
+			UserAgentColumn:         "user_agent",
+			IPAddressColumn:         "ip_address",
+			LocationColumn:          "location",
+			IsActiveColumn:          "is_active",
+			LastActivityColumn:      "last_activity",
+			RequiresTwoFactorColumn: "requires_two_factor",
+			TwoFactorVerifiedColumn: "two_factor_verified",
+			CreatedAtColumn:         "created_at",
+			UpdatedAtColumn:         "updated_at",
+		},
+		EventColumns: SecurityEventColumnMapping{
+			Table:             "security_events",
+			IDColumn:          "id",
+			UserIDColumn:      "user_id",
+			TenantIDColumn:    "tenant_id",
+			EventTypeColumn:   "event_type",
+			DescriptionColumn: "description",
+			IPAddressColumn:   "ip_address",
+			UserAgentColumn:   "user_agent",
+			LocationColumn:    "location",
+			MetadataColumn:    "metadata",
+			CreatedAtColumn:   "created_at",
+		},
+	}
+}
+
 var (
 	ErrSessionNotFound  = errors.New("session not found")
 	ErrInvalidSession   = errors.New("invalid session")
@@ -213,6 +343,18 @@ type UserReferral struct {
 	Tenant       *Tenant       `json:"tenant,omitempty"`
 }
 
+// TwoFactorCode represents a 2FA verification code with security tracking
+type TwoFactorCode struct {
+	ID           uint       `json:"id"`
+	UserID       uint       `json:"user_id"`
+	Code         string     `json:"-"` // Hidden from JSON
+	ExpiresAt    time.Time  `json:"expires_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UsedAt       *time.Time `json:"used_at,omitempty"`
+	AttemptCount int        `json:"attempt_count"`
+	LockedUntil  *time.Time `json:"locked_until,omitempty"`
+}
+
 // Interface defines the contract for data storage operations
 type Interface interface {
 	// User operations - core identity only
@@ -309,6 +451,12 @@ type Interface interface {
 	GetUserReferralsByReferrer(referrerUserID uint) ([]*UserReferral, error)
 	GetUserReferralByReferred(referredUserID uint) (*UserReferral, error)
 	GetReferralStatsByUser(userID uint) (int, int, error) // totalReferred, activeReferrals
+
+	// Two Factor Code operations
+	CreateTwoFactorCode(code *TwoFactorCode) error
+	GetActiveTwoFactorCodeByUserID(userID uint) (*TwoFactorCode, error)
+	UpdateTwoFactorCode(code *TwoFactorCode) error
+	DeleteExpiredTwoFactorCodes() error
 
 	// Utility operations
 	Close() error

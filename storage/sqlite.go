@@ -422,7 +422,7 @@ func (s *SQLiteStorage) DeleteUserSessions(userID uint) error         { return n
 func (s *SQLiteStorage) CleanupExpiredSessions() error                { return nil }
 func (s *SQLiteStorage) CountActiveSessions(userID uint) (int, error) { return 0, nil }
 func (s *SQLiteStorage) StoreOAuthState(state *OAuthState) error {
-	query := `INSERT INTO oauth_states (state_id, csrf_token, created_at, expires_at)
+	query := `INSERT INTO oauth_states (state, csrf_token, created_at, expires_at)
 			  VALUES (?, ?, ?, ?)`
 
 	_, err := s.db.Exec(query, state.State, state.CSRF, state.CreatedAt, state.ExpiresAt)
@@ -434,8 +434,8 @@ func (s *SQLiteStorage) StoreOAuthState(state *OAuthState) error {
 }
 
 func (s *SQLiteStorage) GetOAuthState(stateID string) (*OAuthState, error) {
-	query := `SELECT state_id, csrf_token, created_at, expires_at
-			  FROM oauth_states WHERE state_id = ?`
+	query := `SELECT state, csrf_token, created_at, expires_at
+			  FROM oauth_states WHERE state = ?`
 
 	var state OAuthState
 	err := s.db.QueryRow(query, stateID).Scan(
@@ -456,7 +456,7 @@ func (s *SQLiteStorage) GetOAuthState(stateID string) (*OAuthState, error) {
 }
 
 func (s *SQLiteStorage) DeleteOAuthState(stateID string) error {
-	query := `DELETE FROM oauth_states WHERE state_id = ?`
+	query := `DELETE FROM oauth_states WHERE state = ?`
 
 	result, err := s.db.Exec(query, stateID)
 	if err != nil {
@@ -541,7 +541,31 @@ func (s *SQLiteStorage) UpdateTenant(tenant *Tenant) error {
 
 	return err
 }
-func (s *SQLiteStorage) ListTenants() ([]*Tenant, error) { return nil, nil }
+func (s *SQLiteStorage) ListTenants() ([]*Tenant, error) {
+	query := `SELECT id, name, slug, domain, is_active, settings, created_at, updated_at
+			  FROM tenants ORDER BY created_at ASC`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tenants: %w", err)
+	}
+	defer rows.Close()
+
+	var tenants []*Tenant
+	for rows.Next() {
+		tenant := &Tenant{}
+		err := rows.Scan(
+			&tenant.ID, &tenant.Name, &tenant.Slug, &tenant.Domain,
+			&tenant.IsActive, &tenant.Settings, &tenant.CreatedAt, &tenant.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan tenant: %w", err)
+		}
+		tenants = append(tenants, tenant)
+	}
+
+	return tenants, nil
+}
 func (s *SQLiteStorage) CreateRole(role *Role) error {
 	query := `INSERT INTO roles (tenant_id, name, description, is_system, created_at, updated_at)
 			  VALUES (?, ?, ?, ?, ?, ?)`
@@ -688,7 +712,17 @@ func (s *SQLiteStorage) DeletePermission(id uint) error                         
 func (s *SQLiteStorage) AssignPermissionToRole(roleID, permissionID uint) error   { return nil }
 func (s *SQLiteStorage) RemovePermissionFromRole(roleID, permissionID uint) error { return nil }
 func (s *SQLiteStorage) GetRolePermissions(roleID uint) ([]*Permission, error)    { return nil, nil }
-func (s *SQLiteStorage) AssignUserToTenant(userID, tenantID, roleID uint) error   { return nil }
+func (s *SQLiteStorage) AssignUserToTenant(userID, tenantID, roleID uint) error {
+	query := `INSERT INTO user_tenants (user_id, tenant_id, role_id, created_at, updated_at)
+			  VALUES (?, ?, ?, datetime('now'), datetime('now'))`
+
+	_, err := s.db.Exec(query, userID, tenantID, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to assign user to tenant: %w", err)
+	}
+
+	return nil
+}
 func (s *SQLiteStorage) RemoveUserFromTenant(userID, tenantID uint) error         { return nil }
 func (s *SQLiteStorage) GetUserTenants(userID uint) ([]*UserTenant, error)        { return nil, nil }
 func (s *SQLiteStorage) GetTenantUsers(tenantID uint) ([]*UserTenant, error)      { return nil, nil }
@@ -751,8 +785,55 @@ func (s *SQLiteStorage) GetSecurityEventsByUser(userID uint, limit int, offset i
 func (s *SQLiteStorage) CreatePasswordResetToken(userID uint, token string, expiresAt time.Time) error {
 	return nil
 }
-func (s *SQLiteStorage) GetUserByPasswordResetToken(token string) (*User, error) { return nil, nil }
-func (s *SQLiteStorage) GetUserByVerificationToken(token string) (*User, error)  { return nil, nil }
+func (s *SQLiteStorage) GetUserByPasswordResetToken(token string) (*User, error) {
+	query := `SELECT u.id, u.email, u.username, u.first_name, u.last_name, u.password_hash,
+			  u.avatar_url, u.provider, u.provider_id, u.email_verified, u.is_active,
+			  u.is_suspended, u.created_at, u.updated_at
+			  FROM users u
+			  JOIN user_security us ON u.id = us.user_id
+			  WHERE us.password_reset_token = ? AND us.password_reset_expires_at > datetime('now')`
+
+	user := &User{}
+	err := s.db.QueryRow(query, token).Scan(
+		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
+		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID,
+		&user.EmailVerified, &user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user by reset token: %w", err)
+	}
+
+	return user, nil
+}
+
+func (s *SQLiteStorage) GetUserByVerificationToken(token string) (*User, error) {
+	query := `SELECT u.id, u.email, u.username, u.first_name, u.last_name, u.password_hash,
+			  u.avatar_url, u.provider, u.provider_id, u.email_verified, u.is_active,
+			  u.is_suspended, u.created_at, u.updated_at
+			  FROM users u
+			  JOIN user_security us ON u.id = us.user_id
+			  WHERE us.verification_token = ?`
+
+	user := &User{}
+	err := s.db.QueryRow(query, token).Scan(
+		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
+		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID,
+		&user.EmailVerified, &user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user by verification token: %w", err)
+	}
+
+	return user, nil
+}
 
 // Referral Code operations - Stub implementations for now
 func (s *SQLiteStorage) CreateReferralCode(code *ReferralCode) error {
@@ -873,4 +954,101 @@ func (s *SQLiteStorage) GetUserReferralByReferred(referredUserID uint) (*UserRef
 
 func (s *SQLiteStorage) GetReferralStatsByUser(userID uint) (int, int, error) {
 	return 0, 0, nil
+}
+
+// Two Factor Code operations
+func (s *SQLiteStorage) CreateTwoFactorCode(code *TwoFactorCode) error {
+	query := `INSERT INTO two_factor_codes 
+		(user_id, code, expires_at, created_at, attempt_count) 
+		VALUES (?, ?, ?, ?, ?)`
+
+	result, err := s.db.Exec(query,
+		code.UserID,
+		code.Code,
+		code.ExpiresAt,
+		code.CreatedAt,
+		code.AttemptCount)
+
+	if err != nil {
+		return fmt.Errorf("failed to create 2FA code: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get 2FA code ID: %w", err)
+	}
+
+	code.ID = uint(id)
+	return nil
+}
+
+func (s *SQLiteStorage) GetActiveTwoFactorCodeByUserID(userID uint) (*TwoFactorCode, error) {
+	query := `SELECT id, user_id, code, expires_at, created_at, used_at, attempt_count, locked_until 
+		FROM two_factor_codes 
+		WHERE user_id = ? AND (used_at IS NULL OR used_at > datetime('now', '-1 hour')) 
+		ORDER BY created_at DESC LIMIT 1`
+
+	var code TwoFactorCode
+	var usedAt sql.NullTime
+	var lockedUntil sql.NullTime
+
+	err := s.db.QueryRow(query, userID).Scan(
+		&code.ID,
+		&code.UserID,
+		&code.Code,
+		&code.ExpiresAt,
+		&code.CreatedAt,
+		&usedAt,
+		&code.AttemptCount,
+		&lockedUntil,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get 2FA code: %w", err)
+	}
+
+	if usedAt.Valid {
+		code.UsedAt = &usedAt.Time
+	}
+
+	if lockedUntil.Valid {
+		code.LockedUntil = &lockedUntil.Time
+	}
+
+	return &code, nil
+}
+
+func (s *SQLiteStorage) UpdateTwoFactorCode(code *TwoFactorCode) error {
+	query := `UPDATE two_factor_codes 
+		SET used_at = ?, attempt_count = ?, locked_until = ? 
+		WHERE id = ?`
+
+	_, err := s.db.Exec(query,
+		code.UsedAt,
+		code.AttemptCount,
+		code.LockedUntil,
+		code.ID)
+
+	if err != nil {
+		return fmt.Errorf("failed to update 2FA code: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStorage) DeleteExpiredTwoFactorCodes() error {
+	query := `DELETE FROM two_factor_codes 
+		WHERE expires_at < datetime('now') 
+		OR (used_at IS NOT NULL AND used_at < datetime('now', '-1 hour'))`
+
+	_, err := s.db.Exec(query)
+	if err != nil {
+		return fmt.Errorf("failed to delete expired 2FA codes: %w", err)
+	}
+
+	return nil
 }

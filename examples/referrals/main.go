@@ -35,6 +35,21 @@ func (m *MockEmailService) SendWelcomeEmail(email, name string) error {
 	return nil
 }
 
+func (m *MockEmailService) Send2FACode(email, code string) error {
+	fmt.Printf("🔐 2FA code sent to %s: %s\n", email, code)
+	return nil
+}
+
+func (m *MockEmailService) Send2FAEnabled(email string) error {
+	fmt.Printf("🔒 2FA enabled notification sent to %s\n", email)
+	return nil
+}
+
+func (m *MockEmailService) Send2FADisabled(email string) error {
+	fmt.Printf("🔓 2FA disabled notification sent to %s\n", email)
+	return nil
+}
+
 func main() {
 	fmt.Println("🚀 Starting Referral System Example...")
 

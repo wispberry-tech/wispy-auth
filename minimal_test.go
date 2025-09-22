@@ -22,6 +22,18 @@ func (t *TestEmailService) SendWelcomeEmail(email, name string) error {
 	return nil
 }
 
+func (t *TestEmailService) Send2FACode(email, code string) error {
+	return nil
+}
+
+func (t *TestEmailService) Send2FAEnabled(email string) error {
+	return nil
+}
+
+func (t *TestEmailService) Send2FADisabled(email string) error {
+	return nil
+}
+
 func TestBasicAuthService(t *testing.T) {
 	// Create in-memory storage
 	sqliteStorage, err := storage.NewInMemorySQLiteStorage()

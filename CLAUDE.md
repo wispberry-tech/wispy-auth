@@ -187,3 +187,13 @@ The system uses a **clean separated architecture** with PostgreSQL and SQLite su
 - Core user operations don't touch security fields
 - Security operations optimized in dedicated table
 
+## Code Quality Standards
+
+**NO BACKWARD COMPATIBILITY**: Never maintain backward compatibility unless explicitly requested. Always prioritize a streamlined, clear, well-documented codebase.
+
+**Clean Architecture**: Remove deprecated code, duplicate interfaces, and stub implementations immediately.
+
+**Documentation**: Code should be self-documenting with clear naming and minimal comments.
+
+**Simplicity**: Prefer simple, direct solutions over complex abstractions.
+

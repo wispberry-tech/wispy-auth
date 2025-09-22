@@ -121,7 +121,7 @@ func main() {
 | **Email Verification** | Configurable email verification system | ✅ |
 | **Account Lockout** | Brute force protection with configurable attempts | ✅ |
 | **Security Auditing** | Comprehensive security event logging | ✅ |
-| **2FA Ready** | Infrastructure in place for two-factor authentication | ✅ |
+| **Two-Factor Authentication** | Complete 2FA implementation with email codes and backup codes | ✅ |
 
 ### 🏢 Multi-Tenant Architecture
 
@@ -180,6 +180,13 @@ r.Post("/reset-password", authService.ResetPasswordHandler)
 // Email Verification
 r.Post("/verify-email", authService.VerifyEmailHandler)
 r.Post("/resend-verification", authService.ResendVerificationHandler)
+
+// Two-Factor Authentication
+r.Post("/2fa/enable", authService.Enable2FAHandler)
+r.Post("/2fa/send-code", authService.Send2FACodeHandler)
+r.Post("/2fa/verify", authService.Verify2FACodeHandler)
+r.Post("/2fa/backup-codes", authService.Generate2FABackupCodesHandler)
+r.Post("/2fa/disable", authService.Disable2FAHandler)
 ```
 
 ### 📱 Session Management
@@ -265,6 +272,13 @@ type SecurityConfig struct {
     SessionLifetime  time.Duration
     RequireTwoFactor bool
 
+    // Two-Factor Authentication
+    TwoFactorCodeLength  int
+    TwoFactorCodeExpiry  time.Duration
+    BackupCodeCount      int
+    MaxTwoFactorAttempts int
+    TwoFactorLockout     time.Duration
+
     // Referral System
     RequireReferralCode  bool
     DefaultUserRoleName  string
@@ -295,6 +309,14 @@ SecurityConfig: auth.SecurityConfig{
     RequireEmailVerification: true,
     VerificationTokenExpiry:  24 * time.Hour,
 
+    // Two-Factor Authentication
+    RequireTwoFactor:         false,
+    TwoFactorCodeLength:      6,
+    TwoFactorCodeExpiry:      5 * time.Minute,
+    BackupCodeCount:          8,
+    MaxTwoFactorAttempts:     3,
+    TwoFactorLockout:         15 * time.Minute,
+
     // Referral system
     RequireReferralCode: false,
     DefaultUserRoleName: "member",
@@ -308,6 +330,106 @@ SecurityConfig: auth.SecurityConfig{
     ReferralCodeExpiry: 7 * 24 * time.Hour,
 }
 ```
+
+---
+
+## 🔐 Two-Factor Authentication
+
+### Enable 2FA for Users
+
+```go
+// Enable 2FA for a user
+r.Post("/2fa/enable", func(w http.ResponseWriter, r *http.Request) {
+    result := authService.Enable2FAHandler(r)
+    w.WriteHeader(result.StatusCode)
+    json.NewEncoder(w).Encode(result)
+})
+
+// Send 2FA code via email
+r.Post("/2fa/send-code", func(w http.ResponseWriter, r *http.Request) {
+    result := authService.Send2FACodeHandler(r)
+    w.WriteHeader(result.StatusCode)
+    json.NewEncoder(w).Encode(result)
+})
+
+// Verify 2FA code
+r.Post("/2fa/verify", func(w http.ResponseWriter, r *http.Request) {
+    result := authService.Verify2FACodeHandler(r)
+    w.WriteHeader(result.StatusCode)
+    json.NewEncoder(w).Encode(result)
+})
+```
+
+### Backup Codes
+
+```go
+// Generate backup codes
+r.Post("/2fa/backup-codes", func(w http.ResponseWriter, r *http.Request) {
+    result := authService.Generate2FABackupCodesHandler(r)
+    w.WriteHeader(result.StatusCode)
+    json.NewEncoder(w).Encode(result)
+})
+
+// Response contains securely hashed backup codes
+// {"backup_codes": ["CODE1", "CODE2", ...], "count": 8}
+```
+
+### 2FA Configuration
+
+```go
+SecurityConfig: auth.SecurityConfig{
+    // Enable/disable 2FA requirement
+    RequireTwoFactor: false,
+
+    // Code settings
+    TwoFactorCodeLength: 6,          // 6-digit codes
+    TwoFactorCodeExpiry: 5 * time.Minute,
+
+    // Backup codes
+    BackupCodeCount: 8,              // Generate 8 backup codes
+
+    // Security settings
+    MaxTwoFactorAttempts: 3,         // Max attempts before lockout
+    TwoFactorLockout: 15 * time.Minute,
+}
+```
+
+### API Usage Flow
+
+```bash
+# 1. Enable 2FA for authenticated user
+curl -X POST /2fa/enable \
+  -H "Authorization: Bearer <token>" \
+  -d '{"email":"user@example.com"}'
+
+# 2. Request a 2FA code
+curl -X POST /2fa/send-code \
+  -H "Authorization: Bearer <token>" \
+  -d '{"email":"user@example.com"}'
+
+# 3. Verify the code
+curl -X POST /2fa/verify \
+  -H "Authorization: Bearer <token>" \
+  -d '{"email":"user@example.com","code":"123456"}'
+
+# 4. Generate backup codes (one-time operation)
+curl -X POST /2fa/backup-codes \
+  -H "Authorization: Bearer <token>" \
+  -d '{"email":"user@example.com"}'
+
+# 5. Disable 2FA if needed
+curl -X POST /2fa/disable \
+  -H "Authorization: Bearer <token>" \
+  -d '{"email":"user@example.com","code":"123456"}'
+```
+
+### Security Features
+
+- **Rate Limiting**: Maximum attempts before temporary lockout
+- **Time-based Expiry**: Codes expire after configurable time
+- **Backup Codes**: BCrypt-hashed one-time use codes for account recovery
+- **Audit Logging**: All 2FA events logged to security_events table
+- **Email Notifications**: Users notified when 2FA is enabled/disabled
 
 ---
 
@@ -614,6 +736,11 @@ type EmailService interface {
     SendVerificationEmail(email, token string) error
     SendPasswordResetEmail(email, token string) error
     SendWelcomeEmail(email, name string) error
+
+    // Two-Factor Authentication
+    Send2FACode(email, code string) error
+    Send2FAEnabled(email string) error
+    Send2FADisabled(email string) error
 }
 
 // Implement this interface with your email provider
@@ -716,6 +843,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - 🔄 WebAuthn/Passkey support
 - 🔄 Advanced 2FA methods (TOTP, SMS)
 - 🔄 Social login providers expansion
+- 🔄 Mobile app integration examples
 <!-- - 🔄 Admin dashboard for user management -->
 <!-- - 🔄 Advanced analytics and reporting -->
 <!-- - 🔄 Rate limiting and DDoS protection -->
