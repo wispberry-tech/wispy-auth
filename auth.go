@@ -427,9 +427,9 @@ func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User,
 	if err == nil {
 		return nil, ErrUserExists
 	}
-	if err != ErrUserNotFound {
+	if err != storage.ErrUserNotFound {
 		slog.Error("Failed to check existing user", "error", err, "email", req.Email)
-		return nil, fmt.Errorf("failed to check existing user: %w", err)
+		return nil, err
 	}
 
 	// Validate referral code if provided or required
@@ -482,7 +482,7 @@ func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User,
 
 	if err := a.storage.CreateUser(&user); err != nil {
 		slog.Error("Failed to create user", "error", err, "email", req.Email, "username", req.Username)
-		return nil, fmt.Errorf("failed to create user: %w", err)
+		return nil, err
 	}
 
 	// Create security record
@@ -502,13 +502,13 @@ func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User,
 
 	if err := a.storage.CreateUserSecurity(&userSecurity); err != nil {
 		slog.Error("Failed to create user security", "error", err, "userID", user.ID)
-		return nil, fmt.Errorf("failed to create user security: %w", err)
+		return nil, err
 	}
 
 	// Assign user to tenant if multi-tenant is enabled
 	if err := a.assignUserToDefaultTenant(&user, tenantID); err != nil {
 		slog.Error("Failed to assign user to tenant", "error", err, "user_id", user.ID, "tenant_id", tenantID)
-		return nil, fmt.Errorf("failed to assign user to tenant: %w", err)
+		return nil, err
 	}
 
 	// Process referral code after user creation and tenant assignment
@@ -539,7 +539,7 @@ func (a *AuthService) SignInWithContext(email, password, ip, userAgent, location
 
 	user, err := a.storage.GetUserByEmail(email, "email")
 	if err != nil {
-		if err == ErrUserNotFound {
+		if err == storage.ErrUserNotFound {
 			// Use constant time comparison even for non-existent users
 			// This prevents timing attacks that could determine if an email exists
 			bcrypt.CompareHashAndPassword(

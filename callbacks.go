@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+
+	"github.com/wispberry-tech/wispy-auth/storage"
 )
 
 func (a *AuthService) HandleOAuthCallback(provider, code string) (*User, error) {
@@ -82,7 +84,7 @@ func (a *AuthService) HandleOAuthCallback(provider, code string) (*User, error) 
 	// Check if user exists with this provider
 	user, err := a.storage.GetUserByProviderID(provider, userInfo.ID)
 
-	if err == ErrUserNotFound {
+	if err == storage.ErrUserNotFound {
 		// Check if email already exists with another provider
 		existingEmailUser, err := a.storage.GetUserByEmailAnyProvider(userEmail)
 		if err == nil {
