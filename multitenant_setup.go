@@ -22,12 +22,14 @@ func (a *AuthService) SetupDefaultTenant() error {
 		IsActive: true,
 		Settings: "{}",
 	}
-	
+
 	if err := a.storage.CreateTenant(tenant); err != nil {
 		slog.Error("Failed to create default tenant", "error", err, "tenant_name", tenant.Name)
 		return fmt.Errorf("failed to create default tenant: %w", err)
 	}
-	
+
+	slog.Info("Successfully created default tenant", "tenant_id", tenant.ID, "tenant_name", tenant.Name, "tenant_slug", tenant.Slug)
+
 	// Update the tenant ID to match the expected default ID
 	if tenant.ID != a.storageConfig.MultiTenant.DefaultTenantID {
 		// This is a simplification; in practice, you might want to handle this differently
@@ -173,4 +175,3 @@ func (a *AuthService) AssignDefaultPermissions(tenantID uint) error {
 
 	return nil
 }
-

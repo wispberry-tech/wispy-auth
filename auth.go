@@ -569,7 +569,12 @@ func (a *AuthService) SignUpWithTenant(req SignUpRequest, tenantID uint) (*User,
 
 	// Assign user to tenant if multi-tenant is enabled
 	if err := a.assignUserToDefaultTenant(&user, tenantID); err != nil {
-		slog.Error("Failed to assign user to tenant", "error", err, "user_id", user.ID, "tenant_id", tenantID)
+		slog.Error("Failed to assign user to tenant",
+			"error", err,
+			"user_id", user.ID,
+			"user_email", user.Email,
+			"tenant_id", tenantID,
+			"operation", "signup")
 		return nil, err
 	}
 
@@ -737,7 +742,23 @@ func (a *AuthService) assignUserToDefaultTenant(user *User, tenantID uint) error
 		}
 
 		if len(tenants) == 0 {
-			return fmt.Errorf("no tenants found - multi-tenant system not properly initialized")
+			// Auto-create default tenant if none exists
+			slog.Info("No tenants found, creating default tenant automatically")
+			err := a.SetupDefaultTenant()
+			if err != nil {
+				slog.Error("Failed to auto-create default tenant", "error", err)
+				return fmt.Errorf("failed to auto-create default tenant: %w", err)
+			}
+
+			// Re-list tenants after creation
+			tenants, err = a.storage.ListTenants()
+			if err != nil {
+				return fmt.Errorf("failed to list tenants after auto-creation: %w", err)
+			}
+
+			if len(tenants) == 0 {
+				return fmt.Errorf("no tenants found even after auto-creation - system error")
+			}
 		}
 
 		// Use the first tenant as default
