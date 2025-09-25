@@ -7,12 +7,21 @@ import (
 
 // SetupDefaultTenant creates a default tenant and basic roles if they don't exist
 func (a *AuthService) SetupDefaultTenant() error {
+	slog.Debug("Starting default tenant setup", "expected_default_tenant_id", a.storageConfig.MultiTenant.DefaultTenantID)
 
-	// Check if default tenant exists
-	_, err := a.storage.GetTenantByID(a.storageConfig.MultiTenant.DefaultTenantID)
-	if err == nil {
-		return nil // Default tenant already exists
+	// First, check if any tenants exist at all
+	existingTenants, err := a.storage.ListTenants()
+	if err != nil {
+		slog.Error("Failed to list tenants during setup", "error", err)
+		return fmt.Errorf("failed to list tenants: %w", err)
 	}
+
+	if len(existingTenants) > 0 {
+		slog.Debug("Tenants already exist, no need to create default", "tenant_count", len(existingTenants))
+		return nil // Tenants already exist
+	}
+
+	slog.Debug("No tenants exist, creating default tenant")
 
 	// Create default tenant
 	tenant := &Tenant{
@@ -30,13 +39,6 @@ func (a *AuthService) SetupDefaultTenant() error {
 
 	slog.Info("Successfully created default tenant", "tenant_id", tenant.ID, "tenant_name", tenant.Name, "tenant_slug", tenant.Slug)
 
-	// Update the tenant ID to match the expected default ID
-	if tenant.ID != a.storageConfig.MultiTenant.DefaultTenantID {
-		// This is a simplification; in practice, you might want to handle this differently
-		slog.Warn("Default tenant created with different ID than expected",
-			"created_id", tenant.ID, "expected_id", a.storageConfig.MultiTenant.DefaultTenantID)
-	}
-
 	// Create default roles
 	if err := a.createDefaultRoles(tenant.ID); err != nil {
 		slog.Error("Failed to create default roles", "error", err, "tenant_id", tenant.ID)
@@ -49,6 +51,7 @@ func (a *AuthService) SetupDefaultTenant() error {
 		return fmt.Errorf("failed to create default permissions: %w", err)
 	}
 
+	slog.Info("Default tenant setup completed successfully", "tenant_id", tenant.ID, "tenant_name", tenant.Name)
 	return nil
 }
 

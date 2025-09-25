@@ -751,18 +751,27 @@ func (a *AuthService) assignUserToDefaultTenant(user *User, tenantID uint) error
 			}
 
 			// Re-list tenants after creation
+			slog.Debug("Re-listing tenants after auto-creation")
 			tenants, err = a.storage.ListTenants()
 			if err != nil {
+				slog.Error("Failed to list tenants after auto-creation", "error", err)
 				return fmt.Errorf("failed to list tenants after auto-creation: %w", err)
 			}
 
+			slog.Debug("Tenants found after auto-creation", "tenant_count", len(tenants))
+			for i, tenant := range tenants {
+				slog.Debug("Available tenant", "index", i, "tenant_id", tenant.ID, "tenant_name", tenant.Name, "tenant_slug", tenant.Slug)
+			}
+
 			if len(tenants) == 0 {
+				slog.Error("Critical error: No tenants found even after auto-creation")
 				return fmt.Errorf("no tenants found even after auto-creation - system error")
 			}
 		}
 
 		// Use the first tenant as default
 		targetTenantID = tenants[0].ID
+		slog.Debug("Selected tenant for user assignment", "tenant_id", targetTenantID, "tenant_name", tenants[0].Name)
 	}
 
 	// Ensure default role exists and get its ID
