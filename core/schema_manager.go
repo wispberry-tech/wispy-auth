@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
@@ -48,7 +49,7 @@ func (sm *SchemaManager) EnsureCoreSchema() error {
 	}
 
 	if len(missingTables) > 0 {
-		slog.Log(nil, sm.logLevel, "Missing core authentication tables detected",
+		slog.Log(context.TODO(), sm.logLevel, "Missing core authentication tables detected",
 			"missing_tables", missingTables,
 			"action", "auto_creating",
 			"database_type", sm.dbType)

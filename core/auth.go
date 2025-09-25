@@ -111,7 +111,6 @@ func DefaultSecurityConfig() SecurityConfig {
 	}
 }
 
-
 // OAuthProviderConfig defines the configuration for an OAuth2 provider.
 type OAuthProviderConfig struct {
 	ClientID     string   `json:"client_id"`     // OAuth2 client ID from provider
@@ -172,9 +171,9 @@ func NewCustomOAuthProvider(clientID, clientSecret, redirectURL, authURL, tokenU
 
 // Config contains the configuration for the AuthService
 type Config struct {
-	Storage        Storage                            // Storage implementation (required)
-	SecurityConfig SecurityConfig                     // Security configuration
-	OAuthProviders map[string]OAuthProviderConfig     // OAuth provider configurations
+	Storage        Storage                        // Storage implementation (required)
+	SecurityConfig SecurityConfig                 // Security configuration
+	OAuthProviders map[string]OAuthProviderConfig // OAuth provider configurations
 }
 
 // AuthService is the main service for handling authentication operations.
@@ -271,6 +270,11 @@ func (a *AuthService) logSecurityEvent(userID *uint, eventType, description, ipA
 			"user_id", userID,
 			"error", err)
 	}
+}
+
+// GetStorage returns the storage instance for use by independent modules
+func (a *AuthService) GetStorage() Storage {
+	return a.storage
 }
 
 // Close closes the auth service and cleans up resources

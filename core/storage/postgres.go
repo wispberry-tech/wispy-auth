@@ -7,8 +7,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
-	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/wispberry-tech/wispy-auth/core"
 	. "github.com/wispberry-tech/wispy-auth/core"
 )
 
@@ -39,7 +37,7 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 	}
 
 	// Auto-create missing tables
-	schemaManager := core.NewSchemaManager(db, "postgres")
+	schemaManager := NewSchemaManager(db, "postgres")
 	if err := schemaManager.EnsureCoreSchema(); err != nil {
 		return nil, fmt.Errorf("failed to ensure core schema: %w", err)
 	}
@@ -348,16 +346,17 @@ func (p *PostgresStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
 			  created_at, updated_at
 			  FROM user_security WHERE user_id = $1`
 
-	// Use sql.NullString for IP addresses to handle NULL values
-	var lastLoginIP, lastFailedLoginIP sql.NullString
+	// Use sql.NullString for nullable string fields to handle NULL values
+	var lastLoginIP, lastFailedLoginIP, twoFactorSecret, twoFactorBackupCodes sql.NullString
+	var lastSessionToken, deviceFingerprint, knownDevices sql.NullString
 
 	err := p.db.QueryRow(query, userID).Scan(
 		&security.UserID, &security.LoginAttempts, &security.LockedUntil,
 		&security.LastLoginAt, &lastLoginIP, &security.LastFailedLoginAt,
 		&lastFailedLoginIP, &security.PasswordChangedAt, &security.ForcePasswordChange,
-		&security.TwoFactorEnabled, &security.TwoFactorSecret, &security.TwoFactorBackupCodes,
-		&security.TwoFactorVerifiedAt, &security.ConcurrentSessions, &security.LastSessionToken,
-		&security.DeviceFingerprint, &security.KnownDevices, &security.SecurityVersion,
+		&security.TwoFactorEnabled, &twoFactorSecret, &twoFactorBackupCodes,
+		&security.TwoFactorVerifiedAt, &security.ConcurrentSessions, &lastSessionToken,
+		&deviceFingerprint, &knownDevices, &security.SecurityVersion,
 		&security.RiskScore, &security.SuspiciousActivityCount, &security.CreatedAt, &security.UpdatedAt)
 
 	if err != nil {
@@ -367,12 +366,27 @@ func (p *PostgresStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
 		return nil, fmt.Errorf("failed to get user security: %w", err)
 	}
 
-	// Convert sql.NullString back to *string
+	// Convert sql.NullString back to *string or string
 	if lastLoginIP.Valid {
 		security.LastLoginIP = &lastLoginIP.String
 	}
 	if lastFailedLoginIP.Valid {
 		security.LastFailedLoginIP = &lastFailedLoginIP.String
+	}
+	if twoFactorSecret.Valid {
+		security.TwoFactorSecret = twoFactorSecret.String
+	}
+	if twoFactorBackupCodes.Valid {
+		security.TwoFactorBackupCodes = twoFactorBackupCodes.String
+	}
+	if lastSessionToken.Valid {
+		security.LastSessionToken = lastSessionToken.String
+	}
+	if deviceFingerprint.Valid {
+		security.DeviceFingerprint = deviceFingerprint.String
+	}
+	if knownDevices.Valid {
+		security.KnownDevices = knownDevices.String
 	}
 
 	return security, nil
@@ -470,16 +484,24 @@ func (p *PostgresStorage) CreateSession(session *Session) error {
 			  user_agent, ip_address, is_active, last_accessed_at, created_at)
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`
 
-	// Convert string IP to sql.NullString to handle NULL properly
-	var ipAddress sql.NullString
+	// Convert strings to sql.NullString to handle NULL properly
+	var ipAddress, userAgent, deviceFingerprint sql.NullString
 	if session.IPAddress != "" {
 		ipAddress.String = session.IPAddress
 		ipAddress.Valid = true
 	}
+	if session.UserAgent != "" {
+		userAgent.String = session.UserAgent
+		userAgent.Valid = true
+	}
+	if session.DeviceFingerprint != "" {
+		deviceFingerprint.String = session.DeviceFingerprint
+		deviceFingerprint.Valid = true
+	}
 
 	err := p.db.QueryRow(query,
-		session.Token, session.UserID, session.ExpiresAt, session.DeviceFingerprint,
-		session.UserAgent, ipAddress, session.IsActive, session.LastAccessedAt,
+		session.Token, session.UserID, session.ExpiresAt, deviceFingerprint,
+		userAgent, ipAddress, session.IsActive, session.LastAccessedAt,
 		time.Now()).Scan(&session.ID)
 
 	if err != nil {
@@ -495,12 +517,12 @@ func (p *PostgresStorage) GetSession(token string) (*Session, error) {
 			  user_agent, ip_address, is_active, last_accessed_at, created_at
 			  FROM sessions WHERE token = $1 AND is_active = true`
 
-	// Use sql.NullString for IP address to handle NULL values
-	var ipAddress sql.NullString
+	// Use sql.NullString for nullable fields to handle NULL values
+	var ipAddress, userAgent, deviceFingerprint sql.NullString
 
 	err := p.db.QueryRow(query, token).Scan(
 		&session.ID, &session.UserID, &session.Token, &session.ExpiresAt,
-		&session.DeviceFingerprint, &session.UserAgent, &ipAddress,
+		&deviceFingerprint, &userAgent, &ipAddress,
 		&session.IsActive, &session.LastAccessedAt, &session.CreatedAt)
 
 	if err != nil {
@@ -513,6 +535,12 @@ func (p *PostgresStorage) GetSession(token string) (*Session, error) {
 	// Convert sql.NullString back to string
 	if ipAddress.Valid {
 		session.IPAddress = ipAddress.String
+	}
+	if userAgent.Valid {
+		session.UserAgent = userAgent.String
+	}
+	if deviceFingerprint.Valid {
+		session.DeviceFingerprint = deviceFingerprint.String
 	}
 
 	return session, nil
@@ -532,12 +560,12 @@ func (p *PostgresStorage) GetUserSessions(userID uint) ([]*Session, error) {
 	var sessions []*Session
 	for rows.Next() {
 		session := &Session{}
-		// Use sql.NullString for IP address to handle NULL values
-		var ipAddress sql.NullString
+		// Use sql.NullString for nullable fields to handle NULL values
+		var ipAddress, userAgent, deviceFingerprint sql.NullString
 
 		err := rows.Scan(
 			&session.ID, &session.UserID, &session.Token, &session.ExpiresAt,
-			&session.DeviceFingerprint, &session.UserAgent, &ipAddress,
+			&deviceFingerprint, &userAgent, &ipAddress,
 			&session.IsActive, &session.LastAccessedAt, &session.CreatedAt)
 
 		if err != nil {
@@ -547,6 +575,12 @@ func (p *PostgresStorage) GetUserSessions(userID uint) ([]*Session, error) {
 		// Convert sql.NullString back to string
 		if ipAddress.Valid {
 			session.IPAddress = ipAddress.String
+		}
+		if userAgent.Valid {
+			session.UserAgent = userAgent.String
+		}
+		if deviceFingerprint.Valid {
+			session.DeviceFingerprint = deviceFingerprint.String
 		}
 
 		sessions = append(sessions, session)
@@ -560,15 +594,23 @@ func (p *PostgresStorage) UpdateSession(session *Session) error {
 			  user_agent = $3, ip_address = $4, is_active = $5, last_accessed_at = $6
 			  WHERE id = $7`
 
-	// Convert string IP to sql.NullString to handle NULL properly
-	var ipAddress sql.NullString
+	// Convert strings to sql.NullString to handle NULL properly
+	var ipAddress, userAgent, deviceFingerprint sql.NullString
 	if session.IPAddress != "" {
 		ipAddress.String = session.IPAddress
 		ipAddress.Valid = true
 	}
+	if session.UserAgent != "" {
+		userAgent.String = session.UserAgent
+		userAgent.Valid = true
+	}
+	if session.DeviceFingerprint != "" {
+		deviceFingerprint.String = session.DeviceFingerprint
+		deviceFingerprint.Valid = true
+	}
 
 	_, err := p.db.Exec(query,
-		session.ExpiresAt, session.DeviceFingerprint, session.UserAgent,
+		session.ExpiresAt, deviceFingerprint, userAgent,
 		ipAddress, session.IsActive, session.LastAccessedAt, session.ID)
 
 	if err != nil {
@@ -620,8 +662,15 @@ func (p *PostgresStorage) StoreOAuthState(state *OAuthState) error {
 	query := `INSERT INTO oauth_states (state, csrf, provider, redirect_url, expires_at, created_at)
 			  VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
 
+	// Convert string to sql.NullString to handle NULL properly
+	var redirectURL sql.NullString
+	if state.RedirectURL != "" {
+		redirectURL.String = state.RedirectURL
+		redirectURL.Valid = true
+	}
+
 	err := p.db.QueryRow(query,
-		state.State, state.CSRF, state.Provider, state.RedirectURL,
+		state.State, state.CSRF, state.Provider, redirectURL,
 		state.ExpiresAt, time.Now()).Scan(&state.ID)
 
 	if err != nil {
@@ -636,15 +685,23 @@ func (p *PostgresStorage) GetOAuthState(state string) (*OAuthState, error) {
 	query := `SELECT id, state, csrf, provider, redirect_url, expires_at, created_at
 			  FROM oauth_states WHERE state = $1`
 
+	// Use sql.NullString for redirect_url to handle NULL values
+	var redirectURL sql.NullString
+
 	err := p.db.QueryRow(query, state).Scan(
 		&oauthState.ID, &oauthState.State, &oauthState.CSRF, &oauthState.Provider,
-		&oauthState.RedirectURL, &oauthState.ExpiresAt, &oauthState.CreatedAt)
+		&redirectURL, &oauthState.ExpiresAt, &oauthState.CreatedAt)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get OAuth state: %w", err)
+	}
+
+	// Convert sql.NullString back to string
+	if redirectURL.Valid {
+		oauthState.RedirectURL = redirectURL.String
 	}
 
 	return oauthState, nil
@@ -666,17 +723,33 @@ func (p *PostgresStorage) CreateSecurityEvent(event *SecurityEvent) error {
 			  success, metadata, created_at)
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`
 
-	// Convert string IP to sql.NullString to handle NULL properly
-	var ipAddress sql.NullString
+	// Convert strings to sql.NullString to handle NULL properly
+	var ipAddress, description, userAgent, deviceFingerprint, metadata sql.NullString
 	if event.IPAddress != "" {
 		ipAddress.String = event.IPAddress
 		ipAddress.Valid = true
 	}
+	if event.Description != "" {
+		description.String = event.Description
+		description.Valid = true
+	}
+	if event.UserAgent != "" {
+		userAgent.String = event.UserAgent
+		userAgent.Valid = true
+	}
+	if event.DeviceFingerprint != "" {
+		deviceFingerprint.String = event.DeviceFingerprint
+		deviceFingerprint.Valid = true
+	}
+	if event.Metadata != "" {
+		metadata.String = event.Metadata
+		metadata.Valid = true
+	}
 
 	err := p.db.QueryRow(query,
-		event.UserID, event.EventType, event.Description, ipAddress,
-		event.UserAgent, event.DeviceFingerprint, event.Severity,
-		event.Success, event.Metadata, time.Now()).Scan(&event.ID)
+		event.UserID, event.EventType, description, ipAddress,
+		userAgent, deviceFingerprint, event.Severity,
+		event.Success, metadata, time.Now()).Scan(&event.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to create security event: %w", err)
@@ -721,13 +794,13 @@ func (p *PostgresStorage) GetSecurityEvents(userID *uint, eventType string, limi
 	var events []*SecurityEvent
 	for rows.Next() {
 		event := &SecurityEvent{}
-		// Use sql.NullString for IP address to handle NULL values
-		var ipAddress sql.NullString
+		// Use sql.NullString for nullable fields to handle NULL values
+		var ipAddress, description, userAgent, deviceFingerprint, metadata sql.NullString
 
 		err := rows.Scan(
-			&event.ID, &event.UserID, &event.EventType, &event.Description,
-			&ipAddress, &event.UserAgent, &event.DeviceFingerprint,
-			&event.Severity, &event.Success, &event.Metadata, &event.CreatedAt)
+			&event.ID, &event.UserID, &event.EventType, &description,
+			&ipAddress, &userAgent, &deviceFingerprint,
+			&event.Severity, &event.Success, &metadata, &event.CreatedAt)
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan security event: %w", err)
@@ -736,6 +809,18 @@ func (p *PostgresStorage) GetSecurityEvents(userID *uint, eventType string, limi
 		// Convert sql.NullString back to string
 		if ipAddress.Valid {
 			event.IPAddress = ipAddress.String
+		}
+		if description.Valid {
+			event.Description = description.String
+		}
+		if userAgent.Valid {
+			event.UserAgent = userAgent.String
+		}
+		if deviceFingerprint.Valid {
+			event.DeviceFingerprint = deviceFingerprint.String
+		}
+		if metadata.Valid {
+			event.Metadata = metadata.String
 		}
 
 		events = append(events, event)
