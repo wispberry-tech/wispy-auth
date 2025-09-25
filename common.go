@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"regexp"
@@ -121,21 +122,49 @@ func calculateSessionExpiry(config SecurityConfig) time.Time {
 
 // extractTokenFromRequest extracts session token from Authorization header or auth_token cookie
 func extractTokenFromRequest(r *http.Request) string {
+	// Debug: Log all headers and cookies for token extraction debugging
+	slog.Debug("Extracting token from request",
+		"method", r.Method,
+		"url", r.URL.String(),
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.UserAgent(),
+		"authorization_header", r.Header.Get("Authorization"),
+		"all_headers", r.Header,
+		"cookie_count", len(r.Cookies()))
+
+	// Log all cookies
+	for i, cookie := range r.Cookies() {
+		slog.Debug("Request cookie",
+			"cookie_index", i,
+			"name", cookie.Name,
+			"value_length", len(cookie.Value),
+			"domain", cookie.Domain,
+			"path", cookie.Path,
+			"secure", cookie.Secure,
+			"http_only", cookie.HttpOnly)
+	}
+
 	// First, try to get token from Authorization header
 	token := r.Header.Get("Authorization")
 	if token != "" {
+		slog.Debug("Token found in Authorization header", "token_length", len(token), "has_bearer_prefix", len(token) > 7 && token[:7] == "Bearer ")
 		// Remove "Bearer " prefix if present
 		if len(token) > 7 && token[:7] == "Bearer " {
-			return token[7:]
+			extractedToken := token[7:]
+			slog.Debug("Extracted token from Bearer header", "token_prefix", extractedToken[:min(8, len(extractedToken))], "token_length", len(extractedToken))
+			return extractedToken
 		}
+		slog.Debug("Using raw Authorization header as token", "token_prefix", token[:min(8, len(token))], "token_length", len(token))
 		return token
 	}
 
 	// If no Authorization header, try to get token from auth_token cookie
 	if cookie, err := r.Cookie("auth_token"); err == nil {
+		slog.Debug("Token found in auth_token cookie", "token_prefix", cookie.Value[:min(8, len(cookie.Value))], "token_length", len(cookie.Value))
 		return cookie.Value
 	}
 
+	slog.Debug("No token found in Authorization header or auth_token cookie")
 	return ""
 }
 
