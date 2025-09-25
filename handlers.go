@@ -232,7 +232,11 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 	// Send verification email if needed
 	if response.RequiresEmailVerification && a.emailService != nil {
 		if userSecurity, err := a.storage.GetUserSecurity(response.User.ID); err == nil && userSecurity.VerificationToken != "" {
-			go a.emailService.SendVerificationEmail(response.User.Email, userSecurity.VerificationToken)
+			go func() {
+				if err := a.emailService.SendVerificationEmail(response.User.Email, userSecurity.VerificationToken); err != nil {
+					slog.Error("Failed to send verification email", "error", err, "user_id", response.User.ID, "email", response.User.Email)
+				}
+			}()
 		}
 	}
 
@@ -250,7 +254,11 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 		} else {
 			displayName = response.User.Email
 		}
-		go a.emailService.SendWelcomeEmail(response.User.Email, displayName)
+		go func() {
+			if err := a.emailService.SendWelcomeEmail(response.User.Email, displayName); err != nil {
+				slog.Error("Failed to send welcome email", "error", err, "user_id", response.User.ID, "email", response.User.Email)
+			}
+		}()
 	}
 
 	return response
@@ -379,17 +387,25 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
 	token := extractTokenFromRequest(r)
 	if token == "" {
-		slog.Warn("Missing authorization header", "remote_addr", r.RemoteAddr)
+		slog.Error("Missing authorization header - authentication failed",
+			"remote_addr", r.RemoteAddr,
+			"method", r.Method,
+			"url", r.URL.String(),
+			"user_agent", r.UserAgent(),
+			"referer", r.Referer())
 		return ValidateResponse{
 			StatusCode: 401,
 			Error:      "Authorization header required. Please provide a Bearer token.",
 		}
 	}
 
+	// Debug: Log the full token being validated
+	slog.Debug("Validating session token", "token_prefix", token[:min(8, len(token))], "token_length", len(token), "remote_addr", r.RemoteAddr)
+
 	// Get session from token
 	session, err := a.storage.GetSession(token)
 	if err != nil {
-		slog.Warn("Session validation failed", "error", err, "token_prefix", token[:min(8, len(token))], "remote_addr", r.RemoteAddr)
+		slog.Warn("Session validation failed", "error", err, "token_prefix", token[:min(8, len(token))], "token_length", len(token), "remote_addr", r.RemoteAddr)
 		return ValidateResponse{
 			StatusCode: 401,
 			Error:      "Invalid or expired session",
@@ -467,7 +483,11 @@ func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordRespo
 		user, getUserErr := a.storage.GetUserByEmailAnyProvider(req.Email)
 		if getUserErr == nil && user != nil {
 			if userSecurity, secErr := a.storage.GetUserSecurity(user.ID); secErr == nil && userSecurity.PasswordResetToken != "" {
-				go a.emailService.SendPasswordResetEmail(user.Email, userSecurity.PasswordResetToken)
+				go func() {
+					if err := a.emailService.SendPasswordResetEmail(user.Email, userSecurity.PasswordResetToken); err != nil {
+						slog.Error("Failed to send password reset email", "error", err, "user_id", user.ID, "email", user.Email)
+					}
+				}()
 			}
 		}
 	}
@@ -638,12 +658,20 @@ func (a *AuthService) ResendVerificationHandler(r *http.Request) EmailVerificati
 			// Get user from session if not in context
 			if user, err := a.storage.GetUserByID(session.UserID); err == nil {
 				if userSecurity, secErr := a.storage.GetUserSecurity(user.ID); secErr == nil && userSecurity.VerificationToken != "" {
-					go a.emailService.SendVerificationEmail(user.Email, userSecurity.VerificationToken)
+					go func() {
+						if err := a.emailService.SendVerificationEmail(user.Email, userSecurity.VerificationToken); err != nil {
+							slog.Error("Failed to send verification email", "error", err, "user_id", user.ID, "email", user.Email)
+						}
+					}()
 				}
 			}
 		} else {
 			if userSecurity, secErr := a.storage.GetUserSecurity(user.ID); secErr == nil && userSecurity.VerificationToken != "" {
-				go a.emailService.SendVerificationEmail(user.Email, userSecurity.VerificationToken)
+				go func() {
+					if err := a.emailService.SendVerificationEmail(user.Email, userSecurity.VerificationToken); err != nil {
+						slog.Error("Failed to send verification email", "error", err, "user_id", user.ID, "email", user.Email)
+					}
+				}()
 			}
 		}
 	}
@@ -928,7 +956,11 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider, code, stat
 		} else {
 			displayName = user.Email
 		}
-		go a.emailService.SendWelcomeEmail(user.Email, displayName)
+		go func() {
+			if err := a.emailService.SendWelcomeEmail(user.Email, displayName); err != nil {
+				slog.Error("Failed to send welcome email", "error", err, "user_id", user.ID, "email", user.Email)
+			}
+		}()
 	}
 
 	return OAuthResponse{

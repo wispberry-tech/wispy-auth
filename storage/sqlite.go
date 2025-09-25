@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -10,6 +11,14 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
 )
+
+// Helper function for debug logging
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // SQLiteStorage is a production-ready SQLite storage implementation
 type SQLiteStorage struct {
@@ -329,6 +338,9 @@ func (s *SQLiteStorage) CreateSession(session *Session) error {
 		session.ID = fmt.Sprintf("%d_%d", session.UserID, time.Now().UnixNano())
 	}
 
+	// Debug: Log what we're about to store
+	slog.Debug("SQLite storing session", "session_id", session.ID, "user_id", session.UserID, "token_prefix", session.Token[:min(8, len(session.Token))], "token_length", len(session.Token))
+
 	query := `INSERT INTO sessions (id, user_id, token, expires_at, device_fingerprint,
 			  user_agent, ip_address, location, is_active, last_activity,
 			  requires_two_factor, two_factor_verified, created_at, updated_at)
@@ -342,13 +354,18 @@ func (s *SQLiteStorage) CreateSession(session *Session) error {
 		time.Now(), time.Now())
 
 	if err != nil {
+		slog.Error("SQLite session creation failed", "error", err, "session_id", session.ID, "token_prefix", session.Token[:min(8, len(session.Token))])
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
+	slog.Debug("SQLite session created successfully", "session_id", session.ID, "token_prefix", session.Token[:min(8, len(session.Token))])
 	return nil
 }
 
 func (s *SQLiteStorage) GetSession(token string) (*Session, error) {
+	// Debug: Log what we're looking for
+	slog.Debug("SQLite looking for session", "token_prefix", token[:min(8, len(token))], "token_length", len(token))
+
 	query := `SELECT id, user_id, token, expires_at, device_fingerprint,
 			  user_agent, ip_address, location, is_active, last_activity,
 			  requires_two_factor, two_factor_verified, created_at, updated_at
@@ -364,12 +381,15 @@ func (s *SQLiteStorage) GetSession(token string) (*Session, error) {
 	)
 
 	if err == sql.ErrNoRows {
+		slog.Debug("SQLite session not found", "token_prefix", token[:min(8, len(token))])
 		return nil, ErrSessionNotFound
 	}
 	if err != nil {
+		slog.Error("SQLite session query failed", "error", err, "token_prefix", token[:min(8, len(token))])
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
+	slog.Debug("SQLite session found", "session_id", session.ID, "user_id", session.UserID, "stored_token_prefix", session.Token[:min(8, len(session.Token))])
 	return session, nil
 }
 

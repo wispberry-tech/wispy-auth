@@ -718,8 +718,10 @@ func (a *AuthService) logSecurityEvent(userID *uint, tenantID *uint, eventType, 
 		CreatedAt:   time.Now(),
 	}
 
-	// Log security event (ignore errors to avoid blocking auth flow)
-	a.storage.CreateSecurityEvent(event)
+	// Log security event (errors are logged but don't block auth flow)
+	if err := a.storage.CreateSecurityEvent(event); err != nil {
+		slog.Error("Failed to create security event", "error", err, "event_type", event.EventType, "user_id", event.UserID)
+	}
 }
 
 // Multi-tenant helper methods
@@ -1145,9 +1147,19 @@ func (a *AuthService) CreateSession(userID uint, ip, userAgent, location string)
 		UpdatedAt:         time.Now(),
 	}
 
+	// Debug: Log token before storage
+	slog.Debug("Creating session", "user_id", userID, "session_id", session.ID, "token_prefix", token[:min(8, len(token))])
+
 	if err := a.storage.CreateSession(session); err != nil {
 		slog.Error("Failed to create session", "error", err, "user_id", userID, "session_id", session.ID)
 		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+
+	// Debug: Verify session was stored correctly by retrieving it
+	if storedSession, err := a.storage.GetSession(token); err != nil {
+		slog.Error("CRITICAL: Session not found immediately after creation", "error", err, "user_id", userID, "token_prefix", token[:min(8, len(token))])
+	} else {
+		slog.Debug("Session verified after creation", "user_id", userID, "stored_token_prefix", storedSession.Token[:min(8, len(storedSession.Token))])
 	}
 
 	a.logSecurityEvent(&userID, nil, EventSessionCreated,
