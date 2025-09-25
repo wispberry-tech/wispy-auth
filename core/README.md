@@ -1,6 +1,5 @@
 # Wispy Auth Core
 
-A simplified, lightweight authentication library focused on essential features without the complexity of multi-tenancy, RBAC, or email services.
 
 ## Features
 
