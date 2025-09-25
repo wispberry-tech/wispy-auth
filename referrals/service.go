@@ -160,27 +160,9 @@ func (a *AuthService) ValidateAndUseReferralCode(code string, newUserID uint) (*
 		return nil, fmt.Errorf("user has already been referred")
 	}
 
-	// Create referral relationship
-	relationship := &ReferralRelationship{
-		ReferrerUserID: referralCode.GeneratedBy,
-		ReferredUserID: newUserID,
-		ReferralCodeID: referralCode.ID,
-	}
-
-	if err := a.storage.CreateReferralRelationship(relationship); err != nil {
-		return nil, fmt.Errorf("failed to create referral relationship: %w", err)
-	}
-
-	// Increment code usage
-	if err := a.storage.IncrementReferralCodeUse(referralCode.ID); err != nil {
-		return nil, fmt.Errorf("failed to increment code usage: %w", err)
-	}
-
-	// Check if code should be deactivated (reached max uses)
-	if referralCode.MaxUses > 0 && referralCode.CurrentUses+1 >= referralCode.MaxUses {
-		if err := a.storage.DeactivateReferralCode(referralCode.ID); err != nil {
-			slog.Error("Failed to deactivate referral code", "code_id", referralCode.ID, "error", err)
-		}
+	// Process referral code usage atomically (create relationship, increment usage, deactivate if needed)
+	if err := a.storage.ProcessReferralCodeUse(referralCode.ID, referralCode.GeneratedBy, newUserID, referralCode.MaxUses); err != nil {
+		return nil, fmt.Errorf("failed to process referral code usage: %w", err)
 	}
 
 	slog.Info("Referral code used successfully",

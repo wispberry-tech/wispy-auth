@@ -5,17 +5,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wispberry-tech/wispy-auth/core"
-	. "github.com/wispberry-tech/wispy-auth/core"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/wispberry-tech/wispy-auth/core"
+	. "github.com/wispberry-tech/wispy-auth/core"
 )
 
 // SQLiteStorage is a production-ready SQLite storage implementation for core auth
 type SQLiteStorage struct {
 	db *sql.DB
 }
-
 
 // NewSQLiteStorage creates a new SQLite storage instance
 func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
@@ -79,6 +78,13 @@ func (s *SQLiteStorage) CreateUser(user *User) error {
 	}
 
 	user.ID = uint(id)
+
+	// Retrieve the generated UUID
+	err = s.db.QueryRow("SELECT uuid FROM users WHERE id = ?", user.ID).Scan(&user.UUID)
+	if err != nil {
+		return fmt.Errorf("failed to get user UUID: %w", err)
+	}
+
 	return nil
 }
 
@@ -210,6 +216,77 @@ func (s *SQLiteStorage) UpdateUser(user *User) error {
 	return nil
 }
 
+// CreateUserWithSecurity creates a user and their security record in a transaction
+func (s *SQLiteStorage) CreateUserWithSecurity(user *User, security *UserSecurity) error {
+	// Begin transaction
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Rollback transaction if we exit with an error
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Create user first
+	userQuery := `INSERT INTO users (email, username, first_name, last_name, password_hash,
+				  provider, provider_id, email_verified, is_active, is_suspended,
+				  created_at, updated_at)
+				  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	result, err := tx.Exec(userQuery,
+		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash,
+		user.Provider, user.ProviderID, user.EmailVerified,
+		user.IsActive, user.IsSuspended,
+		time.Now(), time.Now())
+
+	if err != nil {
+		return fmt.Errorf("failed to create user in transaction: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get user ID: %w", err)
+	}
+
+	user.ID = uint(id)
+	security.UserID = user.ID
+
+	// Retrieve the generated UUID
+	err = tx.QueryRow("SELECT uuid FROM users WHERE id = ?", user.ID).Scan(&user.UUID)
+	if err != nil {
+		return fmt.Errorf("failed to get user UUID: %w", err)
+	}
+
+	// Create user security record
+	securityQuery := `INSERT INTO user_security (user_id, login_attempts, last_login_ip,
+					  password_changed_at, force_password_change, two_factor_enabled,
+					  concurrent_sessions, security_version, risk_score, suspicious_activity_count,
+					  created_at, updated_at)
+					  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	_, err = tx.Exec(securityQuery,
+		security.UserID, security.LoginAttempts, security.LastLoginIP,
+		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
+		security.ConcurrentSessions, security.SecurityVersion, security.RiskScore,
+		security.SuspiciousActivityCount, time.Now(), time.Now())
+
+	if err != nil {
+		return fmt.Errorf("failed to create user security in transaction: %w", err)
+	}
+
+	// Commit transaction
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
 // User Security operations
 func (s *SQLiteStorage) CreateUserSecurity(security *UserSecurity) error {
 	query := `INSERT INTO user_security (user_id, login_attempts, last_login_ip,
@@ -218,8 +295,15 @@ func (s *SQLiteStorage) CreateUserSecurity(security *UserSecurity) error {
 			  created_at, updated_at)
 			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+	// Convert string IP pointer to sql.NullString to handle NULL properly
+	var lastLoginIP sql.NullString
+	if security.LastLoginIP != nil {
+		lastLoginIP.String = *security.LastLoginIP
+		lastLoginIP.Valid = true
+	}
+
 	_, err := s.db.Exec(query,
-		security.UserID, security.LoginAttempts, security.LastLoginIP,
+		security.UserID, security.LoginAttempts, lastLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
 		security.ConcurrentSessions, security.SecurityVersion, security.RiskScore,
 		security.SuspiciousActivityCount, time.Now(), time.Now())
@@ -242,13 +326,17 @@ func (s *SQLiteStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
 			  created_at, updated_at
 			  FROM user_security WHERE user_id = ?`
 
+	// Use sql.NullString for nullable string fields
+	var lastLoginIP, lastFailedLoginIP, twoFactorSecret, twoFactorBackupCodes sql.NullString
+	var lastSessionToken, deviceFingerprint, knownDevices sql.NullString
+
 	err := s.db.QueryRow(query, userID).Scan(
 		&security.UserID, &security.LoginAttempts, &security.LockedUntil,
-		&security.LastLoginAt, &security.LastLoginIP, &security.LastFailedLoginAt,
-		&security.LastFailedLoginIP, &security.PasswordChangedAt, &security.ForcePasswordChange,
-		&security.TwoFactorEnabled, &security.TwoFactorSecret, &security.TwoFactorBackupCodes,
-		&security.TwoFactorVerifiedAt, &security.ConcurrentSessions, &security.LastSessionToken,
-		&security.DeviceFingerprint, &security.KnownDevices, &security.SecurityVersion,
+		&security.LastLoginAt, &lastLoginIP, &security.LastFailedLoginAt,
+		&lastFailedLoginIP, &security.PasswordChangedAt, &security.ForcePasswordChange,
+		&security.TwoFactorEnabled, &twoFactorSecret, &twoFactorBackupCodes,
+		&security.TwoFactorVerifiedAt, &security.ConcurrentSessions, &lastSessionToken,
+		&deviceFingerprint, &knownDevices, &security.SecurityVersion,
 		&security.RiskScore, &security.SuspiciousActivityCount, &security.CreatedAt, &security.UpdatedAt)
 
 	if err != nil {
@@ -256,6 +344,29 @@ func (s *SQLiteStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get user security: %w", err)
+	}
+
+	// Convert sql.NullString back to *string or string
+	if lastLoginIP.Valid {
+		security.LastLoginIP = &lastLoginIP.String
+	}
+	if lastFailedLoginIP.Valid {
+		security.LastFailedLoginIP = &lastFailedLoginIP.String
+	}
+	if twoFactorSecret.Valid {
+		security.TwoFactorSecret = twoFactorSecret.String
+	}
+	if twoFactorBackupCodes.Valid {
+		security.TwoFactorBackupCodes = twoFactorBackupCodes.String
+	}
+	if lastSessionToken.Valid {
+		security.LastSessionToken = lastSessionToken.String
+	}
+	if deviceFingerprint.Valid {
+		security.DeviceFingerprint = deviceFingerprint.String
+	}
+	if knownDevices.Valid {
+		security.KnownDevices = knownDevices.String
 	}
 
 	return security, nil
@@ -271,9 +382,20 @@ func (s *SQLiteStorage) UpdateUserSecurity(security *UserSecurity) error {
 			  risk_score = ?, suspicious_activity_count = ?, updated_at = ?
 			  WHERE user_id = ?`
 
+	// Convert string IP pointers to sql.NullString to handle NULL properly
+	var lastLoginIP, lastFailedLoginIP sql.NullString
+	if security.LastLoginIP != nil {
+		lastLoginIP.String = *security.LastLoginIP
+		lastLoginIP.Valid = true
+	}
+	if security.LastFailedLoginIP != nil {
+		lastFailedLoginIP.String = *security.LastFailedLoginIP
+		lastFailedLoginIP.Valid = true
+	}
+
 	_, err := s.db.Exec(query,
 		security.LoginAttempts, security.LockedUntil, security.LastLoginAt,
-		security.LastLoginIP, security.LastFailedLoginAt, security.LastFailedLoginIP,
+		lastLoginIP, security.LastFailedLoginAt, lastFailedLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
 		security.TwoFactorSecret, security.TwoFactorBackupCodes, security.TwoFactorVerifiedAt,
 		security.ConcurrentSessions, security.LastSessionToken, security.DeviceFingerprint,
@@ -318,10 +440,18 @@ func (s *SQLiteStorage) SetUserLocked(userID uint, until time.Time) error {
 	return nil
 }
 
-func (s *SQLiteStorage) UpdateLastLogin(userID uint, ipAddress string) error {
+func (s *SQLiteStorage) UpdateLastLogin(userID uint, ipAddress *string) error {
 	query := `UPDATE user_security SET last_login_at = ?, last_login_ip = ?, updated_at = ?
 			  WHERE user_id = ?`
-	_, err := s.db.Exec(query, time.Now(), ipAddress, time.Now(), userID)
+
+	// Convert string IP pointer to sql.NullString to handle NULL properly
+	var ip sql.NullString
+	if ipAddress != nil {
+		ip.String = *ipAddress
+		ip.Valid = true
+	}
+
+	_, err := s.db.Exec(query, time.Now(), ip, time.Now(), userID)
 	if err != nil {
 		return fmt.Errorf("failed to update last login: %w", err)
 	}
@@ -573,6 +703,53 @@ func (s *SQLiteStorage) GetSecurityEvents(userID *uint, eventType string, limit 
 
 func (s *SQLiteStorage) GetSecurityEventsByUser(userID uint, limit int, offset int) ([]*SecurityEvent, error) {
 	return s.GetSecurityEvents(&userID, "", limit, offset)
+}
+
+// HandleFailedLogin atomically increments login attempts and locks account if needed
+func (s *SQLiteStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) {
+	// Begin transaction
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Rollback transaction if we exit with an error
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Increment login attempts and get current count
+	var currentAttempts int
+	incrementQuery := `UPDATE user_security SET login_attempts = login_attempts + 1, updated_at = ?
+					   WHERE user_id = ? RETURNING login_attempts`
+
+	err = tx.QueryRow(incrementQuery, time.Now(), userID).Scan(&currentAttempts)
+	if err != nil {
+		return false, fmt.Errorf("failed to increment login attempts: %w", err)
+	}
+
+	// Check if we need to lock the account
+	wasLocked := false
+	if currentAttempts >= maxAttempts {
+		lockUntil := time.Now().Add(lockoutDuration)
+		lockQuery := `UPDATE user_security SET locked_until = ?, updated_at = ? WHERE user_id = ?`
+
+		_, err = tx.Exec(lockQuery, lockUntil, time.Now(), userID)
+		if err != nil {
+			return false, fmt.Errorf("failed to lock user account: %w", err)
+		}
+		wasLocked = true
+	}
+
+	// Commit transaction
+	err = tx.Commit()
+	if err != nil {
+		return false, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return wasLocked, nil
 }
 
 // Health check

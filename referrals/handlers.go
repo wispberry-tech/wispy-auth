@@ -15,22 +15,22 @@ import (
 
 // SignUpWithReferralRequest represents a signup request with referral code
 type SignUpWithReferralRequest struct {
-	Email       string `json:"email" validate:"required,email"`
-	Password    string `json:"password" validate:"required,min=8"`
-	Username    string `json:"username"`
-	FirstName   string `json:"first_name"`
-	LastName    string `json:"last_name"`
+	Email        string `json:"email" validate:"required,email"`
+	Password     string `json:"password" validate:"required,min=8"`
+	Username     string `json:"username"`
+	FirstName    string `json:"first_name"`
+	LastName     string `json:"last_name"`
 	ReferralCode string `json:"referral_code"` // Optional referral code
 }
 
 // SignUpWithReferralResponse represents the response for user registration with referral
 type SignUpWithReferralResponse struct {
-	Token        string        `json:"token"`                 // Session token for authentication
-	User         *core.User    `json:"user"`                  // Created user information
-	UsedReferral bool          `json:"used_referral"`         // Whether a referral code was used
+	Token        string        `json:"token"`                   // Session token for authentication
+	User         *core.User    `json:"user"`                    // Created user information
+	UsedReferral bool          `json:"used_referral"`           // Whether a referral code was used
 	ReferralCode *ReferralCode `json:"referral_code,omitempty"` // Details of used referral code
-	StatusCode   int           `json:"-"`                     // HTTP status code (not serialized)
-	Error        string        `json:"error,omitempty"`       // Error message if any
+	StatusCode   int           `json:"-"`                       // HTTP status code (not serialized)
+	Error        string        `json:"error,omitempty"`         // Error message if any
 }
 
 // GenerateReferralCodeRequest represents a request to generate a referral code
@@ -42,37 +42,37 @@ type GenerateReferralCodeRequest struct {
 
 // GenerateReferralCodeResponse represents the response for code generation
 type GenerateReferralCodeResponse struct {
-	ReferralCode *ReferralCode `json:"referral_code"`       // Generated referral code
-	StatusCode   int           `json:"-"`                   // HTTP status code
-	Error        string        `json:"error,omitempty"`     // Error message if any
+	ReferralCode *ReferralCode `json:"referral_code"`   // Generated referral code
+	StatusCode   int           `json:"-"`               // HTTP status code
+	Error        string        `json:"error,omitempty"` // Error message if any
 }
 
 // GetReferralCodesResponse represents the response for getting user's referral codes
 type GetReferralCodesResponse struct {
-	ReferralCodes []*ReferralCode `json:"referral_codes"`      // User's referral codes
-	StatusCode    int             `json:"-"`                   // HTTP status code
-	Error         string          `json:"error,omitempty"`     // Error message if any
+	ReferralCodes []*ReferralCode `json:"referral_codes"`  // User's referral codes
+	StatusCode    int             `json:"-"`               // HTTP status code
+	Error         string          `json:"error,omitempty"` // Error message if any
 }
 
 // GetReferralStatsResponse represents the response for getting referral statistics
 type GetReferralStatsResponse struct {
-	Stats      *ReferralStats `json:"stats"`               // Referral statistics
-	StatusCode int            `json:"-"`                   // HTTP status code
-	Error      string         `json:"error,omitempty"`     // Error message if any
+	Stats      *ReferralStats `json:"stats"`           // Referral statistics
+	StatusCode int            `json:"-"`               // HTTP status code
+	Error      string         `json:"error,omitempty"` // Error message if any
 }
 
 // GetReferralRelationshipsResponse represents the response for getting referral relationships
 type GetReferralRelationshipsResponse struct {
-	Relationships []*ReferralRelationship `json:"relationships"`       // Referral relationships
-	StatusCode    int                     `json:"-"`                   // HTTP status code
-	Error         string                  `json:"error,omitempty"`     // Error message if any
+	Relationships []*ReferralRelationship `json:"relationships"`   // Referral relationships
+	StatusCode    int                     `json:"-"`               // HTTP status code
+	Error         string                  `json:"error,omitempty"` // Error message if any
 }
 
 // GetTopReferrersResponse represents the response for getting top referrers
 type GetTopReferrersResponse struct {
-	TopReferrers []*ReferralStats `json:"top_referrers"`       // Top referrer statistics
-	StatusCode   int              `json:"-"`                   // HTTP status code
-	Error        string           `json:"error,omitempty"`     // Error message if any
+	TopReferrers []*ReferralStats `json:"top_referrers"`   // Top referrer statistics
+	StatusCode   int              `json:"-"`               // HTTP status code
+	Error        string           `json:"error,omitempty"` // Error message if any
 }
 
 // DeactivateReferralCodeResponse represents the response for deactivating a referral code
@@ -189,27 +189,19 @@ func (a *AuthService) SignUpWithReferralHandler(r *http.Request) SignUpWithRefer
 		IsSuspended:   false,
 	}
 
-	if err := a.storage.CreateUser(user); err != nil {
-		slog.Error("Failed to create user", "error", err)
-		return SignUpWithReferralResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to create user",
-		}
-	}
-
 	// Create user security record
 	userSecurity := &core.UserSecurity{
-		UserID:              user.ID,
-		LoginAttempts:       0,
-		TwoFactorEnabled:    false,
-		ConcurrentSessions:  0,
-		SecurityVersion:     1,
-		RiskScore:          0,
+		LoginAttempts:           0,
+		TwoFactorEnabled:        false,
+		ConcurrentSessions:      0,
+		SecurityVersion:         1,
+		RiskScore:               0,
 		SuspiciousActivityCount: 0,
 	}
 
-	if err := a.storage.CreateUserSecurity(userSecurity); err != nil {
-		slog.Error("Failed to create user security", "error", err)
+	// Create user and security record atomically in a transaction
+	if err := a.storage.CreateUserWithSecurity(user, userSecurity); err != nil {
+		slog.Error("Failed to create user with security", "error", err)
 		return SignUpWithReferralResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Failed to create user",
@@ -452,4 +444,3 @@ func (a *AuthService) DeactivateReferralCodeHandler(r *http.Request, codeID stri
 		Message:    "Referral code deactivated successfully",
 	}
 }
-

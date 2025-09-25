@@ -7,16 +7,15 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/wispberry-tech/wispy-auth/core"
 	. "github.com/wispberry-tech/wispy-auth/core"
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // PostgresStorage implements Storage interface for PostgreSQL databases
 type PostgresStorage struct {
 	db *sql.DB
 }
-
 
 // NewPostgresStorage creates a new PostgreSQL storage instance
 func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
@@ -196,6 +195,120 @@ func (p *PostgresStorage) UpdateUser(user *User) error {
 	return nil
 }
 
+// CreateUserWithSecurity creates a user and their security record in a transaction
+func (p *PostgresStorage) CreateUserWithSecurity(user *User, security *UserSecurity) error {
+	// Begin transaction
+	tx, err := p.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Rollback transaction if we exit with an error
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Create user first
+	userQuery := `INSERT INTO users (email, username, first_name, last_name, password_hash,
+				  provider, provider_id, email_verified, is_active, is_suspended,
+				  created_at, updated_at)
+				  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, uuid`
+
+	err = tx.QueryRow(userQuery,
+		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash,
+		user.Provider, user.ProviderID, user.EmailVerified,
+		user.IsActive, user.IsSuspended,
+		time.Now(), time.Now()).Scan(&user.ID, &user.UUID)
+
+	if err != nil {
+		return fmt.Errorf("failed to create user in transaction: %w", err)
+	}
+
+	// Set the user ID in security record
+	security.UserID = user.ID
+
+	// Create user security record
+	securityQuery := `INSERT INTO user_security (user_id, login_attempts, last_login_ip,
+					  password_changed_at, force_password_change, two_factor_enabled,
+					  concurrent_sessions, security_version, risk_score, suspicious_activity_count,
+					  created_at, updated_at)
+					  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+
+	// Convert string IP to sql.NullString to handle NULL properly
+	var lastLoginIP sql.NullString
+	if security.LastLoginIP != nil {
+		lastLoginIP.String = *security.LastLoginIP
+		lastLoginIP.Valid = true
+	}
+
+	_, err = tx.Exec(securityQuery,
+		security.UserID, security.LoginAttempts, lastLoginIP,
+		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
+		security.ConcurrentSessions, security.SecurityVersion, security.RiskScore,
+		security.SuspiciousActivityCount, time.Now(), time.Now())
+
+	if err != nil {
+		return fmt.Errorf("failed to create user security in transaction: %w", err)
+	}
+
+	// Commit transaction
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// HandleFailedLogin atomically increments login attempts and locks account if needed
+func (p *PostgresStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) {
+	// Begin transaction
+	tx, err := p.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Rollback transaction if we exit with an error
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Increment login attempts and get current count
+	var currentAttempts int
+	incrementQuery := `UPDATE user_security SET login_attempts = login_attempts + 1, updated_at = $1
+					   WHERE user_id = $2 RETURNING login_attempts`
+
+	err = tx.QueryRow(incrementQuery, time.Now(), userID).Scan(&currentAttempts)
+	if err != nil {
+		return false, fmt.Errorf("failed to increment login attempts: %w", err)
+	}
+
+	// Check if we need to lock the account
+	wasLocked := false
+	if currentAttempts >= maxAttempts {
+		lockUntil := time.Now().Add(lockoutDuration)
+		lockQuery := `UPDATE user_security SET locked_until = $1, updated_at = $2 WHERE user_id = $3`
+
+		_, err = tx.Exec(lockQuery, lockUntil, time.Now(), userID)
+		if err != nil {
+			return false, fmt.Errorf("failed to lock user account: %w", err)
+		}
+		wasLocked = true
+	}
+
+	// Commit transaction
+	err = tx.Commit()
+	if err != nil {
+		return false, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return wasLocked, nil
+}
+
 // User Security operations
 func (p *PostgresStorage) CreateUserSecurity(security *UserSecurity) error {
 	query := `INSERT INTO user_security (user_id, login_attempts, last_login_ip,
@@ -204,8 +317,15 @@ func (p *PostgresStorage) CreateUserSecurity(security *UserSecurity) error {
 			  created_at, updated_at)
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 
+	// Convert string IP to sql.NullString to handle NULL properly
+	var lastLoginIP sql.NullString
+	if security.LastLoginIP != nil {
+		lastLoginIP.String = *security.LastLoginIP
+		lastLoginIP.Valid = true
+	}
+
 	_, err := p.db.Exec(query,
-		security.UserID, security.LoginAttempts, security.LastLoginIP,
+		security.UserID, security.LoginAttempts, lastLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
 		security.ConcurrentSessions, security.SecurityVersion, security.RiskScore,
 		security.SuspiciousActivityCount, time.Now(), time.Now())
@@ -228,10 +348,13 @@ func (p *PostgresStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
 			  created_at, updated_at
 			  FROM user_security WHERE user_id = $1`
 
+	// Use sql.NullString for IP addresses to handle NULL values
+	var lastLoginIP, lastFailedLoginIP sql.NullString
+
 	err := p.db.QueryRow(query, userID).Scan(
 		&security.UserID, &security.LoginAttempts, &security.LockedUntil,
-		&security.LastLoginAt, &security.LastLoginIP, &security.LastFailedLoginAt,
-		&security.LastFailedLoginIP, &security.PasswordChangedAt, &security.ForcePasswordChange,
+		&security.LastLoginAt, &lastLoginIP, &security.LastFailedLoginAt,
+		&lastFailedLoginIP, &security.PasswordChangedAt, &security.ForcePasswordChange,
 		&security.TwoFactorEnabled, &security.TwoFactorSecret, &security.TwoFactorBackupCodes,
 		&security.TwoFactorVerifiedAt, &security.ConcurrentSessions, &security.LastSessionToken,
 		&security.DeviceFingerprint, &security.KnownDevices, &security.SecurityVersion,
@@ -242,6 +365,14 @@ func (p *PostgresStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get user security: %w", err)
+	}
+
+	// Convert sql.NullString back to *string
+	if lastLoginIP.Valid {
+		security.LastLoginIP = &lastLoginIP.String
+	}
+	if lastFailedLoginIP.Valid {
+		security.LastFailedLoginIP = &lastFailedLoginIP.String
 	}
 
 	return security, nil
@@ -257,9 +388,20 @@ func (p *PostgresStorage) UpdateUserSecurity(security *UserSecurity) error {
 			  risk_score = $18, suspicious_activity_count = $19, updated_at = $20
 			  WHERE user_id = $21`
 
+	// Convert string IP pointers to sql.NullString to handle NULL properly
+	var lastLoginIP, lastFailedLoginIP sql.NullString
+	if security.LastLoginIP != nil {
+		lastLoginIP.String = *security.LastLoginIP
+		lastLoginIP.Valid = true
+	}
+	if security.LastFailedLoginIP != nil {
+		lastFailedLoginIP.String = *security.LastFailedLoginIP
+		lastFailedLoginIP.Valid = true
+	}
+
 	_, err := p.db.Exec(query,
 		security.LoginAttempts, security.LockedUntil, security.LastLoginAt,
-		security.LastLoginIP, security.LastFailedLoginAt, security.LastFailedLoginIP,
+		lastLoginIP, security.LastFailedLoginAt, lastFailedLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
 		security.TwoFactorSecret, security.TwoFactorBackupCodes, security.TwoFactorVerifiedAt,
 		security.ConcurrentSessions, security.LastSessionToken, security.DeviceFingerprint,
@@ -304,10 +446,18 @@ func (p *PostgresStorage) SetUserLocked(userID uint, until time.Time) error {
 	return nil
 }
 
-func (p *PostgresStorage) UpdateLastLogin(userID uint, ipAddress string) error {
+func (p *PostgresStorage) UpdateLastLogin(userID uint, ipAddress *string) error {
 	query := `UPDATE user_security SET last_login_at = $1, last_login_ip = $2, updated_at = $3
 			  WHERE user_id = $4`
-	_, err := p.db.Exec(query, time.Now(), ipAddress, time.Now(), userID)
+
+	// Convert string IP pointer to sql.NullString to handle NULL properly
+	var ip sql.NullString
+	if ipAddress != nil {
+		ip.String = *ipAddress
+		ip.Valid = true
+	}
+
+	_, err := p.db.Exec(query, time.Now(), ip, time.Now(), userID)
 	if err != nil {
 		return fmt.Errorf("failed to update last login: %w", err)
 	}
@@ -320,9 +470,16 @@ func (p *PostgresStorage) CreateSession(session *Session) error {
 			  user_agent, ip_address, is_active, last_accessed_at, created_at)
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`
 
+	// Convert string IP to sql.NullString to handle NULL properly
+	var ipAddress sql.NullString
+	if session.IPAddress != "" {
+		ipAddress.String = session.IPAddress
+		ipAddress.Valid = true
+	}
+
 	err := p.db.QueryRow(query,
 		session.Token, session.UserID, session.ExpiresAt, session.DeviceFingerprint,
-		session.UserAgent, session.IPAddress, session.IsActive, session.LastAccessedAt,
+		session.UserAgent, ipAddress, session.IsActive, session.LastAccessedAt,
 		time.Now()).Scan(&session.ID)
 
 	if err != nil {
@@ -338,9 +495,12 @@ func (p *PostgresStorage) GetSession(token string) (*Session, error) {
 			  user_agent, ip_address, is_active, last_accessed_at, created_at
 			  FROM sessions WHERE token = $1 AND is_active = true`
 
+	// Use sql.NullString for IP address to handle NULL values
+	var ipAddress sql.NullString
+
 	err := p.db.QueryRow(query, token).Scan(
 		&session.ID, &session.UserID, &session.Token, &session.ExpiresAt,
-		&session.DeviceFingerprint, &session.UserAgent, &session.IPAddress,
+		&session.DeviceFingerprint, &session.UserAgent, &ipAddress,
 		&session.IsActive, &session.LastAccessedAt, &session.CreatedAt)
 
 	if err != nil {
@@ -348,6 +508,11 @@ func (p *PostgresStorage) GetSession(token string) (*Session, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	// Convert sql.NullString back to string
+	if ipAddress.Valid {
+		session.IPAddress = ipAddress.String
 	}
 
 	return session, nil
@@ -367,14 +532,23 @@ func (p *PostgresStorage) GetUserSessions(userID uint) ([]*Session, error) {
 	var sessions []*Session
 	for rows.Next() {
 		session := &Session{}
+		// Use sql.NullString for IP address to handle NULL values
+		var ipAddress sql.NullString
+
 		err := rows.Scan(
 			&session.ID, &session.UserID, &session.Token, &session.ExpiresAt,
-			&session.DeviceFingerprint, &session.UserAgent, &session.IPAddress,
+			&session.DeviceFingerprint, &session.UserAgent, &ipAddress,
 			&session.IsActive, &session.LastAccessedAt, &session.CreatedAt)
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan session: %w", err)
 		}
+
+		// Convert sql.NullString back to string
+		if ipAddress.Valid {
+			session.IPAddress = ipAddress.String
+		}
+
 		sessions = append(sessions, session)
 	}
 
@@ -386,9 +560,16 @@ func (p *PostgresStorage) UpdateSession(session *Session) error {
 			  user_agent = $3, ip_address = $4, is_active = $5, last_accessed_at = $6
 			  WHERE id = $7`
 
+	// Convert string IP to sql.NullString to handle NULL properly
+	var ipAddress sql.NullString
+	if session.IPAddress != "" {
+		ipAddress.String = session.IPAddress
+		ipAddress.Valid = true
+	}
+
 	_, err := p.db.Exec(query,
 		session.ExpiresAt, session.DeviceFingerprint, session.UserAgent,
-		session.IPAddress, session.IsActive, session.LastAccessedAt, session.ID)
+		ipAddress, session.IsActive, session.LastAccessedAt, session.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update session: %w", err)
@@ -485,8 +666,15 @@ func (p *PostgresStorage) CreateSecurityEvent(event *SecurityEvent) error {
 			  success, metadata, created_at)
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`
 
+	// Convert string IP to sql.NullString to handle NULL properly
+	var ipAddress sql.NullString
+	if event.IPAddress != "" {
+		ipAddress.String = event.IPAddress
+		ipAddress.Valid = true
+	}
+
 	err := p.db.QueryRow(query,
-		event.UserID, event.EventType, event.Description, event.IPAddress,
+		event.UserID, event.EventType, event.Description, ipAddress,
 		event.UserAgent, event.DeviceFingerprint, event.Severity,
 		event.Success, event.Metadata, time.Now()).Scan(&event.ID)
 
@@ -533,14 +721,23 @@ func (p *PostgresStorage) GetSecurityEvents(userID *uint, eventType string, limi
 	var events []*SecurityEvent
 	for rows.Next() {
 		event := &SecurityEvent{}
+		// Use sql.NullString for IP address to handle NULL values
+		var ipAddress sql.NullString
+
 		err := rows.Scan(
 			&event.ID, &event.UserID, &event.EventType, &event.Description,
-			&event.IPAddress, &event.UserAgent, &event.DeviceFingerprint,
+			&ipAddress, &event.UserAgent, &event.DeviceFingerprint,
 			&event.Severity, &event.Success, &event.Metadata, &event.CreatedAt)
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan security event: %w", err)
 		}
+
+		// Convert sql.NullString back to string
+		if ipAddress.Valid {
+			event.IPAddress = ipAddress.String
+		}
+
 		events = append(events, event)
 	}
 

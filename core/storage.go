@@ -35,30 +35,30 @@ type UserSecurity struct {
 	LoginAttempts     int        `json:"login_attempts"`
 	LockedUntil       *time.Time `json:"locked_until,omitempty"`
 	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
-	LastLoginIP       string     `json:"last_login_ip,omitempty"`
+	LastLoginIP       *string    `json:"last_login_ip,omitempty"`
 	LastFailedLoginAt *time.Time `json:"last_failed_login_at,omitempty"`
-	LastFailedLoginIP string     `json:"last_failed_login_ip,omitempty"`
+	LastFailedLoginIP *string    `json:"last_failed_login_ip,omitempty"`
 
 	// Password Security
-	PasswordChangedAt     *time.Time `json:"password_changed_at,omitempty"`
-	ForcePasswordChange   bool       `json:"force_password_change"`
+	PasswordChangedAt   *time.Time `json:"password_changed_at,omitempty"`
+	ForcePasswordChange bool       `json:"force_password_change"`
 
 	// 2FA Settings
-	TwoFactorEnabled    bool   `json:"two_factor_enabled"`
-	TwoFactorSecret     string `json:"-"` // Hidden from JSON
-	TwoFactorBackupCodes string `json:"-"` // Hidden from JSON
-	TwoFactorVerifiedAt *time.Time `json:"two_factor_verified_at,omitempty"`
+	TwoFactorEnabled     bool       `json:"two_factor_enabled"`
+	TwoFactorSecret      string     `json:"-"` // Hidden from JSON
+	TwoFactorBackupCodes string     `json:"-"` // Hidden from JSON
+	TwoFactorVerifiedAt  *time.Time `json:"two_factor_verified_at,omitempty"`
 
 	// Session Security
-	ConcurrentSessions  int    `json:"concurrent_sessions"`
-	LastSessionToken    string `json:"last_session_token"`
+	ConcurrentSessions int    `json:"concurrent_sessions"`
+	LastSessionToken   string `json:"last_session_token"`
 
 	// Device Tracking
 	DeviceFingerprint string `json:"device_fingerprint"`
 	KnownDevices      string `json:"known_devices"` // JSON string
 
 	// Security Metadata
-	SecurityVersion          int `json:"security_version"`
+	SecurityVersion         int `json:"security_version"`
 	RiskScore               int `json:"risk_score"`
 	SuspiciousActivityCount int `json:"suspicious_activity_count"`
 
@@ -79,7 +79,7 @@ type Session struct {
 	IPAddress         string `json:"ip_address"`
 
 	// Status
-	IsActive      bool      `json:"is_active"`
+	IsActive       bool      `json:"is_active"`
 	LastAccessedAt time.Time `json:"last_accessed_at"`
 
 	CreatedAt time.Time `json:"created_at"`
@@ -87,8 +87,8 @@ type Session struct {
 
 // SecurityEvent represents security-related events for audit logging
 type SecurityEvent struct {
-	ID       uint   `json:"id"`
-	UserID   *uint  `json:"user_id,omitempty"`
+	ID     uint  `json:"id"`
+	UserID *uint `json:"user_id,omitempty"`
 
 	// Event Details
 	EventType   string `json:"event_type"`
@@ -138,7 +138,11 @@ type Storage interface {
 	IncrementLoginAttempts(userID uint) error
 	ResetLoginAttempts(userID uint) error
 	SetUserLocked(userID uint, until time.Time) error
-	UpdateLastLogin(userID uint, ipAddress string) error
+	UpdateLastLogin(userID uint, ipAddress *string) error
+
+	// Transactional operations for complex multi-table operations
+	CreateUserWithSecurity(user *User, security *UserSecurity) error
+	HandleFailedLogin(userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) // returns (wasLocked, error)
 
 	// Session operations
 	CreateSession(session *Session) error

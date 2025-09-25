@@ -111,6 +111,7 @@ func DefaultSecurityConfig() SecurityConfig {
 	}
 }
 
+
 // OAuthProviderConfig defines the configuration for an OAuth2 provider.
 type OAuthProviderConfig struct {
 	ClientID     string   `json:"client_id"`     // OAuth2 client ID from provider

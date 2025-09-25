@@ -33,4 +33,7 @@ type Storage interface {
 	ValidateReferralCode(code string) (*ReferralCode, error)
 	CheckCodeAvailability(code string) (bool, error)
 	CountActiveReferralCodes(userID uint) (int, error)
+
+	// Transactional operations
+	ProcessReferralCodeUse(codeID, referrerUserID, referredUserID uint, maxUses int) error
 }

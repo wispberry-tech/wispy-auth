@@ -22,27 +22,27 @@ type SignUpRequest struct {
 
 // SignUpResponse represents the response for user registration
 type SignUpResponse struct {
-	Token      string `json:"token"`                // Session token for authentication
-	User       *User  `json:"user"`                 // Created user information
-	StatusCode int    `json:"-"`                    // HTTP status code (not serialized)
-	Error      string `json:"error,omitempty"`      // Error message if any
+	Token      string `json:"token"`           // Session token for authentication
+	User       *User  `json:"user"`            // Created user information
+	StatusCode int    `json:"-"`               // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"` // Error message if any
 }
 
 // SignInRequest represents a user login request
 type SignInRequest struct {
-	Email    string `json:"email" validate:"required,email"`    // User's email address
-	Password string `json:"password" validate:"required"`       // User's password (plaintext)
+	Email    string `json:"email" validate:"required,email"` // User's email address
+	Password string `json:"password" validate:"required"`    // User's password (plaintext)
 }
 
 // SignInResponse represents the response for user authentication
 type SignInResponse struct {
-	Token            string    `json:"token"`               // Session token for authentication
-	User             *User     `json:"user"`                // Authenticated user information
-	SessionID        string    `json:"session_id"`          // Session identifier
-	Requires2FA      bool      `json:"requires_2fa"`        // Whether two-factor authentication is required
-	SessionExpiresAt time.Time `json:"session_expires_at"`  // When the session expires
-	StatusCode       int       `json:"-"`                   // HTTP status code (not serialized)
-	Error            string    `json:"error,omitempty"`     // Error message if any
+	Token            string    `json:"token"`              // Session token for authentication
+	User             *User     `json:"user"`               // Authenticated user information
+	SessionID        string    `json:"session_id"`         // Session identifier
+	Requires2FA      bool      `json:"requires_2fa"`       // Whether two-factor authentication is required
+	SessionExpiresAt time.Time `json:"session_expires_at"` // When the session expires
+	StatusCode       int       `json:"-"`                  // HTTP status code (not serialized)
+	Error            string    `json:"error,omitempty"`    // Error message if any
 }
 
 // ValidateResponse represents the response for token validation
@@ -146,27 +146,19 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 		IsSuspended:   false,
 	}
 
-	if err := a.storage.CreateUser(user); err != nil {
-		slog.Error("Failed to create user", "error", err)
-		return SignUpResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to create user",
-		}
-	}
-
 	// Create user security record
 	userSecurity := &UserSecurity{
-		UserID:              user.ID,
-		LoginAttempts:       0,
-		TwoFactorEnabled:    false,
-		ConcurrentSessions:  0,
-		SecurityVersion:     1,
-		RiskScore:          0,
+		LoginAttempts:           0,
+		TwoFactorEnabled:        false,
+		ConcurrentSessions:      0,
+		SecurityVersion:         1,
+		RiskScore:               0,
 		SuspiciousActivityCount: 0,
 	}
 
-	if err := a.storage.CreateUserSecurity(userSecurity); err != nil {
-		slog.Error("Failed to create user security", "error", err)
+	// Create user and security record atomically in a transaction
+	if err := a.storage.CreateUserWithSecurity(user, userSecurity); err != nil {
+		slog.Error("Failed to create user with security", "error", err)
 		return SignUpResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Failed to create user",
@@ -297,19 +289,12 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 	if !checkPasswordHash(req.Password, user.PasswordHash) {
 		slog.Debug("Invalid password", "user_id", user.ID)
 
-		// Increment login attempts
-		if err := a.storage.IncrementLoginAttempts(user.ID); err != nil {
-			slog.Error("Failed to increment login attempts", "error", err)
-		}
-
-		// Check if we should lock the account
-		if userSecurity != nil && userSecurity.LoginAttempts+1 >= a.securityConfig.MaxLoginAttempts {
-			lockUntil := time.Now().Add(a.securityConfig.LockoutDuration)
-			if err := a.storage.SetUserLocked(user.ID, lockUntil); err != nil {
-				slog.Error("Failed to lock user account", "error", err)
-			} else {
-				a.logSecurityEvent(&user.ID, "account_locked", "Account locked due to too many failed login attempts", ip, userAgent, true)
-			}
+		// Handle failed login (increment attempts and potentially lock account atomically)
+		wasLocked, err := a.storage.HandleFailedLogin(user.ID, a.securityConfig.MaxLoginAttempts, a.securityConfig.LockoutDuration)
+		if err != nil {
+			slog.Error("Failed to handle failed login", "error", err)
+		} else if wasLocked {
+			a.logSecurityEvent(&user.ID, "account_locked", "Account locked due to too many failed login attempts", ip, userAgent, true)
 		}
 
 		a.logSecurityEvent(&user.ID, "login_failed", "Invalid password provided", ip, userAgent, false)
@@ -325,7 +310,7 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 	}
 
 	// Update last login
-	if err := a.storage.UpdateLastLogin(user.ID, ip); err != nil {
+	if err := a.storage.UpdateLastLogin(user.ID, &ip); err != nil {
 		slog.Error("Failed to update last login", "error", err)
 	}
 

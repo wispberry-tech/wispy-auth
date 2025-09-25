@@ -225,27 +225,19 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 				IsSuspended:   false,
 			}
 
-			if err := a.storage.CreateUser(user); err != nil {
-				slog.Error("Failed to create OAuth user", "error", err)
-				return OAuthResponse{
-					StatusCode: http.StatusInternalServerError,
-					Error:      "Failed to create user account",
-				}
-			}
-
 			// Create user security record
 			userSecurity := &UserSecurity{
-				UserID:                  user.ID,
 				LoginAttempts:           0,
 				TwoFactorEnabled:        false,
 				ConcurrentSessions:      0,
 				SecurityVersion:         1,
-				RiskScore:              0,
+				RiskScore:               0,
 				SuspiciousActivityCount: 0,
 			}
 
-			if err := a.storage.CreateUserSecurity(userSecurity); err != nil {
-				slog.Error("Failed to create user security", "error", err)
+			// Create user and security record atomically in a transaction
+			if err := a.storage.CreateUserWithSecurity(user, userSecurity); err != nil {
+				slog.Error("Failed to create OAuth user with security", "error", err)
 				return OAuthResponse{
 					StatusCode: http.StatusInternalServerError,
 					Error:      "Failed to create user account",
@@ -280,7 +272,7 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 	}
 
 	// Update last login
-	if err := a.storage.UpdateLastLogin(user.ID, ip); err != nil {
+	if err := a.storage.UpdateLastLogin(user.ID, &ip); err != nil {
 		slog.Error("Failed to update last login", "error", err)
 	}
 

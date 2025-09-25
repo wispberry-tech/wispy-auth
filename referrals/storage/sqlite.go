@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wispberry-tech/wispy-auth/core/storage"
-	"github.com/wispberry-tech/wispy-auth/referrals"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/wispberry-tech/wispy-auth/core/storage"
+	"github.com/wispberry-tech/wispy-auth/referrals"
 )
 
 // SQLiteStorage wraps core SQLite storage and adds referral functionality
@@ -83,7 +83,6 @@ func NewInMemorySQLiteStorage() (*SQLiteStorage, error) {
 		db:            db,
 	}, nil
 }
-
 
 // Referral Code operations
 
@@ -386,6 +385,56 @@ func (s *SQLiteStorage) CountActiveReferralCodes(userID uint) (int, error) {
 		return 0, fmt.Errorf("failed to count active referral codes: %w", err)
 	}
 	return count, nil
+}
+
+// ProcessReferralCodeUse atomically processes referral code usage
+func (s *SQLiteStorage) ProcessReferralCodeUse(codeID, referrerUserID, referredUserID uint, maxUses int) error {
+	// Begin transaction
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Rollback transaction if we exit with an error
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Create referral relationship
+	relationshipQuery := `INSERT INTO referral_relationships (referrer_user_id, referred_user_id, referral_code_id, created_at)
+						  VALUES (?, ?, ?, ?)`
+	_, err = tx.Exec(relationshipQuery, referrerUserID, referredUserID, codeID, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to create referral relationship: %w", err)
+	}
+
+	// Increment code usage and get current count
+	var currentUses int
+	incrementQuery := `UPDATE referral_codes SET current_uses = current_uses + 1, updated_at = ?
+					   WHERE id = ? RETURNING current_uses`
+	err = tx.QueryRow(incrementQuery, time.Now(), codeID).Scan(&currentUses)
+	if err != nil {
+		return fmt.Errorf("failed to increment referral code usage: %w", err)
+	}
+
+	// Check if code should be deactivated (reached max uses)
+	if maxUses > 0 && currentUses >= maxUses {
+		deactivateQuery := `UPDATE referral_codes SET is_active = FALSE, updated_at = ? WHERE id = ?`
+		_, err = tx.Exec(deactivateQuery, time.Now(), codeID)
+		if err != nil {
+			return fmt.Errorf("failed to deactivate referral code: %w", err)
+		}
+	}
+
+	// Commit transaction
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 // Close closes the storage connection
