@@ -1,20 +1,17 @@
 package referrals
 
 import (
-	"context"
 	"database/sql"
 	"embed"
 	"fmt"
 	"log/slog"
 	"strings"
-
-	"github.com/wispberry-tech/wispy-auth/core"
 )
 
 //go:embed sql/*.sql
 var schemaFiles embed.FS
 
-// ReferralSchemaManager handles automatic table creation for referral tables
+// ReferralSchemaManager handles schema validation for referral tables
 type ReferralSchemaManager struct {
 	db       *sql.DB
 	dbType   string // "sqlite" or "postgres"
@@ -26,7 +23,7 @@ func NewReferralSchemaManager(db *sql.DB, dbType string) *ReferralSchemaManager 
 	return &ReferralSchemaManager{
 		db:       db,
 		dbType:   dbType,
-		logLevel: slog.LevelWarn, // Default to warning level for missing tables
+		logLevel: slog.LevelWarn,
 	}
 }
 
@@ -35,71 +32,30 @@ func (rsm *ReferralSchemaManager) SetLogLevel(level slog.Level) {
 	rsm.logLevel = level
 }
 
-// EnsureReferralSchema ensures all referral tables exist, creating missing ones
-// This should be called after the core schema is already in place
-func (rsm *ReferralSchemaManager) EnsureReferralSchema() error {
-	// Check if core tables exist first to avoid redundant operations
-	// The core storage should have already ensured the core schema
-	coreTablesExist, err := rsm.tableExists("users")
+// ExecuteReferralSchema executes the referral schema SQL to create tables
+func (rsm *ReferralSchemaManager) ExecuteReferralSchema() error {
+	var schemaFile string
+
+	switch rsm.dbType {
+	case "sqlite":
+		schemaFile = "sql/sqlite_referrals.sql"
+	case "postgres":
+		schemaFile = "sql/postgres_referrals.sql"
+	default:
+		return fmt.Errorf("unsupported database type: %s", rsm.dbType)
+	}
+
+	schemaSQL, err := schemaFiles.ReadFile(schemaFile)
 	if err != nil {
-		return fmt.Errorf("failed to check if core tables exist: %w", err)
+		return fmt.Errorf("failed to read referral schema file %s: %w", schemaFile, err)
 	}
 
-	// Only ensure core schema if core tables don't exist
-	// This prevents redundant schema operations that can cause statement conflicts
-	if !coreTablesExist {
-		coreManager := core.NewSchemaManager(rsm.db, rsm.dbType)
-		if err := coreManager.EnsureCoreSchema(); err != nil {
-			return fmt.Errorf("failed to ensure core schema before referral tables: %w", err)
-		}
-	}
-
-	requiredTables := []string{
-		"referral_codes",
-		"referral_relationships",
-	}
-
-	missingTables, err := rsm.checkMissingTables(requiredTables)
-	if err != nil {
-		return fmt.Errorf("failed to check missing referral tables: %w", err)
-	}
-
-	if len(missingTables) > 0 {
-		slog.Log(context.TODO(), rsm.logLevel, "Missing referral tables detected",
-			"missing_tables", missingTables,
-			"action", "auto_creating",
-			"database_type", rsm.dbType)
-
-		if err := rsm.createReferralSchema(); err != nil {
-			return fmt.Errorf("failed to create referral schema: %w", err)
-		}
-
-		slog.Info("Successfully created missing referral tables",
-			"created_tables", missingTables,
-			"database_type", rsm.dbType)
-	} else {
-		slog.Debug("All referral tables exist", "database_type", rsm.dbType)
+	// Execute the schema SQL
+	if _, err := rsm.db.Exec(string(schemaSQL)); err != nil {
+		return fmt.Errorf("failed to execute referral schema: %w", err)
 	}
 
 	return nil
-}
-
-// checkMissingTables checks which tables from the required list are missing
-func (rsm *ReferralSchemaManager) checkMissingTables(requiredTables []string) ([]string, error) {
-	var missingTables []string
-
-	for _, tableName := range requiredTables {
-		exists, err := rsm.tableExists(tableName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check if table %s exists: %w", tableName, err)
-		}
-
-		if !exists {
-			missingTables = append(missingTables, tableName)
-		}
-	}
-
-	return missingTables, nil
 }
 
 // tableExists checks if a table exists in the database
@@ -131,34 +87,6 @@ func (rsm *ReferralSchemaManager) tableExists(tableName string) (bool, error) {
 	return foundTable == tableName, nil
 }
 
-// createReferralSchema creates all referral tables from embedded SQL files
-func (rsm *ReferralSchemaManager) createReferralSchema() error {
-	var schemaFile string
-
-	switch rsm.dbType {
-	case "sqlite":
-		schemaFile = "sql/sqlite_referrals.sql"
-	case "postgres":
-		schemaFile = "sql/postgres_referrals.sql"
-	default:
-		return fmt.Errorf("unsupported database type: %s", rsm.dbType)
-	}
-
-	slog.Debug("Reading referral schema file", "file", schemaFile, "database_type", rsm.dbType)
-
-	schemaSQL, err := schemaFiles.ReadFile(schemaFile)
-	if err != nil {
-		return fmt.Errorf("failed to read referral schema file %s: %w", schemaFile, err)
-	}
-
-	// Execute the schema SQL
-	if _, err := rsm.db.Exec(string(schemaSQL)); err != nil {
-		return fmt.Errorf("failed to execute referral schema: %w", err)
-	}
-
-	return nil
-}
-
 // ValidateReferralSchema performs basic referral schema validation
 func (rsm *ReferralSchemaManager) ValidateReferralSchema() error {
 	requiredTables := []string{
@@ -166,9 +94,15 @@ func (rsm *ReferralSchemaManager) ValidateReferralSchema() error {
 		"referral_relationships",
 	}
 
-	missingTables, err := rsm.checkMissingTables(requiredTables)
-	if err != nil {
-		return fmt.Errorf("referral schema validation failed: %w", err)
+	var missingTables []string
+	for _, tableName := range requiredTables {
+		exists, err := rsm.tableExists(tableName)
+		if err != nil {
+			return fmt.Errorf("failed to check if table %s exists: %w", tableName, err)
+		}
+		if !exists {
+			missingTables = append(missingTables, tableName)
+		}
 	}
 
 	if len(missingTables) > 0 {

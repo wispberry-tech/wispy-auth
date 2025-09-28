@@ -4,21 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🚨 CRITICAL: Database Schema Management
 
-**NEVER hardcode table creation in Go code!**
-**ALWAYS update the existing SQL scaffold files instead!**
+**SQL files are the single source of truth for database schemas!**
+**All table creation is managed through SQL files only!**
 
 - SQL files in `/sql/` directory are the single source of truth for database schemas
-- Both `postgres_scaffold.sql` and `sqlite_scaffold.sql` must be kept in sync
-- When tests need database tables, they should read from these scaffold files
-- Never create new migration files - update existing ones
-- Never embed SQL schemas directly in Go code
+- Both `postgres_core.sql`/`postgres_referrals.sql` and `sqlite_core.sql`/`sqlite_referrals.sql` must be kept in sync
+- Storage constructors automatically execute the SQL schema files using `CREATE TABLE IF NOT EXISTS`
+- Never hardcode table creation in Go code beyond the embedded SQL files
+- Schema managers provide validation functions but no longer auto-create tables
 - Always use the clean separated architecture approach for table organization
 
 **Correct approach:**
-1. Update `sql/sqlite_scaffold.sql` for SQLite schema changes
-2. Update `sql/postgres_scaffold.sql` for PostgreSQL schema changes 
-3. Use `NewInMemorySQLiteStorage()` which reads from these scaffold files
-4. Keep schema definitions in SQL files as developer reference
+1. Update `core/sql/sqlite_core.sql` and `core/sql/postgres_core.sql` for core schema changes
+2. Update `referrals/sql/sqlite_referrals.sql` and `referrals/sql/postgres_referrals.sql` for referrals changes
+3. Storage constructors automatically execute embedded SQL on initialization
+4. Use validation functions to verify schema exists at runtime if needed
 
 **Clean Separated Architecture:**
 - Keep user identity separate from security details

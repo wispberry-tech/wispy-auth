@@ -33,10 +33,10 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 		return nil, fmt.Errorf("failed to get database connection from core storage: %w", err)
 	}
 
-	// Auto-create missing referral tables using the shared connection
+	// Execute referral schema SQL to create tables if they don't exist
 	schemaManager := referrals.NewReferralSchemaManager(db, "postgres")
-	if err := schemaManager.EnsureReferralSchema(); err != nil {
-		return nil, fmt.Errorf("failed to ensure referral schema: %w", err)
+	if err := schemaManager.ExecuteReferralSchema(); err != nil {
+		return nil, fmt.Errorf("failed to execute referral schema: %w", err)
 	}
 
 	return &PostgresStorage{

@@ -106,15 +106,12 @@ coreStorage := storage.NewPostgresStorage(dsn)   // Connection 1
 db, _ := coreStorage.GetDB()                     // Reuse Connection 1
 ```
 
-### Schema Operation Optimization
-```go
-// Before (redundant)
-coreManager.EnsureCoreSchema()  // Always runs
+### Schema Management Changes
+As of the latest version, automatic table creation has been removed from the codebase. Database schemas are now managed exclusively through SQL files:
 
-// After (optimized)  
-if !coreTablesExist {
-    coreManager.EnsureCoreSchema()  // Only runs if needed
-}
-```
+- Core schema: `core/sql/sqlite_core.sql` and `core/sql/postgres_core.sql`  
+- Referrals schema: `referrals/sql/sqlite_referrals.sql` and `referrals/sql/postgres_referrals.sql`
+- Applications must ensure tables exist before using storage instances
+- Schema validation functions remain available for runtime checks
 
-This fix resolves the statement name SQL errors and improves the overall reliability and performance of wispy-auth's database operations.
+This change eliminates schema operation conflicts and provides more predictable database initialization.
