@@ -26,6 +26,12 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 	// Register the pgx driver
 	db := stdlib.OpenDB(*config)
 
+	// Configure connection pool to reduce statement name conflicts
+	// Set reasonable connection pool limits to prevent resource exhaustion
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
 	// Test the connection
 	if err := db.Ping(); err != nil {
 		db.Close()
@@ -43,6 +49,11 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 	}
 
 	return storage, nil
+}
+
+// GetDB returns the underlying database connection for sharing with extensions
+func (p *PostgresStorage) GetDB() (*sql.DB, error) {
+	return p.db, nil
 }
 
 // User operations

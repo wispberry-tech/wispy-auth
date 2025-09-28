@@ -54,6 +54,11 @@ func NewInMemorySQLiteStorage() (*SQLiteStorage, error) {
 	return NewSQLiteStorageFromDB(db)
 }
 
+// GetDB returns the underlying database connection for sharing with extensions
+func (s *SQLiteStorage) GetDB() (*sql.DB, error) {
+	return s.db, nil
+}
+
 // User operations
 func (s *SQLiteStorage) CreateUser(user *User) error {
 	query := `INSERT INTO users (email, username, first_name, last_name, password_hash,

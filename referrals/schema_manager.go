@@ -1,6 +1,7 @@
 package referrals
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
@@ -37,10 +38,20 @@ func (rsm *ReferralSchemaManager) SetLogLevel(level slog.Level) {
 // EnsureReferralSchema ensures all referral tables exist, creating missing ones
 // This should be called after the core schema is already in place
 func (rsm *ReferralSchemaManager) EnsureReferralSchema() error {
-	// First ensure core schema exists using core schema manager
-	coreManager := core.NewSchemaManager(rsm.db, rsm.dbType)
-	if err := coreManager.EnsureCoreSchema(); err != nil {
-		return fmt.Errorf("failed to ensure core schema before referral tables: %w", err)
+	// Check if core tables exist first to avoid redundant operations
+	// The core storage should have already ensured the core schema
+	coreTablesExist, err := rsm.tableExists("users")
+	if err != nil {
+		return fmt.Errorf("failed to check if core tables exist: %w", err)
+	}
+
+	// Only ensure core schema if core tables don't exist
+	// This prevents redundant schema operations that can cause statement conflicts
+	if !coreTablesExist {
+		coreManager := core.NewSchemaManager(rsm.db, rsm.dbType)
+		if err := coreManager.EnsureCoreSchema(); err != nil {
+			return fmt.Errorf("failed to ensure core schema before referral tables: %w", err)
+		}
 	}
 
 	requiredTables := []string{
@@ -54,7 +65,7 @@ func (rsm *ReferralSchemaManager) EnsureReferralSchema() error {
 	}
 
 	if len(missingTables) > 0 {
-		slog.Log(nil, rsm.logLevel, "Missing referral tables detected",
+		slog.Log(context.TODO(), rsm.logLevel, "Missing referral tables detected",
 			"missing_tables", missingTables,
 			"action", "auto_creating",
 			"database_type", rsm.dbType)

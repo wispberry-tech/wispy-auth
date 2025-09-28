@@ -28,20 +28,14 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to create core storage: %w", err)
 	}
 
-	// Get the database connection (we'll need direct access for referral operations)
-	// Since core storage doesn't expose the db, we'll open another connection
-	// In a real implementation, you might want to modify core storage to expose the db
-	db, err := sql.Open("sqlite3", dbPath)
+	// Get the database connection from core storage instead of creating a new one
+	// This prevents connection conflicts and statement name collisions
+	db, err := coreStorage.GetDB()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
+		return nil, fmt.Errorf("failed to get database connection from core storage: %w", err)
 	}
 
-	// Enable foreign keys
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
-	}
-
-	// Auto-create missing referral tables
+	// Auto-create missing referral tables using the shared connection
 	schemaManager := referrals.NewReferralSchemaManager(db, "sqlite")
 	if err := schemaManager.EnsureReferralSchema(); err != nil {
 		return nil, fmt.Errorf("failed to ensure referral schema: %w", err)
@@ -61,18 +55,14 @@ func NewInMemorySQLiteStorage() (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to create core storage: %w", err)
 	}
 
-	// Create another in-memory connection for referral operations
-	db, err := sql.Open("sqlite3", ":memory:")
+	// Get the database connection from core storage instead of creating a new one
+	// This prevents connection conflicts and maintains referential integrity
+	db, err := coreStorage.GetDB()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open in-memory SQLite database: %w", err)
+		return nil, fmt.Errorf("failed to get database connection from core storage: %w", err)
 	}
 
-	// Enable foreign keys
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
-	}
-
-	// Auto-create missing tables (both core and referral tables)
+	// Auto-create missing referral tables using the shared connection
 	schemaManager := referrals.NewReferralSchemaManager(db, "sqlite")
 	if err := schemaManager.EnsureReferralSchema(); err != nil {
 		return nil, fmt.Errorf("failed to ensure referral schema: %w", err)
@@ -439,8 +429,7 @@ func (s *SQLiteStorage) ProcessReferralCodeUse(codeID, referrerUserID, referredU
 
 // Close closes the storage connection
 func (s *SQLiteStorage) Close() error {
-	if err := s.SQLiteStorage.Close(); err != nil {
-		return err
-	}
-	return s.db.Close()
+	// Only close the core storage, as we're sharing the database connection
+	// The core storage will handle closing the actual database connection
+	return s.SQLiteStorage.Close()
 }

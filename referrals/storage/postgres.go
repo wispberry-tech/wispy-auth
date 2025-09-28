@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/wispberry-tech/wispy-auth/core/storage"
 	"github.com/wispberry-tech/wispy-auth/referrals"
 )
@@ -29,22 +26,14 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 		return nil, fmt.Errorf("failed to create core storage: %w", err)
 	}
 
-	// Parse the connection string for referral operations
-	config, err := pgx.ParseConfig(databaseDSN)
+	// Get the database connection from core storage instead of creating a new one
+	// This prevents connection pool conflicts and statement name collisions
+	db, err := coreStorage.GetDB()
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse database DSN: %w", err)
+		return nil, fmt.Errorf("failed to get database connection from core storage: %w", err)
 	}
 
-	// Create database connection
-	db := stdlib.OpenDB(*config)
-
-	// Test the connection
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	// Auto-create missing referral tables
+	// Auto-create missing referral tables using the shared connection
 	schemaManager := referrals.NewReferralSchemaManager(db, "postgres")
 	if err := schemaManager.EnsureReferralSchema(); err != nil {
 		return nil, fmt.Errorf("failed to ensure referral schema: %w", err)
@@ -399,8 +388,7 @@ func (s *PostgresStorage) ProcessReferralCodeUse(codeID, referrerUserID, referre
 
 // Close closes the storage connection
 func (s *PostgresStorage) Close() error {
-	if err := s.PostgresStorage.Close(); err != nil {
-		return err
-	}
-	return s.db.Close()
+	// Only close the core storage, as we're sharing the database connection
+	// The core storage will handle closing the actual database connection
+	return s.PostgresStorage.Close()
 }
