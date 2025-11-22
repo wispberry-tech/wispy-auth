@@ -21,7 +21,7 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 		session, err := a.storage.GetSession(token)
 		if err != nil {
 			slog.Error("Failed to get session", "error", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			http.Error(w, "Session validation failed", http.StatusInternalServerError)
 			return
 		}
 
@@ -46,7 +46,7 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 		user, err := a.storage.GetUserByID(session.UserID)
 		if err != nil {
 			slog.Error("Failed to get user", "error", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			http.Error(w, "User retrieval failed", http.StatusInternalServerError)
 			return
 		}
 

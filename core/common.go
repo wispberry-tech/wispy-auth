@@ -28,27 +28,12 @@ func checkPasswordHash(password, hash string) bool {
 	return err == nil
 }
 
-// Token generation utilities
-func generateRandomPassword() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return base64.URLEncoding.EncodeToString(b)
-}
-
 func generateSecureToken(length int) (string, error) {
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(bytes), nil
-}
-
-func generateVerificationToken() (string, error) {
-	return generateSecureToken(32)
-}
-
-func generatePasswordResetToken() (string, error) {
-	return generateSecureToken(48)
 }
 
 // Device fingerprinting
@@ -81,12 +66,6 @@ func validatePasswordStrength(password string, config SecurityConfig) error {
 	}
 
 	return nil
-}
-
-// Email validation
-func isValidEmail(email string) bool {
-	emailRegex := regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$`)
-	return emailRegex.MatchString(strings.ToLower(email))
 }
 
 // IP utilities

@@ -39,7 +39,7 @@ func (a *AuthService) OAuthInitHandler(r *http.Request, provider string) OAuthRe
 		slog.Error("Failed to generate state token", "error", err)
 		return OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "State token generation failed",
 		}
 	}
 
@@ -48,7 +48,7 @@ func (a *AuthService) OAuthInitHandler(r *http.Request, provider string) OAuthRe
 		slog.Error("Failed to generate CSRF token", "error", err)
 		return OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "CSRF token generation failed",
 		}
 	}
 
@@ -65,7 +65,7 @@ func (a *AuthService) OAuthInitHandler(r *http.Request, provider string) OAuthRe
 		slog.Error("Failed to store OAuth state", "error", err)
 		return OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "OAuth state storage failed",
 		}
 	}
 
@@ -110,7 +110,7 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 		slog.Error("Failed to get OAuth state", "error", err)
 		return OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "OAuth state retrieval failed",
 		}
 	}
 
@@ -174,7 +174,7 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 		slog.Error("Failed to get user by provider ID", "error", err)
 		return OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Database error while checking OAuth user",
 		}
 	}
 
@@ -188,7 +188,7 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 			slog.Error("Failed to check existing email", "error", err)
 			return OAuthResponse{
 				StatusCode: http.StatusInternalServerError,
-				Error:      "Internal server error",
+				Error:      "Database error while checking existing email",
 			}
 		}
 
@@ -282,7 +282,7 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 		slog.Error("Failed to generate session token", "error", err)
 		return OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Session token generation failed",
 		}
 	}
 
@@ -302,7 +302,7 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 		slog.Error("Failed to create session", "error", err)
 		return OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Session creation failed",
 		}
 	}
 

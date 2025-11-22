@@ -38,12 +38,6 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Execute schema SQL to create tables if they don't exist
-	schemaManager := NewSchemaManager(db, "postgres")
-	if err := schemaManager.ExecuteCoreSchema(); err != nil {
-		return nil, fmt.Errorf("failed to execute core schema: %w", err)
-	}
-
 	storage := &PostgresStorage{
 		db: db,
 	}

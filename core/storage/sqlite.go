@@ -31,12 +31,6 @@ func NewSQLiteStorageFromDB(db *sql.DB) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
-	// Execute schema SQL to create tables if they don't exist
-	schemaManager := NewSchemaManager(db, "sqlite")
-	if err := schemaManager.ExecuteCoreSchema(); err != nil {
-		return nil, fmt.Errorf("failed to execute core schema: %w", err)
-	}
-
 	s := &SQLiteStorage{db: db}
 
 	return s, nil

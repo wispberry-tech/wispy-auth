@@ -102,7 +102,7 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 		slog.Error("Failed to check existing user", "error", err)
 		return SignUpResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Database error while checking user existence",
 		}
 	}
 
@@ -129,7 +129,7 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 		slog.Error("Failed to hash password", "error", err)
 		return SignUpResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Password hashing failed",
 		}
 	}
 
@@ -171,7 +171,7 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 		slog.Error("Failed to generate session token", "error", err)
 		return SignUpResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Session token generation failed",
 		}
 	}
 
@@ -194,7 +194,7 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 		slog.Error("Failed to create session", "error", err)
 		return SignUpResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Session creation failed",
 		}
 	}
 
@@ -242,7 +242,7 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 		slog.Error("Failed to get user", "error", err)
 		return SignInResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Database error while retrieving user",
 		}
 	}
 
@@ -271,7 +271,7 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 		slog.Error("Failed to get user security", "error", err)
 		return SignInResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Database error while retrieving user security",
 		}
 	}
 
@@ -320,7 +320,7 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 		slog.Error("Failed to generate session token", "error", err)
 		return SignInResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Session token generation failed",
 		}
 	}
 
@@ -342,7 +342,7 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 		slog.Error("Failed to create session", "error", err)
 		return SignInResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Session creation failed",
 		}
 	}
 
@@ -386,7 +386,7 @@ func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
 		slog.Error("Failed to get session", "error", err)
 		return ValidateResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Database error while retrieving session",
 		}
 	}
 
@@ -415,7 +415,7 @@ func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
 		slog.Error("Failed to get user", "error", err)
 		return ValidateResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Database error while retrieving user",
 		}
 	}
 
@@ -464,7 +464,7 @@ func (a *AuthService) LogoutHandler(r *http.Request) LogoutResponse {
 		slog.Error("Failed to delete session", "error", err)
 		return LogoutResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Database error while deleting session",
 		}
 	}
 
@@ -489,7 +489,7 @@ func (a *AuthService) GetSessionsHandler(r *http.Request) SessionsResponse {
 		slog.Error("Failed to get user sessions", "error", err)
 		return SessionsResponse{
 			StatusCode: http.StatusInternalServerError,
-			Error:      "Internal server error",
+			Error:      "Database error while retrieving user sessions",
 		}
 	}
 

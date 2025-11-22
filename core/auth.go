@@ -62,14 +62,6 @@ var (
 var (
 	// ErrUserNotFound is returned when a user cannot be found in the database
 	ErrUserNotFound = errors.New("user not found")
-	// ErrInvalidCredentials is returned for authentication failures
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	// ErrUserExists is returned when attempting to create a user that already exists
-	ErrUserExists = errors.New("user already exists")
-	// ErrInvalidProvider is returned when an unsupported OAuth provider is specified
-	ErrInvalidProvider = errors.New("invalid OAuth provider")
-	// ErrAccountLocked is returned when an account is temporarily locked
-	ErrAccountLocked = errors.New("account temporarily locked")
 )
 
 // SecurityConfig defines security-related configuration options for the authentication system.
