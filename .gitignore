@@ -1,11 +1,9 @@
-example/.env
-example/nucleus-auth-example
-example/auth_test.db
-.gitignore
-example/auth_test.db-shm
-example/auth_test.db-wal
-.claude/settings.local.json
+examples/core/.env
+examples/core/wispy-auth-example
+examples/core/auth_test.db
+examples/core/auth_test.db-shm
+examples/core/auth_test.db-wal
 *.exe
 coverage
 coverage.out
-examples/core/wispy-auth-example
+examples/core/core

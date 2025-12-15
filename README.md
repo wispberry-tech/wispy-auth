@@ -12,15 +12,11 @@ A comprehensive, production-ready authentication library for Go applications wit
 
 ### Advanced Security
 - **Account Lockout Protection** - Configurable failed login attempt limits with automatic unlocking
+- **Rate Limiting** - IP-based rate limiting to prevent abuse and brute force attacks
 - **Device Fingerprinting** - Track user sessions across different devices and browsers
 - **Security Event Logging** - Detailed audit trails for all authentication events
 - **Password Security** - Bcrypt hashing with configurable complexity requirements
 - **CSRF Protection** - Built-in OAuth state validation and CSRF token management
-
-### Modular Extensions
-- **Referrals System** - Complete referral code generation and tracking system
-- **Email Verification** - Multi-provider email verification with customizable templates
-- **Independent Integration** - Modules work independently without modifying core functionality
 
 ### Database Support
 - **SQLite** - Perfect for development, testing, and small deployments
@@ -31,12 +27,6 @@ A comprehensive, production-ready authentication library for Go applications wit
 
 ```bash
 go get github.com/wispberry-tech/wispy-auth/core
-```
-
-For extensions:
-```bash
-go get github.com/wispberry-tech/wispy-auth/referrals
-go get github.com/wispberry-tech/wispy-auth/verifyemail
 ```
 
 ## 🏁 Quick Start
@@ -116,7 +106,9 @@ func handleSignUp(authService *core.AuthService) http.HandlerFunc {
         result := authService.SignUpHandler(r)
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
+        if err := json.NewEncoder(w).Encode(result); err != nil {
+            slog.Error("Failed to encode signup response", "error", err)
+        }
     }
 }
 
@@ -125,7 +117,9 @@ func handleSignIn(authService *core.AuthService) http.HandlerFunc {
         result := authService.SignInHandler(r)
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
+        if err := json.NewEncoder(w).Encode(result); err != nil {
+            slog.Error("Failed to encode signin response", "error", err)
+        }
     }
 }
 
@@ -134,7 +128,9 @@ func handleLogout(authService *core.AuthService) http.HandlerFunc {
         result := authService.LogoutHandler(r)
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
+        if err := json.NewEncoder(w).Encode(result); err != nil {
+            slog.Error("Failed to encode logout response", "error", err)
+        }
     }
 }
 
@@ -143,7 +139,9 @@ func handleValidate(authService *core.AuthService) http.HandlerFunc {
         result := authService.ValidateHandler(r)
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
+        if err := json.NewEncoder(w).Encode(result); err != nil {
+            slog.Error("Failed to encode validate response", "error", err)
+        }
     }
 }
 
@@ -153,7 +151,9 @@ func handleOAuthInit(authService *core.AuthService) http.HandlerFunc {
         result := authService.OAuthInitHandler(r, provider)
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
+        if err := json.NewEncoder(w).Encode(result); err != nil {
+            slog.Error("Failed to encode OAuth init response", "error", err)
+        }
     }
 }
 
@@ -163,14 +163,18 @@ func handleOAuthCallback(authService *core.AuthService) http.HandlerFunc {
         result := authService.OAuthCallbackHandler(r, provider)
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
+        if err := json.NewEncoder(w).Encode(result); err != nil {
+            slog.Error("Failed to encode OAuth callback response", "error", err)
+        }
     }
 }
 
 func handleProfile(w http.ResponseWriter, r *http.Request) {
     user := core.GetUserFromContext(r)
     w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(user)
+    if err := json.NewEncoder(w).Encode(user); err != nil {
+        slog.Error("Failed to encode profile response", "error", err)
+    }
 }
 ```
 
@@ -183,7 +187,7 @@ config := core.Config{
     Storage: storage,
     SecurityConfig: core.SecurityConfig{
         // Password requirements
-        PasswordMinLength:      12,
+        PasswordMinLength:      8,
         PasswordRequireUpper:   true,
         PasswordRequireLower:   true, 
         PasswordRequireNumber:  true,
@@ -191,7 +195,7 @@ config := core.Config{
         
         // Account lockout settings
         MaxLoginAttempts: 5,
-        LockoutDuration:  30 * time.Minute,
+        LockoutDuration:  15 * time.Minute,
         
         // Session management
         SessionLifetime: 24 * time.Hour,
@@ -201,6 +205,11 @@ config := core.Config{
         TwoFactorCodeExpiry:      5 * time.Minute,
         Max2FAAttempts:           3,
         TwoFactorLockoutDuration: 15 * time.Minute,
+
+        // Rate limiting
+        EnableRateLimiting: true,
+        RateLimitRequests:  10,
+        RateLimitWindow:    1 * time.Minute,
     },
 }
 ```
@@ -234,53 +243,6 @@ oauthProviders := map[string]core.OAuthProviderConfig{
         []string{"read:user", "user:email"},
     ),
 }
-```
-
-## 🧩 Extensions
-
-### Referrals System
-
-Add referral functionality to track user referrals and generate referral codes:
-
-```go
-import "github.com/wispberry-tech/wispy-auth/referrals"
-
-// Create referral-enabled auth service
-referralStorage := referralstorage.NewSQLiteStorage("app.db")
-referralConfig := referrals.DefaultConfig()
-referralAuth := referrals.NewAuthService(coreAuth, referralStorage, referralConfig)
-
-// Use referral handlers
-mux.HandleFunc("POST /generate-referral", func(w http.ResponseWriter, r *http.Request) {
-    result := referralAuth.GenerateReferralCodeHandler(r)
-    w.WriteHeader(result.StatusCode)
-    json.NewEncoder(w).Encode(result)
-})
-```
-
-### Email Verification
-
-Add email verification capabilities with multiple provider support:
-
-```go
-import "github.com/wispberry-tech/wispy-auth/verifyemail"
-
-// Configure email verification
-verifyConfig := verifyemail.Config{
-    BaseURL:      "https://yourapp.com",
-    AppName:      "Your App",
-    SupportEmail: "support@yourapp.com",
-    Provider:     "resend", // or "sendgrid", "mailgun", "postmark"
-    ProviderConfig: map[string]interface{}{
-        "api_key": "your-provider-api-key",
-    },
-}
-
-verifyModule, err := verifyemail.NewVerifyEmailModule(storage, verifyConfig)
-verifyUtils := verifyModule.GetUtilities()
-
-// Send verification email
-token, err := verifyUtils.SendVerificationEmail(user, verifyemail.SendOptions{})
 ```
 
 ## 🗄️ Database Support
@@ -360,7 +322,7 @@ LOCKOUT_DURATION=30m
 ### Docker Deployment
 
 ```dockerfile
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -393,17 +355,21 @@ The library provides built-in logging using Go's `slog` package:
 mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
     if err := authService.GetStorage().Ping(); err != nil {
         w.WriteHeader(http.StatusServiceUnavailable)
-        json.NewEncoder(w).Encode(map[string]string{
+        if err := json.NewEncoder(w).Encode(map[string]string{
             "status": "unhealthy",
             "error":  err.Error(),
-        })
+        }); err != nil {
+            slog.Error("Failed to encode unhealthy response", "error", err)
+        }
         return
     }
     
     w.WriteHeader(http.StatusOK)
-    json.NewEncoder(w).Encode(map[string]string{
+    if err := json.NewEncoder(w).Encode(map[string]string{
         "status": "healthy",
-    })
+    }); err != nil {
+        slog.Error("Failed to encode health response", "error", err)
+    }
 })
 ```
 
@@ -420,8 +386,6 @@ go test -cover ./...
 
 # Run specific test suites
 go test -run TestAuth ./core
-go test -run TestReferrals ./referrals  
-go test -run TestEmailVerification ./verifyemail
 ```
 
 ### Test Examples
@@ -437,7 +401,7 @@ func TestUserRegistration(t *testing.T) {
     // Test user registration
     req := httptest.NewRequest("POST", "/signup", strings.NewReader(`{
         "email": "test@example.com",
-        "password": "SecurePassword123",
+        "password": "SecurePassword123!",
         "first_name": "Test",
         "last_name": "User"
     }`))
@@ -452,10 +416,7 @@ func TestUserRegistration(t *testing.T) {
 ## 📚 Documentation
 
 - **[Core API Reference](./core/README.md)** - Complete core authentication API
-- **[Referrals Module](./referrals/README.md)** - Referral system documentation  
-- **[Email Verification](./verifyemail/README_MODULE.md)** - Email verification setup
-- **[Examples](./examples/)** - Complete working examples
-- **[Security Guide](./docs/SECURITY.md)** - Security best practices
+- **[Examples](./examples/)** - Working examples and demos
 
 ## 🤝 Contributing
 
@@ -480,7 +441,7 @@ go test -cover ./...
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
 ## 🆘 Support
 
@@ -495,9 +456,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [ ] **Multi-Factor Authentication** - TOTP and SMS-based 2FA
 - [ ] **Social Login Extensions** - Twitter, LinkedIn, Microsoft providers
-- [ ] **Advanced Session Management** - Session invalidation, concurrent session limits
-- [ ] **Audit Dashboard** - Web-based security event monitoring
-- [ ] **Rate Limiting** - Advanced rate limiting with Redis backend
+- [x] **Rate Limiting** - Basic IP-based rate limiting implemented
 - [ ] **Webhook Support** - Custom webhooks for authentication events
 
 ### Performance Improvements

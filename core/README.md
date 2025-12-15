@@ -55,21 +55,30 @@ func main() {
     // Authentication endpoints
     mux.HandleFunc("POST /signup", func(w http.ResponseWriter, r *http.Request) {
         result := authService.SignUpHandler(r)
+        w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
+        if err := json.NewEncoder(w).Encode(result); err != nil {
+            slog.Error("Failed to encode signup response", "error", err)
+        }
     })
 
     mux.HandleFunc("POST /signin", func(w http.ResponseWriter, r *http.Request) {
         result := authService.SignInHandler(r)
+        w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(result.StatusCode)
-        json.NewEncoder(w).Encode(result)
+        if err := json.NewEncoder(w).Encode(result); err != nil {
+            slog.Error("Failed to encode signin response", "error", err)
+        }
     })
 
     // Protected routes
     mux.Handle("GET /profile", authService.AuthMiddleware(
         http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
             user := core.GetUserFromContext(r)
-            json.NewEncoder(w).Encode(user)
+            w.Header().Set("Content-Type", "application/json")
+            if err := json.NewEncoder(w).Encode(user); err != nil {
+                slog.Error("Failed to encode profile response", "error", err)
+            }
         }),
     ))
 
@@ -102,7 +111,7 @@ config := core.SecurityConfig{
     PasswordRequireUpper:     true,
     PasswordRequireLower:     true,
     PasswordRequireNumber:    true,
-    PasswordRequireSpecial:   false,
+    PasswordRequireSpecial:   true,
     MaxLoginAttempts:         5,
     LockoutDuration:          15 * time.Minute,
     SessionLifetime:          24 * time.Hour,
@@ -151,7 +160,7 @@ The core module uses a simplified schema with only essential tables:
 Run the example application:
 
 ```bash
-cd core/example
+cd examples/core
 go run main.go
 ```
 
