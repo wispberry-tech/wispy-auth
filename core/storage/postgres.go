@@ -34,7 +34,7 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 
 	// Test the connection
 	if err := db.Ping(); err != nil {
-		db.Close()
+		db.Close() // #nosec G104 - Close error can be ignored in error path
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
@@ -209,7 +209,7 @@ func (p *PostgresStorage) CreateUserWithSecurity(user *User, security *UserSecur
 	// Rollback transaction if we exit with an error
 	defer func() {
 		if err != nil {
-			tx.Rollback()
+			tx.Rollback() // #nosec G104 - Rollback error can be ignored in defer cleanup
 		}
 	}()
 
@@ -276,7 +276,7 @@ func (p *PostgresStorage) HandleFailedLogin(userID uint, maxAttempts int, lockou
 	// Rollback transaction if we exit with an error
 	defer func() {
 		if err != nil {
-			tx.Rollback()
+			tx.Rollback() // #nosec G104 - Rollback error can be ignored in defer cleanup
 		}
 	}()
 

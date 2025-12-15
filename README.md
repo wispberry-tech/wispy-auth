@@ -388,6 +388,15 @@ go test -cover ./...
 go test -run TestAuth ./core
 ```
 
+### CI/CD
+
+This project uses GitHub Actions for continuous integration:
+
+- **Automated Testing**: Runs on every push and pull request
+- **Security Scanning**: Uses gosec to detect security vulnerabilities
+- **Code Coverage**: Reports test coverage to Codecov
+- **Code Formatting**: Ensures consistent Go code formatting
+
 ### Test Examples
 
 ```go

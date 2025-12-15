@@ -228,7 +228,7 @@ func (s *SQLiteStorage) CreateUserWithSecurity(user *User, security *UserSecurit
 	// Rollback transaction if we exit with an error
 	defer func() {
 		if err != nil {
-			tx.Rollback()
+			tx.Rollback() // #nosec G104 - Rollback error can be ignored in defer cleanup
 		}
 	}()
 
@@ -847,7 +847,7 @@ func (s *SQLiteStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutD
 	// Rollback transaction if we exit with an error
 	defer func() {
 		if err != nil {
-			tx.Rollback()
+			tx.Rollback() // #nosec G104 - Rollback error can be ignored in defer cleanup
 		}
 	}()
 

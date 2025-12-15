@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/wispberry-tech/wispy-auth/core"
 	"github.com/wispberry-tech/wispy-auth/core/storage"
@@ -86,7 +87,17 @@ func main() {
 	slog.Info("  GET / - Home page")
 	slog.Info("  GET /health - Health check")
 
-	if err := http.ListenAndServe(":8080", handler); err != nil {
+	// Create HTTP server with timeouts for security
+	server := &http.Server{
+		Addr:         ":8080",
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	slog.Info("Server starting on :8080")
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal("Server failed:", err)
 	}
 }

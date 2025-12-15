@@ -55,7 +55,7 @@ var (
 	// DiscordAuthURL is the Discord OAuth2 authorization endpoint
 	DiscordAuthURL = "https://discord.com/api/oauth2/authorize"
 	// DiscordTokenURL is the Discord OAuth2 token endpoint
-	DiscordTokenURL = "https://discord.com/api/oauth2/token"
+	DiscordTokenURL = "https://discord.com/api/oauth2/token" // #nosec G101
 )
 
 // Common authentication errors returned by the library
