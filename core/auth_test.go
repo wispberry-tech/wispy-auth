@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -716,6 +717,7 @@ func TestOAuthProviderConfigurations(t *testing.T) {
 
 // mockStorage implements the Storage interface for testing
 type mockStorage struct {
+	mu             sync.RWMutex
 	users          map[string]*User
 	userSecurity   map[uint]*UserSecurity
 	sessions       map[string]*Session
@@ -736,6 +738,9 @@ func newMockStorage() *mockStorage {
 }
 
 func (m *mockStorage) CreateUser(user *User) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	user.ID = m.nextUserID
 	m.nextUserID++
 	user.CreatedAt = time.Now()
@@ -752,50 +757,78 @@ func (m *mockStorage) CreateUser(user *User) error {
 }
 
 func (m *mockStorage) GetUserByEmail(email, provider string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	key := email + ":" + provider
 	if user, exists := m.users[key]; exists {
-		return user, nil
+		// Return a copy to avoid race conditions when handlers modify the user
+		userCopy := *user
+		return &userCopy, nil
 	}
 	return nil, nil // Return nil when user not found, not an error
 }
 
 func (m *mockStorage) GetUserByEmailAnyProvider(email string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for key, user := range m.users {
 		if strings.HasPrefix(key, email+":") {
-			return user, nil
+			// Return a copy to avoid race conditions when handlers modify the user
+			userCopy := *user
+			return &userCopy, nil
 		}
 	}
 	return nil, nil // Return nil when user not found, not an error
 }
 
 func (m *mockStorage) GetUserByProviderID(provider, providerID string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for _, user := range m.users {
 		if user.Provider == provider && user.ProviderID == providerID {
-			return user, nil
+			// Return a copy to avoid race conditions when handlers modify the user
+			userCopy := *user
+			return &userCopy, nil
 		}
 	}
 	return nil, nil // Return nil when user not found, not an error
 }
 
 func (m *mockStorage) GetUserByID(id uint) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for _, user := range m.users {
 		if user.ID == id {
-			return user, nil
+			// Return a copy to avoid race conditions when handlers modify the user
+			userCopy := *user
+			return &userCopy, nil
 		}
 	}
 	return nil, nil // Return nil when user not found, not an error
 }
 
 func (m *mockStorage) GetUserByUUID(uuid string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for _, user := range m.users {
 		if user.UUID == uuid {
-			return user, nil
+			// Return a copy to avoid race conditions when handlers modify the user
+			userCopy := *user
+			return &userCopy, nil
 		}
 	}
 	return nil, nil // Return nil when user not found, not an error
 }
 
 func (m *mockStorage) UpdateUser(user *User) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	user.UpdatedAt = time.Now()
 	// Update in all relevant keys
 	for key, existingUser := range m.users {
@@ -807,6 +840,9 @@ func (m *mockStorage) UpdateUser(user *User) error {
 }
 
 func (m *mockStorage) CreateUserSecurity(security *UserSecurity) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	security.CreatedAt = time.Now()
 	security.UpdatedAt = time.Now()
 	m.userSecurity[security.UserID] = security
@@ -814,19 +850,30 @@ func (m *mockStorage) CreateUserSecurity(security *UserSecurity) error {
 }
 
 func (m *mockStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if security, exists := m.userSecurity[userID]; exists {
-		return security, nil
+		// Return a copy to avoid race conditions when handlers modify the security record
+		securityCopy := *security
+		return &securityCopy, nil
 	}
 	return nil, nil // Return nil when security record not found, not an error
 }
 
 func (m *mockStorage) UpdateUserSecurity(security *UserSecurity) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	security.UpdatedAt = time.Now()
 	m.userSecurity[security.UserID] = security
 	return nil
 }
 
 func (m *mockStorage) IncrementLoginAttempts(userID uint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if security, exists := m.userSecurity[userID]; exists {
 		security.LoginAttempts++
 		security.UpdatedAt = time.Now()
@@ -835,6 +882,9 @@ func (m *mockStorage) IncrementLoginAttempts(userID uint) error {
 }
 
 func (m *mockStorage) ResetLoginAttempts(userID uint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if security, exists := m.userSecurity[userID]; exists {
 		security.LoginAttempts = 0
 		security.UpdatedAt = time.Now()
@@ -843,6 +893,9 @@ func (m *mockStorage) ResetLoginAttempts(userID uint) error {
 }
 
 func (m *mockStorage) SetUserLocked(userID uint, until time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if security, exists := m.userSecurity[userID]; exists {
 		security.LockedUntil = &until
 		security.UpdatedAt = time.Now()
@@ -851,6 +904,9 @@ func (m *mockStorage) SetUserLocked(userID uint, until time.Time) error {
 }
 
 func (m *mockStorage) UpdateLastLogin(userID uint, ipAddress *string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if security, exists := m.userSecurity[userID]; exists {
 		now := time.Now()
 		security.LastLoginAt = &now
@@ -861,6 +917,9 @@ func (m *mockStorage) UpdateLastLogin(userID uint, ipAddress *string) error {
 }
 
 func (m *mockStorage) CreateSession(session *Session) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	session.CreatedAt = time.Now()
 	session.LastAccessedAt = time.Now()
 	m.sessions[session.Token] = session
@@ -868,10 +927,14 @@ func (m *mockStorage) CreateSession(session *Session) error {
 }
 
 func (m *mockStorage) GetSession(token string) (*Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if session, exists := m.sessions[token]; exists {
 		// Check if session is expired
 		if session.ExpiresAt.Before(time.Now()) {
-			delete(m.sessions, token)
+			// Note: We can't delete here because we're under RLock
+			// The session will be cleaned up by CleanupExpiredSessions
 			return nil, nil
 		}
 		return session, nil
@@ -880,6 +943,9 @@ func (m *mockStorage) GetSession(token string) (*Session, error) {
 }
 
 func (m *mockStorage) GetUserSessions(userID uint) ([]*Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	var sessions []*Session
 	for _, session := range m.sessions {
 		if session.UserID == userID && session.ExpiresAt.After(time.Now()) {
@@ -890,11 +956,17 @@ func (m *mockStorage) GetUserSessions(userID uint) ([]*Session, error) {
 }
 
 func (m *mockStorage) DeleteSession(token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	delete(m.sessions, token)
 	return nil
 }
 
 func (m *mockStorage) DeleteUserSessions(userID uint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for token, session := range m.sessions {
 		if session.UserID == userID {
 			delete(m.sessions, token)
@@ -904,6 +976,9 @@ func (m *mockStorage) DeleteUserSessions(userID uint) error {
 }
 
 func (m *mockStorage) CleanupExpiredSessions() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	now := time.Now()
 	for token, session := range m.sessions {
 		if session.ExpiresAt.Before(now) {
@@ -914,12 +989,18 @@ func (m *mockStorage) CleanupExpiredSessions() error {
 }
 
 func (m *mockStorage) CreateSecurityEvent(event *SecurityEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	event.CreatedAt = time.Now()
 	m.securityEvents = append(m.securityEvents, event)
 	return nil
 }
 
 func (m *mockStorage) GetSecurityEvents(userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	var events []*SecurityEvent
 	for _, event := range m.securityEvents {
 		if userID != nil && (event.UserID == nil || *event.UserID != *userID) {
@@ -950,14 +1031,36 @@ func (m *mockStorage) GetSecurityEventsByUser(userID uint, limit int, offset int
 }
 
 func (m *mockStorage) CreateUserWithSecurity(user *User, security *UserSecurity) error {
-	if err := m.CreateUser(user); err != nil {
-		return err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Create user
+	user.ID = m.nextUserID
+	m.nextUserID++
+	user.CreatedAt = time.Now()
+	user.UpdatedAt = time.Now()
+	// Generate UUID if not set
+	if user.UUID == "" {
+		token, _ := generateSecureToken(16)
+		user.UUID = token
 	}
+	// Create a copy to avoid issues when handlers modify the original
+	userCopy := *user
+	m.users[user.Email+":"+user.Provider] = &userCopy
+
+	// Create security record
 	security.UserID = user.ID
-	return m.CreateUserSecurity(security)
+	security.CreatedAt = time.Now()
+	security.UpdatedAt = time.Now()
+	m.userSecurity[security.UserID] = security
+
+	return nil
 }
 
 func (m *mockStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	security, exists := m.userSecurity[userID]
 	if !exists {
 		return false, ErrUserNotFound
@@ -978,12 +1081,18 @@ func (m *mockStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutDur
 }
 
 func (m *mockStorage) UpdateSession(session *Session) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	session.LastAccessedAt = time.Now()
 	m.sessions[session.Token] = session
 	return nil
 }
 
 func (m *mockStorage) CountActiveSessions(userID uint) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	count := 0
 	now := time.Now()
 	for _, session := range m.sessions {
@@ -995,6 +1104,9 @@ func (m *mockStorage) CountActiveSessions(userID uint) (int, error) {
 }
 
 func (m *mockStorage) StoreOAuthState(state *OAuthState) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	state.CreatedAt = time.Now()
 	m.oauthStates[state.State] = state
 	return nil
@@ -1005,10 +1117,14 @@ func (m *mockStorage) CreateOAuthState(state *OAuthState) error {
 }
 
 func (m *mockStorage) GetOAuthState(state string) (*OAuthState, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if oauthState, exists := m.oauthStates[state]; exists {
 		// Check if state is expired
 		if oauthState.ExpiresAt.Before(time.Now()) {
-			delete(m.oauthStates, state)
+			// Note: We can't delete here because we're under RLock
+			// The state will be cleaned up by CleanupExpiredOAuthStates
 			return nil, nil
 		}
 		return oauthState, nil
@@ -1017,11 +1133,17 @@ func (m *mockStorage) GetOAuthState(state string) (*OAuthState, error) {
 }
 
 func (m *mockStorage) DeleteOAuthState(state string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	delete(m.oauthStates, state)
 	return nil
 }
 
 func (m *mockStorage) CleanupExpiredOAuthStates() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	now := time.Now()
 	for state, oauthState := range m.oauthStates {
 		if oauthState.ExpiresAt.Before(now) {
