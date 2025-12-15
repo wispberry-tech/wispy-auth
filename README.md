@@ -1,6 +1,8 @@
 # Wispy Auth
 
-A comprehensive, production-ready authentication library for Go applications with a focus on security, flexibility, and ease of use.
+A comprehensive authentication library for Go applications with a focus on security, flexibility, and ease of use.
+
+> ⚠️ **Warning**: This library is currently under active development and is not yet production-ready. Use at your own risk in development environments only.
 
 ## 🚀 Features
 
@@ -295,7 +297,7 @@ All authentication events are automatically logged:
 - **IP Tracking**: Record IP addresses for security events
 - **Session Management**: Secure token-based sessions with expiration
 
-## 🚀 Production Deployment
+## 🚀 Deployment
 
 ### Environment Variables
 
@@ -303,7 +305,7 @@ All authentication events are automatically logged:
 # Database
 DB_HOST=localhost
 DB_PORT=5432
-DB_NAME=production_app
+DB_NAME=app_database
 DB_USER=app_user
 DB_PASSWORD=secure_password
 
@@ -477,4 +479,4 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 
 ---
 
-**Wispy Auth** - Secure, flexible, and production-ready authentication for Go applications.
+**Wispy Auth** - Secure, flexible authentication for Go applications (under development).
