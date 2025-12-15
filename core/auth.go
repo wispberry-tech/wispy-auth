@@ -103,6 +103,11 @@ type SecurityConfig struct {
 	TwoFactorCodeExpiry      time.Duration // How long 2FA codes remain valid (default: 5 minutes)
 	Max2FAAttempts           int           // Maximum failed 2FA attempts before lockout (default: 3)
 	TwoFactorLockoutDuration time.Duration // How long to lock 2FA after max failures (default: 15 minutes)
+
+	// Rate Limiting
+	EnableRateLimiting bool          // Whether to enable rate limiting
+	RateLimitRequests  int           // Maximum requests per window
+	RateLimitWindow    time.Duration // Time window for rate limiting
 }
 
 // DefaultSecurityConfig returns a secure default configuration suitable for most applications.
@@ -112,7 +117,7 @@ type SecurityConfig struct {
 //   - PasswordRequireUpper: true (requires uppercase letters)
 //   - PasswordRequireLower: true (requires lowercase letters)
 //   - PasswordRequireNumber: true (requires numeric digits)
-//   - PasswordRequireSpecial: false (special characters not required)
+//   - PasswordRequireSpecial: true (special characters required)
 //   - MaxLoginAttempts: 5 (account locked after 5 failed attempts)
 //   - LockoutDuration: 15 minutes
 //   - SessionLifetime: 24 hours
@@ -120,6 +125,9 @@ type SecurityConfig struct {
 //   - TwoFactorCodeExpiry: 5 minutes
 //   - Max2FAAttempts: 3 failed attempts before lockout
 //   - TwoFactorLockoutDuration: 15 minutes
+//   - EnableRateLimiting: true (rate limiting enabled)
+//   - RateLimitRequests: 10 (10 requests per window)
+//   - RateLimitWindow: 1 minute
 //
 // Example usage:
 //
@@ -133,7 +141,7 @@ func DefaultSecurityConfig() SecurityConfig {
 		PasswordRequireUpper:     true,
 		PasswordRequireLower:     true,
 		PasswordRequireNumber:    true,
-		PasswordRequireSpecial:   false,
+		PasswordRequireSpecial:   true,
 		MaxLoginAttempts:         5,
 		LockoutDuration:          15 * time.Minute,
 		SessionLifetime:          24 * time.Hour,
@@ -141,6 +149,9 @@ func DefaultSecurityConfig() SecurityConfig {
 		TwoFactorCodeExpiry:      5 * time.Minute,
 		Max2FAAttempts:           3,
 		TwoFactorLockoutDuration: 15 * time.Minute,
+		EnableRateLimiting:       true,
+		RateLimitRequests:        10,
+		RateLimitWindow:          1 * time.Minute,
 	}
 }
 
@@ -344,6 +355,7 @@ type AuthService struct {
 	oauthConfigs   map[string]*oauth2.Config
 	securityConfig SecurityConfig
 	validator      *validator.Validate
+	rateLimiter    *RateLimiter
 }
 
 // NewAuthService creates a new authentication service with the provided configuration.
@@ -423,6 +435,11 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 		oauthConfigs:   oauthConfigs,
 		securityConfig: securityConfig,
 		validator:      validator,
+	}
+
+	// Initialize rate limiter if enabled
+	if securityConfig.EnableRateLimiting {
+		service.rateLimiter = NewRateLimiter(securityConfig.RateLimitRequests, securityConfig.RateLimitWindow)
 	}
 
 	return service, nil
@@ -578,5 +595,9 @@ func (a *AuthService) GetStorage() Storage {
 //
 //	// Application logic...
 func (a *AuthService) Close() error {
+	// Cleanup rate limiter if it exists
+	if a.rateLimiter != nil {
+		a.rateLimiter.Cleanup()
+	}
 	return a.storage.Close()
 }

@@ -17,7 +17,7 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		// Create first user
 		req1 := createTestRequest(t, "POST", "/signup", map[string]interface{}{
 			"email":    "duplicate@example.com",
-			"password": "TestPassword123",
+			"password": "TestPassword123!",
 		})
 		resp1 := authService.SignUpHandler(req1)
 		if resp1.StatusCode != http.StatusCreated {
@@ -27,7 +27,7 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		// Try to create duplicate user
 		req2 := createTestRequest(t, "POST", "/signup", map[string]interface{}{
 			"email":    "duplicate@example.com",
-			"password": "TestPassword456",
+			"password": "TestPassword456!",
 		})
 		resp2 := authService.SignUpHandler(req2)
 
@@ -51,7 +51,7 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		// Try to sign in
 		signinReq := createTestRequest(t, "POST", "/signin", map[string]interface{}{
 			"email":    user.Email,
-			"password": "TestPassword123",
+			"password": "TestPassword123!",
 		})
 
 		signinResp := authService.SignInHandler(signinReq)
@@ -72,7 +72,7 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		// Try to sign in
 		signinReq := createTestRequest(t, "POST", "/signin", map[string]interface{}{
 			"email":    user.Email,
-			"password": "TestPassword123",
+			"password": "TestPassword123!",
 		})
 
 		signinResp := authService.SignInHandler(signinReq)
@@ -95,7 +95,7 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		// Try to sign in
 		signinReq := createTestRequest(t, "POST", "/signin", map[string]interface{}{
 			"email":    user.Email,
-			"password": "TestPassword123",
+			"password": "TestPassword123!",
 		})
 
 		signinResp := authService.SignInHandler(signinReq)
@@ -115,7 +115,7 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			signinReq := createTestRequest(t, "POST", "/signin", map[string]interface{}{
 				"email":    user.Email,
-				"password": "WrongPassword",
+				"password": "WrongPassword!",
 			})
 
 			signinResp := authService.SignInHandler(signinReq)
@@ -168,7 +168,7 @@ func TestHandlers_SuccessScenarios(t *testing.T) {
 
 	t.Run("complete_signup_signin_cycle", func(t *testing.T) {
 		email := "cycle@example.com"
-		password := "TestPassword123"
+		password := "TestPassword123!"
 
 		// Signup
 		signupReq := createTestRequest(t, "POST", "/signup", map[string]interface{}{
@@ -279,7 +279,7 @@ func TestHandlers_InputValidation(t *testing.T) {
 				name: "empty_email",
 				payload: map[string]interface{}{
 					"email":    "",
-					"password": "TestPassword123",
+					"password": "TestPassword123!",
 				},
 				status: http.StatusBadRequest,
 			},
@@ -287,7 +287,7 @@ func TestHandlers_InputValidation(t *testing.T) {
 				name: "invalid_email_format",
 				payload: map[string]interface{}{
 					"email":    "not-an-email",
-					"password": "TestPassword123",
+					"password": "TestPassword123!",
 				},
 				status: http.StatusBadRequest,
 			},
@@ -333,7 +333,7 @@ func TestHandlers_InputValidation(t *testing.T) {
 				name: "empty_email",
 				payload: map[string]interface{}{
 					"email":    "",
-					"password": "TestPassword123",
+					"password": "TestPassword123!",
 				},
 				status: http.StatusBadRequest,
 			},
@@ -341,7 +341,7 @@ func TestHandlers_InputValidation(t *testing.T) {
 				name: "invalid_email_format",
 				payload: map[string]interface{}{
 					"email":    "not-an-email",
-					"password": "TestPassword123",
+					"password": "TestPassword123!",
 				},
 				status: http.StatusBadRequest,
 			},

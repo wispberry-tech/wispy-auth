@@ -8,3 +8,4 @@ example/auth_test.db-wal
 *.exe
 coverage
 coverage.out
+examples/core/wispy-auth-example

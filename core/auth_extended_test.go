@@ -247,7 +247,7 @@ func TestAuthService_ConcurrentAccess(t *testing.T) {
 
 				req := createTestRequest(t, "POST", "/signup", map[string]interface{}{
 					"email":      fmt.Sprintf("user%d@example.com", userNum),
-					"password":   "TestPassword123",
+					"password":   "TestPassword123!",
 					"first_name": fmt.Sprintf("User%d", userNum),
 				})
 
@@ -269,7 +269,7 @@ func TestAuthService_ConcurrentAccess(t *testing.T) {
 		// First create a user
 		signupReq := createTestRequest(t, "POST", "/signup", map[string]interface{}{
 			"email":    "concurrent@example.com",
-			"password": "TestPassword123",
+			"password": "TestPassword123!",
 		})
 		signupResp := authService.SignUpHandler(signupReq)
 		if signupResp.StatusCode != http.StatusCreated {
@@ -285,7 +285,7 @@ func TestAuthService_ConcurrentAccess(t *testing.T) {
 
 				req := createTestRequest(t, "POST", "/signin", map[string]interface{}{
 					"email":    "concurrent@example.com",
-					"password": "TestPassword123",
+					"password": "TestPassword123!",
 				})
 
 				response := authService.SignInHandler(req)
@@ -312,7 +312,7 @@ func TestPasswordSecurity(t *testing.T) {
 	}{
 		{
 			name:     "meets_all_requirements",
-			password: "TestPassword123!",
+			password: "TestPassword123!!",
 			config: SecurityConfig{
 				PasswordMinLength:      8,
 				PasswordRequireUpper:   true,

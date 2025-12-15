@@ -150,3 +150,23 @@ func GetSessionFromContext(r *http.Request) *Session {
 	}
 	return nil
 }
+
+// RateLimitMiddleware provides rate limiting middleware for HTTP handlers
+func (a *AuthService) RateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip rate limiting if disabled
+		if !a.securityConfig.EnableRateLimiting || a.rateLimiter == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		ip := extractIP(r)
+		if !a.rateLimiter.IsAllowed(ip) {
+			slog.Warn("Rate limit exceeded", "ip", ip, "path", r.URL.Path)
+			http.Error(w, "Too many requests", http.StatusTooManyRequests)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}

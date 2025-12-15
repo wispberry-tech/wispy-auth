@@ -70,6 +70,9 @@ func main() {
 	mux.HandleFunc("GET /", handleHome)
 	mux.HandleFunc("GET /health", handleHealth)
 
+	// Apply rate limiting middleware to all routes
+	handler := authService.RateLimitMiddleware(mux)
+
 	slog.Info("Starting server on :8080")
 	slog.Info("Available endpoints:")
 	slog.Info("  POST /signup - User registration")
@@ -83,7 +86,7 @@ func main() {
 	slog.Info("  GET / - Home page")
 	slog.Info("  GET /health - Health check")
 
-	if err := http.ListenAndServe(":8080", mux); err != nil {
+	if err := http.ListenAndServe(":8080", handler); err != nil {
 		log.Fatal("Server failed:", err)
 	}
 }
@@ -94,7 +97,9 @@ func handleSignUp(authService *core.AuthService) http.HandlerFunc {
 		result := authService.SignUpHandler(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(result.StatusCode)
-		json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode signup response", "error", err)
+		}
 	}
 }
 
@@ -104,7 +109,9 @@ func handleSignIn(authService *core.AuthService) http.HandlerFunc {
 		result := authService.SignInHandler(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(result.StatusCode)
-		json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode signin response", "error", err)
+		}
 	}
 }
 
@@ -114,7 +121,9 @@ func handleLogout(authService *core.AuthService) http.HandlerFunc {
 		result := authService.LogoutHandler(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(result.StatusCode)
-		json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode logout response", "error", err)
+		}
 	}
 }
 
@@ -124,7 +133,9 @@ func handleValidate(authService *core.AuthService) http.HandlerFunc {
 		result := authService.ValidateHandler(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(result.StatusCode)
-		json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode validate response", "error", err)
+		}
 	}
 }
 
@@ -135,7 +146,9 @@ func handleOAuthInit(authService *core.AuthService) http.HandlerFunc {
 		result := authService.OAuthInitHandler(r, provider)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(result.StatusCode)
-		json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode OAuth init response", "error", err)
+		}
 	}
 }
 
@@ -146,7 +159,9 @@ func handleOAuthCallback(authService *core.AuthService) http.HandlerFunc {
 		result := authService.OAuthCallbackHandler(r, provider)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(result.StatusCode)
-		json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode OAuth callback response", "error", err)
+		}
 	}
 }
 
@@ -160,7 +175,9 @@ func handleProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode profile response", "error", err)
+	}
 }
 
 // handleSessions handles user session listing
@@ -169,7 +186,9 @@ func handleSessions(authService *core.AuthService) http.HandlerFunc {
 		result := authService.GetSessionsHandler(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(result.StatusCode)
-		json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode sessions response", "error", err)
+		}
 	}
 }
 
@@ -178,15 +197,15 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"message": "Welcome to Wispy Auth Core Demo",
 		"endpoints": map[string]string{
-			"POST /signup":   "User registration",
-			"POST /signin":   "User authentication",
-			"POST /logout":   "User logout",
-			"GET /validate":  "Token validation",
+			"POST /signup":     "User registration",
+			"POST /signin":     "User authentication",
+			"POST /logout":     "User logout",
+			"GET /validate":    "Token validation",
 			"GET /auth/google": "Google OAuth",
 			"GET /auth/github": "GitHub OAuth",
-			"GET /profile":   "Get user profile (protected)",
-			"GET /sessions":  "Get user sessions (protected)",
-			"GET /health":    "Health check",
+			"GET /profile":     "Get user profile (protected)",
+			"GET /sessions":    "Get user sessions (protected)",
+			"GET /health":      "Health check",
 		},
 		"example_requests": map[string]interface{}{
 			"signup": map[string]interface{}{
@@ -194,7 +213,7 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
 				"url":    "/signup",
 				"body": map[string]string{
 					"email":      "user@example.com",
-					"password":   "SecurePass123",
+					"password":   "SecurePass123!",
 					"first_name": "John",
 					"last_name":  "Doe",
 				},
@@ -204,14 +223,16 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
 				"url":    "/signin",
 				"body": map[string]string{
 					"email":    "user@example.com",
-					"password": "SecurePass123",
+					"password": "SecurePass123!",
 				},
 			},
 		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode home response", "error", err)
+	}
 }
 
 // handleHealth handles health check
@@ -223,5 +244,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode health response", "error", err)
+	}
 }

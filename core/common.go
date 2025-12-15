@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -189,3 +190,68 @@ const (
 	EventSessionTerminated  = "session_terminated"
 	EventSuspiciousActivity = "suspicious_activity"
 )
+
+// RateLimiter provides in-memory rate limiting functionality
+type RateLimiter struct {
+	requests    map[string][]time.Time
+	maxRequests int
+	window      time.Duration
+	mu          sync.RWMutex
+}
+
+// NewRateLimiter creates a new rate limiter
+func NewRateLimiter(maxRequests int, window time.Duration) *RateLimiter {
+	return &RateLimiter{
+		requests:    make(map[string][]time.Time),
+		maxRequests: maxRequests,
+		window:      window,
+	}
+}
+
+// IsAllowed checks if a request from the given key (IP address) is allowed
+func (rl *RateLimiter) IsAllowed(key string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	requests := rl.requests[key]
+
+	// Remove old requests outside the window
+	var validRequests []time.Time
+	for _, reqTime := range requests {
+		if now.Sub(reqTime) < rl.window {
+			validRequests = append(validRequests, reqTime)
+		}
+	}
+
+	// Check if under limit
+	if len(validRequests) < rl.maxRequests {
+		validRequests = append(validRequests, now)
+		rl.requests[key] = validRequests
+		return true
+	}
+
+	rl.requests[key] = validRequests
+	return false
+}
+
+// Cleanup removes old entries to prevent memory leaks
+func (rl *RateLimiter) Cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	for key, requests := range rl.requests {
+		var validRequests []time.Time
+		for _, reqTime := range requests {
+			if now.Sub(reqTime) < rl.window {
+				validRequests = append(validRequests, reqTime)
+			}
+		}
+		if len(validRequests) == 0 {
+			delete(rl.requests, key)
+		} else {
+			rl.requests[key] = validRequests
+		}
+	}
+}

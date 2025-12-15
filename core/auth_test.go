@@ -118,7 +118,7 @@ func TestAuthService_SignUpHandler(t *testing.T) {
 			name: "valid_signup",
 			requestBody: map[string]interface{}{
 				"email":      "test@example.com",
-				"password":   "TestPassword123",
+				"password":   "TestPassword123!",
 				"first_name": "John",
 				"last_name":  "Doe",
 			},
@@ -143,7 +143,7 @@ func TestAuthService_SignUpHandler(t *testing.T) {
 			name: "invalid_email",
 			requestBody: map[string]interface{}{
 				"email":    "invalid-email",
-				"password": "TestPassword123",
+				"password": "TestPassword123!",
 			},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, response SignUpResponse) {
@@ -214,7 +214,7 @@ func TestAuthService_SignInHandler(t *testing.T) {
 	// First create a user to authenticate
 	signupReq := createTestRequest(t, "POST", "/signup", map[string]interface{}{
 		"email":      "signin@example.com",
-		"password":   "TestPassword123",
+		"password":   "TestPassword123!",
 		"first_name": "Test",
 		"last_name":  "User",
 	})
@@ -233,7 +233,7 @@ func TestAuthService_SignInHandler(t *testing.T) {
 			name: "valid_signin",
 			requestBody: map[string]interface{}{
 				"email":    "signin@example.com",
-				"password": "TestPassword123",
+				"password": "TestPassword123!",
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, response SignInResponse) {
@@ -253,7 +253,7 @@ func TestAuthService_SignInHandler(t *testing.T) {
 			name: "invalid_credentials",
 			requestBody: map[string]interface{}{
 				"email":    "signin@example.com",
-				"password": "WrongPassword",
+				"password": "WrongPassword!",
 			},
 			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, response SignInResponse) {
@@ -269,7 +269,7 @@ func TestAuthService_SignInHandler(t *testing.T) {
 			name: "nonexistent_user",
 			requestBody: map[string]interface{}{
 				"email":    "nonexistent@example.com",
-				"password": "TestPassword123",
+				"password": "TestPassword123!",
 			},
 			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, response SignInResponse) {
@@ -1095,7 +1095,7 @@ func mustCreateTestUserWithToken(t *testing.T, authService *AuthService) (*User,
 	email := "testuser-" + strings.ReplaceAll(t.Name(), "/", "-") + "@example.com"
 	signupReq := createTestRequest(t, "POST", "/signup", map[string]interface{}{
 		"email":      email,
-		"password":   "TestPassword123",
+		"password":   "TestPassword123!",
 		"first_name": "Test",
 		"last_name":  "User",
 	})

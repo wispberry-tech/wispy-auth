@@ -75,6 +75,9 @@ func (s *SQLiteStorage) CreateUser(user *User) error {
 		return fmt.Errorf("failed to get user ID: %w", err)
 	}
 
+	if id <= 0 || id > 1<<31-1 { // Check for valid positive ID within uint range
+		return fmt.Errorf("invalid user ID: %d", id)
+	}
 	user.ID = uint(id)
 
 	// Retrieve the generated UUID
@@ -250,6 +253,9 @@ func (s *SQLiteStorage) CreateUserWithSecurity(user *User, security *UserSecurit
 		return fmt.Errorf("failed to get user ID: %w", err)
 	}
 
+	if id <= 0 || id > 1<<31-1 { // Check for valid positive ID within uint range
+		return fmt.Errorf("invalid user ID: %d", id)
+	}
 	user.ID = uint(id)
 	security.UserID = user.ID
 
@@ -491,6 +497,9 @@ func (s *SQLiteStorage) CreateSession(session *Session) error {
 		return fmt.Errorf("failed to get session ID: %w", err)
 	}
 
+	if id <= 0 || id > 1<<31-1 { // Check for valid positive ID within uint range
+		return fmt.Errorf("invalid session ID: %d", id)
+	}
 	session.ID = uint(id)
 	return nil
 }
@@ -666,6 +675,9 @@ func (s *SQLiteStorage) StoreOAuthState(state *OAuthState) error {
 		return fmt.Errorf("failed to get OAuth state ID: %w", err)
 	}
 
+	if id <= 0 || id > 1<<31-1 { // Check for valid positive ID within uint range
+		return fmt.Errorf("invalid OAuth state ID: %d", id)
+	}
 	state.ID = uint(id)
 	return nil
 }
@@ -750,6 +762,9 @@ func (s *SQLiteStorage) CreateSecurityEvent(event *SecurityEvent) error {
 		return fmt.Errorf("failed to get security event ID: %w", err)
 	}
 
+	if id <= 0 || id > 1<<31-1 { // Check for valid positive ID within uint range
+		return fmt.Errorf("invalid security event ID: %d", id)
+	}
 	event.ID = uint(id)
 	return nil
 }
