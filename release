@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Script to create and push a new release tag
+
+echo "Enter the version/tag for the release (e.g., v1.0.0):"
+read -r version
+
+if [ -z "$version" ]; then
+    echo "Error: Version cannot be empty."
+    exit 1
+fi
+
+# Create the tag
+git tag "$version"
+
+# Push the tag to origin
+git push origin "$version"
+
+echo "Release tag '$version' created and pushed successfully."
