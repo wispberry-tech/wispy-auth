@@ -94,6 +94,25 @@ func main() {
 - `POST /logout` - User logout
 - `GET /validate` - Token validation
 
+### Password Management
+- `POST /forgot-password` - Request password reset
+- `POST /reset-password` - Reset password with token
+- `POST /change-password` - Change password (authenticated)
+
+**Note:** Password reset functionality must be enabled in the security configuration:
+
+```go
+config := core.Config{
+    Storage: storage,
+    SecurityConfig: core.SecurityConfig{
+        AllowUserPasswordReset: true, // Enable user self-service password reset
+        // ... other settings
+    },
+}
+```
+
+If `AllowUserPasswordReset` is `false` (default), the forgot password endpoint will return a 403 Forbidden error.
+
 ### OAuth
 - `GET /auth/{provider}` - Initialize OAuth flow
 - `GET /auth/{provider}/callback` - OAuth callback
@@ -102,16 +121,77 @@ func main() {
 - `GET /profile` - Get user profile
 - `GET /sessions` - Get user sessions
 
+### Password Reset API
+
+#### Request Password Reset
+```http
+POST /forgot-password
+Content-Type: application/json
+
+{
+  "email": "user@example.com"
+}
+```
+
+**Response (200):**
+```json
+{
+  "message": "If an account with this email exists, a password reset link has been sent.",
+  "token": "reset_token_here"  // Only in development
+}
+```
+
+#### Reset Password
+```http
+POST /reset-password
+Content-Type: application/json
+
+{
+  "token": "reset_token_from_email",
+  "password": "NewSecurePassword123!"
+}
+```
+
+**Response (200):**
+```json
+{
+  "message": "Password has been successfully reset"
+}
+```
+
+#### Change Password (Authenticated)
+```http
+POST /change-password
+Authorization: Bearer <session_token>
+Content-Type: application/json
+
+{
+  "current_password": "OldPassword123!",
+  "new_password": "NewSecurePassword123!"
+}
+```
+
+**Response (200):**
+```json
+{
+  "message": "Password has been successfully changed"
+}
+```
+
 ## Configuration
 
 ### Security Config
 ```go
 config := core.SecurityConfig{
+    // Password security
     PasswordMinLength:        8,
     PasswordRequireUpper:     true,
     PasswordRequireLower:     true,
     PasswordRequireNumber:    true,
     PasswordRequireSpecial:   true,
+    AllowUserPasswordReset:   false, // Default: users cannot reset their own passwords
+    
+    // Authentication security
     MaxLoginAttempts:         5,
     LockoutDuration:          15 * time.Minute,
     SessionLifetime:          24 * time.Hour,

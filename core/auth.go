@@ -73,6 +73,7 @@ var (
 // Password Security:
 //   - Controls password complexity requirements
 //   - Configurable minimum length and character class requirements
+//   - User self-service password reset enable/disable
 //
 // Authentication Security:
 //   - Login attempt tracking and account lockout protection
@@ -92,6 +93,7 @@ type SecurityConfig struct {
 	PasswordRequireLower   bool
 	PasswordRequireNumber  bool
 	PasswordRequireSpecial bool
+	AllowUserPasswordReset bool // Whether users can reset their own passwords
 
 	// Login security
 	MaxLoginAttempts int           // Maximum failed login attempts before lockout
@@ -118,6 +120,7 @@ type SecurityConfig struct {
 //   - PasswordRequireLower: true (requires lowercase letters)
 //   - PasswordRequireNumber: true (requires numeric digits)
 //   - PasswordRequireSpecial: true (special characters required)
+//   - AllowUserPasswordReset: false (users cannot reset their own passwords)
 //   - MaxLoginAttempts: 5 (account locked after 5 failed attempts)
 //   - LockoutDuration: 15 minutes
 //   - SessionLifetime: 24 hours
@@ -142,6 +145,7 @@ func DefaultSecurityConfig() SecurityConfig {
 		PasswordRequireLower:     true,
 		PasswordRequireNumber:    true,
 		PasswordRequireSpecial:   true,
+		AllowUserPasswordReset:   false,
 		MaxLoginAttempts:         5,
 		LockoutDuration:          15 * time.Minute,
 		SessionLifetime:          24 * time.Hour,
@@ -571,6 +575,104 @@ func (a *AuthService) logSecurityEvent(userID *uint, eventType, description, ipA
 //	}
 func (a *AuthService) GetStorage() Storage {
 	return a.storage
+}
+
+// AdminResetPassword allows an administrator to reset a user's password.
+//
+// This method is intended for administrative use cases where an admin needs to
+// reset another user's password. It generates a temporary password and forces
+// the user to change their password on next login.
+//
+// Parameters:
+//   - adminUserID: ID of the admin performing the reset (for logging)
+//   - targetUserID: ID of the user whose password is being reset
+//
+// Returns:
+//   - tempPassword: A temporary password the user can use to login
+//   - error: Any error encountered during the reset process
+//
+// Security considerations:
+//   - This method should only be called after verifying admin permissions
+//   - All existing sessions for the target user are invalidated
+//   - The user is forced to change their password on next login
+//   - Security events are logged for audit purposes
+//
+// Example:
+//
+//	// Check if current user is admin (application-level logic)
+//	if !isAdmin(currentUser) {
+//		return fmt.Errorf("admin access required")
+//	}
+//
+//	tempPassword, err := authService.AdminResetPassword(currentUser.ID, targetUserID)
+//	if err != nil {
+//		return fmt.Errorf("failed to reset password: %w", err)
+//	}
+//
+//	// Communicate tempPassword to the user securely
+func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string, error) {
+	// Get target user
+	targetUser, err := a.storage.GetUserByID(targetUserID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get target user: %w", err)
+	}
+	if targetUser == nil {
+		return "", fmt.Errorf("target user not found")
+	}
+
+	// Generate a secure temporary password
+	tempPassword, err := generateSecureToken(16)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate temporary password: %w", err)
+	}
+
+	// Hash the temporary password
+	hashedPassword, err := hashPassword(tempPassword)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash temporary password: %w", err)
+	}
+
+	// Update user password
+	targetUser.PasswordHash = hashedPassword
+	targetUser.UpdatedAt = time.Now()
+	if err := a.storage.UpdateUser(targetUser); err != nil {
+		return "", fmt.Errorf("failed to update user password: %w", err)
+	}
+
+	// Update user security info to force password change
+	security, err := a.storage.GetUserSecurity(targetUserID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get user security: %w", err)
+	}
+
+	now := time.Now()
+	security.PasswordChangedAt = &now
+	security.ForcePasswordChange = true
+	if err := a.storage.UpdateUserSecurity(security); err != nil {
+		return "", fmt.Errorf("failed to update user security: %w", err)
+	}
+
+	// Delete all user sessions for security
+	if err := a.storage.DeleteUserSessions(targetUserID); err != nil {
+		slog.Error("Failed to delete user sessions during admin reset", "error", err, "user_id", targetUserID)
+		// Don't fail the operation for this
+	}
+
+	// Log security events
+	a.logSecurityEvent(&adminUserID, EventPasswordReset,
+		fmt.Sprintf("Admin reset password for user %d", targetUserID),
+		"", "", true)
+
+	a.logSecurityEvent(&targetUserID, EventPasswordReset,
+		"Password reset by administrator",
+		"", "", true)
+
+	slog.Info("Admin password reset completed",
+		"admin_user_id", adminUserID,
+		"target_user_id", targetUserID,
+		"target_email", targetUser.Email)
+
+	return tempPassword, nil
 }
 
 // Close closes the auth service and cleans up resources.

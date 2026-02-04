@@ -8,6 +8,7 @@ A comprehensive authentication library for Go applications with a focus on secur
 
 ### Core Authentication
 - **Email/Password Authentication** - Secure user registration and login with configurable password requirements
+- **Password Management** - Optional user self-service password reset with admin override capability
 - **Multi-Provider OAuth2** - Built-in support for Google, GitHub, Discord, and custom OAuth providers
 - **Session Management** - Secure JWT-like session tokens with device tracking and automatic expiration
 - **Security Tracking** - Comprehensive audit logging, failed login attempt tracking, and account lockout protection
@@ -88,6 +89,13 @@ func main() {
     mux.HandleFunc("POST /signin", handleSignIn(authService))
     mux.HandleFunc("POST /logout", handleLogout(authService))
     mux.HandleFunc("GET /validate", handleValidate(authService))
+
+    // Password reset endpoints
+    mux.HandleFunc("POST /forgot-password", handleForgotPassword(authService))
+    mux.HandleFunc("POST /reset-password", handleResetPassword(authService))
+    mux.Handle("POST /change-password", authService.AuthMiddleware(
+        http.HandlerFunc(handleChangePassword),
+    ))
 
     // OAuth endpoints  
     mux.HandleFunc("GET /auth/{provider}", handleOAuthInit(authService))
@@ -194,6 +202,7 @@ config := core.Config{
         PasswordRequireLower:   true, 
         PasswordRequireNumber:  true,
         PasswordRequireSpecial: true,
+        AllowUserPasswordReset: false, // Default: users cannot reset their own passwords
         
         // Account lockout settings
         MaxLoginAttempts: 5,

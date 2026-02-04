@@ -118,6 +118,16 @@ type OAuthState struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// PasswordResetToken represents a password reset token
+type PasswordResetToken struct {
+	ID        uint       `json:"id"`
+	UserID    uint       `json:"user_id"`
+	Token     string     `json:"token"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	UsedAt    *time.Time `json:"used_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
 // Storage defines the contract for core authentication data storage operations
 type Storage interface {
 	// User operations - core identity only
@@ -163,6 +173,12 @@ type Storage interface {
 	CreateSecurityEvent(event *SecurityEvent) error
 	GetSecurityEvents(userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error)
 	GetSecurityEventsByUser(userID uint, limit int, offset int) ([]*SecurityEvent, error)
+
+	// Password Reset Token operations
+	CreatePasswordResetToken(token *PasswordResetToken) error
+	GetPasswordResetToken(token string) (*PasswordResetToken, error)
+	UsePasswordResetToken(token string) error
+	CleanupExpiredPasswordResetTokens() error
 
 	// Health check
 	Ping() error

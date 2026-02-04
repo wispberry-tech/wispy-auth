@@ -838,6 +838,85 @@ func (p *PostgresStorage) GetSecurityEventsByUser(userID uint, limit int, offset
 	return p.GetSecurityEvents(&userID, "", limit, offset)
 }
 
+// Password Reset Token operations
+func (p *PostgresStorage) CreatePasswordResetToken(token *PasswordResetToken) error {
+	query := `
+		INSERT INTO password_reset_tokens (user_id, token, expires_at, created_at)
+		VALUES ($1, $2, $3, $4)`
+
+	_, err := p.db.Exec(query, token.UserID, token.Token, token.ExpiresAt, token.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to create password reset token: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) GetPasswordResetToken(token string) (*PasswordResetToken, error) {
+	query := `
+		SELECT id, user_id, token, expires_at, used_at, created_at
+		FROM password_reset_tokens
+		WHERE token = $1 AND used_at IS NULL AND expires_at > $2`
+
+	var resetToken PasswordResetToken
+	var usedAt sql.NullTime
+
+	err := p.db.QueryRow(query, token, time.Now()).Scan(
+		&resetToken.ID,
+		&resetToken.UserID,
+		&resetToken.Token,
+		&resetToken.ExpiresAt,
+		&usedAt,
+		&resetToken.CreatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("password reset token not found or expired")
+		}
+		return nil, fmt.Errorf("failed to get password reset token: %w", err)
+	}
+
+	if usedAt.Valid {
+		resetToken.UsedAt = &usedAt.Time
+	}
+
+	return &resetToken, nil
+}
+
+func (p *PostgresStorage) UsePasswordResetToken(token string) error {
+	query := `UPDATE password_reset_tokens SET used_at = $1 WHERE token = $2 AND used_at IS NULL`
+
+	result, err := p.db.Exec(query, time.Now(), token)
+	if err != nil {
+		return fmt.Errorf("failed to use password reset token: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("password reset token not found or already used")
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) CleanupExpiredPasswordResetTokens() error {
+	query := `DELETE FROM password_reset_tokens WHERE expires_at < $1 OR (used_at IS NOT NULL AND used_at < $2)`
+
+	cutoffTime := time.Now().Add(-24 * time.Hour) // Keep used tokens for 24 hours
+
+	_, err := p.db.Exec(query, time.Now(), cutoffTime)
+	if err != nil {
+		return fmt.Errorf("failed to cleanup expired password reset tokens: %w", err)
+	}
+
+	return nil
+}
+
 // Health check
 func (p *PostgresStorage) Ping() error {
 	return p.db.Ping()

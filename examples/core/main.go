@@ -59,6 +59,11 @@ func main() {
 	mux.HandleFunc("POST /logout", handleLogout(authService))
 	mux.HandleFunc("GET /validate", handleValidate(authService))
 
+	// Password reset endpoints
+	mux.HandleFunc("POST /forgot-password", handleForgotPassword(authService))
+	mux.HandleFunc("POST /reset-password", handleResetPassword(authService))
+	mux.Handle("POST /change-password", authService.AuthMiddleware(http.HandlerFunc(handleChangePassword(authService))))
+
 	// OAuth endpoints
 	mux.HandleFunc("GET /auth/{provider}", handleOAuthInit(authService))
 	mux.HandleFunc("GET /auth/{provider}/callback", handleOAuthCallback(authService))
@@ -80,6 +85,9 @@ func main() {
 	slog.Info("  POST /signin - User authentication")
 	slog.Info("  POST /logout - User logout")
 	slog.Info("  GET /validate - Token validation")
+	slog.Info("  POST /forgot-password - Request password reset")
+	slog.Info("  POST /reset-password - Reset password with token")
+	slog.Info("  POST /change-password - Change password (protected)")
 	slog.Info("  GET /auth/google - Google OAuth")
 	slog.Info("  GET /auth/github - GitHub OAuth")
 	slog.Info("  GET /profile - Get user profile (protected)")
@@ -243,6 +251,42 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		slog.Error("Failed to encode home response", "error", err)
+	}
+}
+
+// handleForgotPassword handles password reset requests
+func handleForgotPassword(authService *core.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result := authService.ForgotPasswordHandler(r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(result.StatusCode)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode forgot password response", "error", err)
+		}
+	}
+}
+
+// handleResetPassword handles password reset confirmations
+func handleResetPassword(authService *core.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result := authService.ResetPasswordHandler(r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(result.StatusCode)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode reset password response", "error", err)
+		}
+	}
+}
+
+// handleChangePassword handles password change requests
+func handleChangePassword(authService *core.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result := authService.ChangePasswordHandler(r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(result.StatusCode)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			slog.Error("Failed to encode change password response", "error", err)
+		}
 	}
 }
 

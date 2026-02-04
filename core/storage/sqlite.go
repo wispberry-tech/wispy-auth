@@ -883,6 +883,85 @@ func (s *SQLiteStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutD
 	return wasLocked, nil
 }
 
+// Password Reset Token operations
+func (s *SQLiteStorage) CreatePasswordResetToken(token *PasswordResetToken) error {
+	query := `
+		INSERT INTO password_reset_tokens (user_id, token, expires_at, created_at)
+		VALUES (?, ?, ?, ?)`
+
+	_, err := s.db.Exec(query, token.UserID, token.Token, token.ExpiresAt, token.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to create password reset token: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStorage) GetPasswordResetToken(token string) (*PasswordResetToken, error) {
+	query := `
+		SELECT id, user_id, token, expires_at, used_at, created_at
+		FROM password_reset_tokens
+		WHERE token = ? AND used_at IS NULL AND expires_at > ?`
+
+	var resetToken PasswordResetToken
+	var usedAt sql.NullTime
+
+	err := s.db.QueryRow(query, token, time.Now()).Scan(
+		&resetToken.ID,
+		&resetToken.UserID,
+		&resetToken.Token,
+		&resetToken.ExpiresAt,
+		&usedAt,
+		&resetToken.CreatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("password reset token not found or expired")
+		}
+		return nil, fmt.Errorf("failed to get password reset token: %w", err)
+	}
+
+	if usedAt.Valid {
+		resetToken.UsedAt = &usedAt.Time
+	}
+
+	return &resetToken, nil
+}
+
+func (s *SQLiteStorage) UsePasswordResetToken(token string) error {
+	query := `UPDATE password_reset_tokens SET used_at = ? WHERE token = ? AND used_at IS NULL`
+
+	result, err := s.db.Exec(query, time.Now(), token)
+	if err != nil {
+		return fmt.Errorf("failed to use password reset token: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("password reset token not found or already used")
+	}
+
+	return nil
+}
+
+func (s *SQLiteStorage) CleanupExpiredPasswordResetTokens() error {
+	query := `DELETE FROM password_reset_tokens WHERE expires_at < ? OR (used_at IS NOT NULL AND used_at < ?)`
+
+	cutoffTime := time.Now().Add(-24 * time.Hour) // Keep used tokens for 24 hours
+
+	_, err := s.db.Exec(query, time.Now(), cutoffTime)
+	if err != nil {
+		return fmt.Errorf("failed to cleanup expired password reset tokens: %w", err)
+	}
+
+	return nil
+}
+
 // Health check
 func (s *SQLiteStorage) Ping() error {
 	return s.db.Ping()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -717,23 +718,25 @@ func TestOAuthProviderConfigurations(t *testing.T) {
 
 // mockStorage implements the Storage interface for testing
 type mockStorage struct {
-	mu             sync.RWMutex
-	users          map[string]*User
-	userSecurity   map[uint]*UserSecurity
-	sessions       map[string]*Session
-	securityEvents []*SecurityEvent
-	oauthStates    map[string]*OAuthState
-	nextUserID     uint
+	mu                  sync.RWMutex
+	users               map[string]*User
+	userSecurity        map[uint]*UserSecurity
+	sessions            map[string]*Session
+	securityEvents      []*SecurityEvent
+	oauthStates         map[string]*OAuthState
+	passwordResetTokens map[string]*PasswordResetToken
+	nextUserID          uint
 }
 
 func newMockStorage() *mockStorage {
 	return &mockStorage{
-		users:          make(map[string]*User),
-		userSecurity:   make(map[uint]*UserSecurity),
-		sessions:       make(map[string]*Session),
-		securityEvents: make([]*SecurityEvent, 0),
-		oauthStates:    make(map[string]*OAuthState),
-		nextUserID:     1,
+		users:               make(map[string]*User),
+		userSecurity:        make(map[uint]*UserSecurity),
+		sessions:            make(map[string]*Session),
+		securityEvents:      make([]*SecurityEvent, 0),
+		oauthStates:         make(map[string]*OAuthState),
+		passwordResetTokens: make(map[string]*PasswordResetToken),
+		nextUserID:          1,
 	}
 }
 
@@ -1148,6 +1151,40 @@ func (m *mockStorage) CleanupExpiredOAuthStates() error {
 	for state, oauthState := range m.oauthStates {
 		if oauthState.ExpiresAt.Before(now) {
 			delete(m.oauthStates, state)
+		}
+	}
+	return nil
+}
+
+func (m *mockStorage) CreatePasswordResetToken(token *PasswordResetToken) error {
+	m.passwordResetTokens[token.Token] = token
+	return nil
+}
+
+func (m *mockStorage) GetPasswordResetToken(tokenStr string) (*PasswordResetToken, error) {
+	token, exists := m.passwordResetTokens[tokenStr]
+	if !exists || token.UsedAt != nil || token.ExpiresAt.Before(time.Now()) {
+		return nil, fmt.Errorf("password reset token not found or expired")
+	}
+	return token, nil
+}
+
+func (m *mockStorage) UsePasswordResetToken(tokenStr string) error {
+	token, exists := m.passwordResetTokens[tokenStr]
+	if !exists {
+		return fmt.Errorf("password reset token not found")
+	}
+	now := time.Now()
+	token.UsedAt = &now
+	return nil
+}
+
+func (m *mockStorage) CleanupExpiredPasswordResetTokens() error {
+	now := time.Now()
+	cutoff := now.Add(-24 * time.Hour)
+	for tokenStr, token := range m.passwordResetTokens {
+		if token.ExpiresAt.Before(now) || (token.UsedAt != nil && token.UsedAt.Before(cutoff)) {
+			delete(m.passwordResetTokens, tokenStr)
 		}
 	}
 	return nil

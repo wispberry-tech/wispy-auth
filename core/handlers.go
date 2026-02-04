@@ -76,6 +76,45 @@ type LogoutResponse struct {
 	Error      string `json:"error,omitempty"` // Error message if any
 }
 
+// ForgotPasswordRequest represents a password reset request
+type ForgotPasswordRequest struct {
+	Email string `json:"email" validate:"required,email"` // User's email address
+}
+
+// ForgotPasswordResponse represents the response for password reset request
+type ForgotPasswordResponse struct {
+	Message    string `json:"message"`         // Success message with instructions
+	Token      string `json:"token,omitempty"` // Reset token (for development/testing)
+	StatusCode int    `json:"-"`               // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"` // Error message if any
+}
+
+// ResetPasswordRequest represents a password reset confirmation
+type ResetPasswordRequest struct {
+	Token    string `json:"token" validate:"required"`          // Reset token from email
+	Password string `json:"password" validate:"required,min=8"` // New password
+}
+
+// ResetPasswordResponse represents the response for password reset confirmation
+type ResetPasswordResponse struct {
+	Message    string `json:"message"`         // Success message
+	StatusCode int    `json:"-"`               // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"` // Error message if any
+}
+
+// ChangePasswordRequest represents a password change request (authenticated user)
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required"`   // Current password
+	NewPassword     string `json:"new_password" validate:"required,min=8"` // New password
+}
+
+// ChangePasswordResponse represents the response for password change
+type ChangePasswordResponse struct {
+	Message    string `json:"message"`         // Success message
+	StatusCode int    `json:"-"`               // HTTP status code (not serialized)
+	Error      string `json:"error,omitempty"` // Error message if any
+}
+
 // SignUpHandler processes user registration requests
 func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 	var req SignUpRequest
@@ -496,5 +535,299 @@ func (a *AuthService) GetSessionsHandler(r *http.Request) SessionsResponse {
 	return SessionsResponse{
 		StatusCode: http.StatusOK,
 		Sessions:   sessions,
+	}
+}
+
+// ForgotPasswordHandler processes password reset requests
+func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordResponse {
+	var req ForgotPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Debug("Failed to decode forgot password request", "error", err)
+		return ForgotPasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      "Invalid request format",
+		}
+	}
+
+	// Validate request
+	if err := a.validator.Struct(req); err != nil {
+		return ForgotPasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      formatValidationErrors(err),
+		}
+	}
+
+	// Check if user password reset is allowed
+	if !a.securityConfig.AllowUserPasswordReset {
+		slog.Warn("Password reset attempted but disabled in configuration")
+		return ForgotPasswordResponse{
+			StatusCode: http.StatusForbidden,
+			Error:      "Password reset is not enabled",
+		}
+	}
+
+	// Find user by email (any provider)
+	user, err := a.storage.GetUserByEmailAnyProvider(req.Email)
+	if err != nil {
+		// Don't reveal if email exists or not for security
+		slog.Info("Password reset requested for unknown email", "email", req.Email)
+		return ForgotPasswordResponse{
+			StatusCode: http.StatusOK,
+			Message:    "If an account with this email exists, a password reset link has been sent.",
+		}
+	}
+
+	// Check if user has email provider (password-based auth)
+	if user.Provider != "email" {
+		slog.Info("Password reset attempted for OAuth user", "email", req.Email, "provider", user.Provider)
+		return ForgotPasswordResponse{
+			StatusCode: http.StatusOK,
+			Message:    "If an account with this email exists, a password reset link has been sent.",
+		}
+	}
+
+	// Generate secure reset token
+	token, err := generateSecureToken(32)
+	if err != nil {
+		slog.Error("Failed to generate password reset token", "error", err)
+		return ForgotPasswordResponse{
+			StatusCode: http.StatusInternalServerError,
+			Error:      "Failed to generate reset token",
+		}
+	}
+
+	// Create reset token record
+	resetToken := &PasswordResetToken{
+		UserID:    user.ID,
+		Token:     token,
+		ExpiresAt: time.Now().Add(1 * time.Hour), // 1 hour expiry
+		CreatedAt: time.Now(),
+	}
+
+	if err := a.storage.CreatePasswordResetToken(resetToken); err != nil {
+		slog.Error("Failed to create password reset token", "error", err)
+		return ForgotPasswordResponse{
+			StatusCode: http.StatusInternalServerError,
+			Error:      "Failed to create reset token",
+		}
+	}
+
+	// Log security event
+	a.logSecurityEvent(&user.ID, EventPasswordReset, "Password reset requested",
+		extractIP(r), r.Header.Get("User-Agent"), true)
+
+	// For development: return token in response
+	// In production, this would send an email
+	resetURL := fmt.Sprintf("http://localhost:8080/reset-password?token=%s", token)
+	slog.Info("Password reset requested", "email", req.Email, "reset_url", resetURL)
+
+	return ForgotPasswordResponse{
+		StatusCode: http.StatusOK,
+		Message:    "If an account with this email exists, a password reset link has been sent.",
+		Token:      token, // Remove this in production
+	}
+}
+
+// ResetPasswordHandler processes password reset confirmations
+func (a *AuthService) ResetPasswordHandler(r *http.Request) ResetPasswordResponse {
+	var req ResetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Debug("Failed to decode reset password request", "error", err)
+		return ResetPasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      "Invalid request format",
+		}
+	}
+
+	// Validate request
+	if err := a.validator.Struct(req); err != nil {
+		return ResetPasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      formatValidationErrors(err),
+		}
+	}
+
+	// Validate password strength
+	if err := validatePasswordStrength(req.Password, a.securityConfig); err != nil {
+		return ResetPasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      err.Error(),
+		}
+	}
+
+	// Get and validate reset token
+	resetToken, err := a.storage.GetPasswordResetToken(req.Token)
+	if err != nil {
+		slog.Warn("Invalid or expired password reset token used", "error", err)
+		return ResetPasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      "Invalid or expired reset token",
+		}
+	}
+
+	// Get user
+	user, err := a.storage.GetUserByID(resetToken.UserID)
+	if err != nil {
+		slog.Error("Failed to get user for password reset", "error", err)
+		return ResetPasswordResponse{
+			StatusCode: http.StatusInternalServerError,
+			Error:      "Failed to retrieve user",
+		}
+	}
+
+	// Hash new password
+	hashedPassword, err := hashPassword(req.Password)
+	if err != nil {
+		slog.Error("Failed to hash new password", "error", err)
+		return ResetPasswordResponse{
+			StatusCode: http.StatusInternalServerError,
+			Error:      "Failed to process password",
+		}
+	}
+
+	// Update user password
+	user.PasswordHash = hashedPassword
+	user.UpdatedAt = time.Now()
+	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to update user password", "error", err)
+		return ResetPasswordResponse{
+			StatusCode: http.StatusInternalServerError,
+			Error:      "Failed to update password",
+		}
+	}
+
+	// Update user security info
+	security, err := a.storage.GetUserSecurity(user.ID)
+	if err != nil {
+		slog.Error("Failed to get user security for password update", "error", err)
+	} else {
+		now := time.Now()
+		security.PasswordChangedAt = &now
+		security.ForcePasswordChange = false
+		if err := a.storage.UpdateUserSecurity(security); err != nil {
+			slog.Error("Failed to update user security after password change", "error", err)
+		}
+	}
+
+	// Mark token as used
+	if err := a.storage.UsePasswordResetToken(req.Token); err != nil {
+		slog.Error("Failed to mark reset token as used", "error", err)
+		// Don't fail the request for this
+	}
+
+	// Delete all user sessions (security best practice)
+	if err := a.storage.DeleteUserSessions(user.ID); err != nil {
+		slog.Error("Failed to delete user sessions after password reset", "error", err)
+	}
+
+	// Log security event
+	a.logSecurityEvent(&user.ID, EventPasswordChanged, "Password reset completed",
+		extractIP(r), r.Header.Get("User-Agent"), true)
+
+	return ResetPasswordResponse{
+		StatusCode: http.StatusOK,
+		Message:    "Password has been successfully reset",
+	}
+}
+
+// ChangePasswordHandler processes password change requests for authenticated users
+func (a *AuthService) ChangePasswordHandler(r *http.Request) ChangePasswordResponse {
+	user := GetUserFromContext(r)
+	if user == nil {
+		return ChangePasswordResponse{
+			StatusCode: http.StatusUnauthorized,
+			Error:      "User not authenticated",
+		}
+	}
+
+	var req ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Debug("Failed to decode change password request", "error", err)
+		return ChangePasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      "Invalid request format",
+		}
+	}
+
+	// Validate request
+	if err := a.validator.Struct(req); err != nil {
+		return ChangePasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      formatValidationErrors(err),
+		}
+	}
+
+	// Validate new password strength
+	if err := validatePasswordStrength(req.NewPassword, a.securityConfig); err != nil {
+		return ChangePasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      err.Error(),
+		}
+	}
+
+	// Verify current password
+	if !checkPasswordHash(req.CurrentPassword, user.PasswordHash) {
+		// Log failed password change attempt
+		a.logSecurityEvent(&user.ID, EventPasswordChanged, "Password change failed - incorrect current password",
+			extractIP(r), r.Header.Get("User-Agent"), false)
+		return ChangePasswordResponse{
+			StatusCode: http.StatusBadRequest,
+			Error:      "Current password is incorrect",
+		}
+	}
+
+	// Hash new password
+	hashedPassword, err := hashPassword(req.NewPassword)
+	if err != nil {
+		slog.Error("Failed to hash new password", "error", err)
+		return ChangePasswordResponse{
+			StatusCode: http.StatusInternalServerError,
+			Error:      "Failed to process password",
+		}
+	}
+
+	// Update user password
+	user.PasswordHash = hashedPassword
+	user.UpdatedAt = time.Now()
+	if err := a.storage.UpdateUser(user); err != nil {
+		slog.Error("Failed to update user password", "error", err)
+		return ChangePasswordResponse{
+			StatusCode: http.StatusInternalServerError,
+			Error:      "Failed to update password",
+		}
+	}
+
+	// Update user security info
+	security, err := a.storage.GetUserSecurity(user.ID)
+	if err != nil {
+		slog.Error("Failed to get user security for password change", "error", err)
+	} else {
+		now := time.Now()
+		security.PasswordChangedAt = &now
+		security.ForcePasswordChange = false
+		if err := a.storage.UpdateUserSecurity(security); err != nil {
+			slog.Error("Failed to update user security after password change", "error", err)
+		}
+	}
+
+	// Delete all other user sessions (keep current session)
+	// Note: This is a security decision - password change invalidates other sessions
+	currentToken := extractTokenFromRequest(r)
+	sessions, err := a.storage.GetUserSessions(user.ID)
+	if err == nil {
+		for _, session := range sessions {
+			if session.Token != currentToken {
+				a.storage.DeleteSession(session.Token)
+			}
+		}
+	}
+
+	// Log security event
+	a.logSecurityEvent(&user.ID, EventPasswordChanged, "Password changed successfully",
+		extractIP(r), r.Header.Get("User-Agent"), true)
+
+	return ChangePasswordResponse{
+		StatusCode: http.StatusOK,
+		Message:    "Password has been successfully changed",
 	}
 }
