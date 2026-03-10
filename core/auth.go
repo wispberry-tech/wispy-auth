@@ -110,6 +110,17 @@ type SecurityConfig struct {
 	EnableRateLimiting bool          // Whether to enable rate limiting
 	RateLimitRequests  int           // Maximum requests per window
 	RateLimitWindow    time.Duration // Time window for rate limiting
+
+	// Token Management
+	OAuthStateExpiry        time.Duration // How long OAuth states remain valid (default: 15 minutes)
+	PasswordResetExpiry     time.Duration // How long password reset tokens remain valid (default: 1 hour)
+	DeviceFingerprintWindow time.Duration // Time window for device fingerprint (default: 1 hour)
+	TokenLength             int           // Session token length in bytes (default: 32)
+	BackupCodeCount         int           // Number of 2FA backup codes (default: 10)
+
+	// Cleanup Configuration
+	CleanupInterval time.Duration // How often to run cleanup jobs (default: 1 hour)
+	DebugMode       bool          // Enable debug features (returns tokens in response)
 }
 
 // DefaultSecurityConfig returns a secure default configuration suitable for most applications.
@@ -156,6 +167,13 @@ func DefaultSecurityConfig() SecurityConfig {
 		EnableRateLimiting:       true,
 		RateLimitRequests:        10,
 		RateLimitWindow:          1 * time.Minute,
+		OAuthStateExpiry:         15 * time.Minute,
+		PasswordResetExpiry:      1 * time.Hour,
+		DeviceFingerprintWindow:  1 * time.Hour,
+		TokenLength:              32,
+		BackupCodeCount:          10,
+		CleanupInterval:          1 * time.Hour,
+		DebugMode:                false,
 	}
 }
 
@@ -325,6 +343,7 @@ func NewCustomOAuthProvider(clientID, clientSecret, redirectURL, authURL, tokenU
 // Optional fields:
 //   - SecurityConfig: Uses DefaultSecurityConfig() if not provided
 //   - OAuthProviders: OAuth2 providers, can be empty map if not using OAuth
+//   - EmailService: Email service for sending 2FA codes and password reset emails
 //
 // The Storage field must be a valid implementation of the Storage interface.
 // Multiple implementations are available including SQLite and PostgreSQL.
@@ -332,6 +351,7 @@ type Config struct {
 	Storage        Storage                        // Storage implementation (required)
 	SecurityConfig SecurityConfig                 // Security configuration
 	OAuthProviders map[string]OAuthProviderConfig // OAuth provider configurations
+	EmailService   EmailService                   // Email service (optional, for 2FA)
 }
 
 // AuthService is the main service for handling authentication operations.
@@ -355,11 +375,64 @@ type Config struct {
 //
 // Thread safety: AuthService is safe for concurrent use across multiple goroutines.
 type AuthService struct {
-	storage        Storage
-	oauthConfigs   map[string]*oauth2.Config
-	securityConfig SecurityConfig
-	validator      *validator.Validate
-	rateLimiter    *RateLimiter
+	storage         Storage
+	oauthConfigs    map[string]*oauth2.Config
+	securityConfig  SecurityConfig
+	validator       *validator.Validate
+	rateLimiter     *RateLimiter
+	emailService    EmailService
+	cleanupInterval time.Duration
+	cleanupDone     chan struct{}
+}
+
+// validateSecurityConfig validates that the security configuration is sensible
+func validateSecurityConfig(cfg SecurityConfig) error {
+	if cfg.PasswordMinLength < 8 || cfg.PasswordMinLength > 128 {
+		return fmt.Errorf("PasswordMinLength must be between 8 and 128")
+	}
+	if cfg.MaxLoginAttempts < 1 || cfg.MaxLoginAttempts > 20 {
+		return fmt.Errorf("MaxLoginAttempts must be between 1 and 20")
+	}
+	if cfg.LockoutDuration < time.Minute || cfg.LockoutDuration > 24*time.Hour {
+		return fmt.Errorf("LockoutDuration must be between 1 minute and 24 hours")
+	}
+	if cfg.SessionLifetime < 5*time.Minute || cfg.SessionLifetime > 30*24*time.Hour {
+		return fmt.Errorf("SessionLifetime must be between 5 minutes and 30 days")
+	}
+	if cfg.RateLimitRequests < 1 || cfg.RateLimitRequests > 1000 {
+		return fmt.Errorf("RateLimitRequests must be between 1 and 1000")
+	}
+	if cfg.RateLimitWindow < time.Second || cfg.RateLimitWindow > time.Hour {
+		return fmt.Errorf("RateLimitWindow must be between 1 second and 1 hour")
+	}
+	if cfg.TwoFactorCodeExpiry < time.Minute || cfg.TwoFactorCodeExpiry > 1*time.Hour {
+		return fmt.Errorf("TwoFactorCodeExpiry must be between 1 minute and 1 hour")
+	}
+	if cfg.Max2FAAttempts < 1 || cfg.Max2FAAttempts > 10 {
+		return fmt.Errorf("Max2FAAttempts must be between 1 and 10")
+	}
+	if cfg.TwoFactorLockoutDuration < time.Minute || cfg.TwoFactorLockoutDuration > 24*time.Hour {
+		return fmt.Errorf("TwoFactorLockoutDuration must be between 1 minute and 24 hours")
+	}
+	if cfg.TokenLength < 16 || cfg.TokenLength > 64 {
+		return fmt.Errorf("TokenLength must be between 16 and 64")
+	}
+	if cfg.BackupCodeCount < 5 || cfg.BackupCodeCount > 20 {
+		return fmt.Errorf("BackupCodeCount must be between 5 and 20")
+	}
+	if cfg.OAuthStateExpiry < time.Minute || cfg.OAuthStateExpiry > 1*time.Hour {
+		return fmt.Errorf("OAuthStateExpiry must be between 1 minute and 1 hour")
+	}
+	if cfg.PasswordResetExpiry < time.Minute || cfg.PasswordResetExpiry > 24*time.Hour {
+		return fmt.Errorf("PasswordResetExpiry must be between 1 minute and 24 hours")
+	}
+	if cfg.DeviceFingerprintWindow < time.Minute || cfg.DeviceFingerprintWindow > 24*time.Hour {
+		return fmt.Errorf("DeviceFingerprintWindow must be between 1 minute and 24 hours")
+	}
+	if cfg.CleanupInterval < 1*time.Minute || cfg.CleanupInterval > 24*time.Hour {
+		return fmt.Errorf("CleanupInterval must be between 1 minute and 24 hours")
+	}
+	return nil
 }
 
 // NewAuthService creates a new authentication service with the provided configuration.
@@ -411,10 +484,75 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 		return nil, fmt.Errorf("failed to connect to storage: %w", err)
 	}
 
-	// Use default security config if not provided
-	securityConfig := cfg.SecurityConfig
-	if securityConfig.SessionLifetime == 0 {
-		securityConfig = DefaultSecurityConfig()
+	// Apply default security config and merge with user-provided config
+	securityConfig := DefaultSecurityConfig()
+	if cfg.SecurityConfig.PasswordMinLength != 0 {
+		securityConfig.PasswordMinLength = cfg.SecurityConfig.PasswordMinLength
+	}
+	if cfg.SecurityConfig.PasswordRequireUpper {
+		securityConfig.PasswordRequireUpper = cfg.SecurityConfig.PasswordRequireUpper
+	}
+	if cfg.SecurityConfig.PasswordRequireLower {
+		securityConfig.PasswordRequireLower = cfg.SecurityConfig.PasswordRequireLower
+	}
+	if cfg.SecurityConfig.PasswordRequireNumber {
+		securityConfig.PasswordRequireNumber = cfg.SecurityConfig.PasswordRequireNumber
+	}
+	if cfg.SecurityConfig.PasswordRequireSpecial {
+		securityConfig.PasswordRequireSpecial = cfg.SecurityConfig.PasswordRequireSpecial
+	}
+	if cfg.SecurityConfig.AllowUserPasswordReset {
+		securityConfig.AllowUserPasswordReset = cfg.SecurityConfig.AllowUserPasswordReset
+	}
+	if cfg.SecurityConfig.MaxLoginAttempts != 0 {
+		securityConfig.MaxLoginAttempts = cfg.SecurityConfig.MaxLoginAttempts
+	}
+	if cfg.SecurityConfig.LockoutDuration != 0 {
+		securityConfig.LockoutDuration = cfg.SecurityConfig.LockoutDuration
+	}
+	if cfg.SecurityConfig.SessionLifetime != 0 {
+		securityConfig.SessionLifetime = cfg.SecurityConfig.SessionLifetime
+	}
+	securityConfig.RequireTwoFactor = cfg.SecurityConfig.RequireTwoFactor
+	if cfg.SecurityConfig.TwoFactorCodeExpiry != 0 {
+		securityConfig.TwoFactorCodeExpiry = cfg.SecurityConfig.TwoFactorCodeExpiry
+	}
+	if cfg.SecurityConfig.Max2FAAttempts != 0 {
+		securityConfig.Max2FAAttempts = cfg.SecurityConfig.Max2FAAttempts
+	}
+	if cfg.SecurityConfig.TwoFactorLockoutDuration != 0 {
+		securityConfig.TwoFactorLockoutDuration = cfg.SecurityConfig.TwoFactorLockoutDuration
+	}
+	securityConfig.EnableRateLimiting = cfg.SecurityConfig.EnableRateLimiting
+	if cfg.SecurityConfig.RateLimitRequests != 0 {
+		securityConfig.RateLimitRequests = cfg.SecurityConfig.RateLimitRequests
+	}
+	if cfg.SecurityConfig.RateLimitWindow != 0 {
+		securityConfig.RateLimitWindow = cfg.SecurityConfig.RateLimitWindow
+	}
+	if cfg.SecurityConfig.OAuthStateExpiry != 0 {
+		securityConfig.OAuthStateExpiry = cfg.SecurityConfig.OAuthStateExpiry
+	}
+	if cfg.SecurityConfig.PasswordResetExpiry != 0 {
+		securityConfig.PasswordResetExpiry = cfg.SecurityConfig.PasswordResetExpiry
+	}
+	if cfg.SecurityConfig.DeviceFingerprintWindow != 0 {
+		securityConfig.DeviceFingerprintWindow = cfg.SecurityConfig.DeviceFingerprintWindow
+	}
+	if cfg.SecurityConfig.TokenLength != 0 {
+		securityConfig.TokenLength = cfg.SecurityConfig.TokenLength
+	}
+	if cfg.SecurityConfig.BackupCodeCount != 0 {
+		securityConfig.BackupCodeCount = cfg.SecurityConfig.BackupCodeCount
+	}
+	if cfg.SecurityConfig.CleanupInterval != 0 {
+		securityConfig.CleanupInterval = cfg.SecurityConfig.CleanupInterval
+	}
+	securityConfig.DebugMode = cfg.SecurityConfig.DebugMode
+
+	// Validate security configuration after applying defaults
+	if err := validateSecurityConfig(securityConfig); err != nil {
+		return nil, fmt.Errorf("invalid security configuration: %w", err)
 	}
 
 	// Convert OAuth provider configs to oauth2.Config
@@ -435,16 +573,22 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 	validator := validator.New()
 
 	service := &AuthService{
-		storage:        cfg.Storage,
-		oauthConfigs:   oauthConfigs,
-		securityConfig: securityConfig,
-		validator:      validator,
+		storage:         cfg.Storage,
+		oauthConfigs:    oauthConfigs,
+		securityConfig:  securityConfig,
+		validator:       validator,
+		emailService:    cfg.EmailService,
+		cleanupInterval: securityConfig.CleanupInterval,
+		cleanupDone:     make(chan struct{}),
 	}
 
 	// Initialize rate limiter if enabled
 	if securityConfig.EnableRateLimiting {
 		service.rateLimiter = NewRateLimiter(securityConfig.RateLimitRequests, securityConfig.RateLimitWindow)
 	}
+
+	// Start cleanup goroutine
+	service.startCleanup()
 
 	return service, nil
 }
@@ -621,7 +765,7 @@ func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string
 	}
 
 	// Generate a secure temporary password
-	tempPassword, err := generateSecureToken(16)
+	tempPassword, err := GenerateSecureToken(16)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate temporary password: %w", err)
 	}
@@ -675,6 +819,44 @@ func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string
 	return tempPassword, nil
 }
 
+// startCleanup starts the background goroutine for cleaning up expired data
+func (a *AuthService) startCleanup() {
+	go func() {
+		ticker := time.NewTicker(a.cleanupInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				a.cleanupExpiredData()
+			case <-a.cleanupDone:
+				return
+			}
+		}
+	}()
+}
+
+// cleanupExpiredData cleans up expired sessions, tokens, and OAuth states
+func (a *AuthService) cleanupExpiredData() {
+	slog.Debug("Running cleanup job")
+
+	if err := a.storage.CleanupExpiredSessions(); err != nil {
+		slog.Error("Failed to cleanup expired sessions", "error", err)
+	}
+	if err := a.storage.CleanupExpiredPasswordResetTokens(); err != nil {
+		slog.Error("Failed to cleanup expired password reset tokens", "error", err)
+	}
+	if err := a.storage.CleanupExpiredOAuthStates(); err != nil {
+		slog.Error("Failed to cleanup expired OAuth states", "error", err)
+	}
+	if err := a.storage.CleanupExpired2FACodes(); err != nil {
+		slog.Error("Failed to cleanup expired 2FA codes", "error", err)
+	}
+	if err := a.storage.CleanupExpiredRefreshTokens(); err != nil {
+		slog.Error("Failed to cleanup expired refresh tokens", "error", err)
+	}
+}
+
 // Close closes the auth service and cleans up resources.
 //
 // This method should be called when the application is shutting down to ensure
@@ -697,9 +879,15 @@ func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string
 //
 //	// Application logic...
 func (a *AuthService) Close() error {
-	// Cleanup rate limiter if it exists
+	close(a.cleanupDone) // Stop cleanup goroutine
+
 	if a.rateLimiter != nil {
 		a.rateLimiter.Cleanup()
 	}
+
+	if a.emailService != nil {
+		a.emailService.Close()
+	}
+
 	return a.storage.Close()
 }

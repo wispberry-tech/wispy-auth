@@ -917,6 +917,329 @@ func (p *PostgresStorage) CleanupExpiredPasswordResetTokens() error {
 	return nil
 }
 
+func (p *PostgresStorage) CleanupExpiredOAuthStates() error {
+	query := `DELETE FROM oauth_states WHERE expires_at < $1`
+
+	_, err := p.db.Exec(query, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to cleanup expired OAuth states: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) Create2FACode(code *TwoFactorCode) error {
+	query := `INSERT INTO two_factor_codes (user_id, code, code_type, expires_at, created_at)
+			  VALUES ($1, $2, $3, $4, $5) RETURNING id`
+
+	err := p.db.QueryRow(query,
+		code.UserID, code.Code, code.CodeType, code.ExpiresAt, code.CreatedAt).Scan(&code.ID)
+
+	if err != nil {
+		return fmt.Errorf("failed to create 2FA code: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) Get2FACode(userID uint, code string) (*TwoFactorCode, error) {
+	query := `SELECT id, user_id, code, code_type, expires_at, used_at, created_at
+			  FROM two_factor_codes
+			  WHERE user_id = $1 AND code = $2`
+
+	var twoFactorCode TwoFactorCode
+	var usedAt sql.NullTime
+
+	err := p.db.QueryRow(query, userID, code).Scan(
+		&twoFactorCode.ID,
+		&twoFactorCode.UserID,
+		&twoFactorCode.Code,
+		&twoFactorCode.CodeType,
+		&twoFactorCode.ExpiresAt,
+		&usedAt,
+		&twoFactorCode.CreatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get 2FA code: %w", err)
+	}
+
+	if usedAt.Valid {
+		twoFactorCode.UsedAt = &usedAt.Time
+	}
+
+	return &twoFactorCode, nil
+}
+
+func (p *PostgresStorage) GetLatestPending2FACode(code string) (*TwoFactorCode, error) {
+	query := `SELECT id, user_id, code, code_type, expires_at, used_at, created_at
+			  FROM two_factor_codes
+			  WHERE code = $1 AND used_at IS NULL
+			  ORDER BY created_at DESC
+			  LIMIT 1`
+
+	var twoFactorCode TwoFactorCode
+	var usedAt sql.NullTime
+
+	err := p.db.QueryRow(query, code).Scan(
+		&twoFactorCode.ID,
+		&twoFactorCode.UserID,
+		&twoFactorCode.Code,
+		&twoFactorCode.CodeType,
+		&twoFactorCode.ExpiresAt,
+		&usedAt,
+		&twoFactorCode.CreatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get latest pending 2FA code: %w", err)
+	}
+
+	if usedAt.Valid {
+		twoFactorCode.UsedAt = &usedAt.Time
+	}
+
+	return &twoFactorCode, nil
+}
+
+func (p *PostgresStorage) Use2FACode(userID uint, code string) error {
+	query := `UPDATE two_factor_codes SET used_at = $1 WHERE user_id = $2 AND code = $3 AND used_at IS NULL`
+
+	_, err := p.db.Exec(query, time.Now(), userID, code)
+	if err != nil {
+		return fmt.Errorf("failed to use 2FA code: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) Create2FABackupCode(code *TwoFactorBackupCode) error {
+	query := `INSERT INTO two_factor_backup_codes (user_id, code, created_at) VALUES ($1, $2, $3) RETURNING id`
+
+	err := p.db.QueryRow(query, code.UserID, code.Code, code.CreatedAt).Scan(&code.ID)
+	if err != nil {
+		return fmt.Errorf("failed to create 2FA backup code: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) Get2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
+	query := `SELECT id, user_id, code, used_at, created_at
+			  FROM two_factor_backup_codes
+			  WHERE user_id = $1
+			  ORDER BY id`
+
+	rows, err := p.db.Query(query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get 2FA backup codes: %w", err)
+	}
+	defer rows.Close()
+
+	var codes []*TwoFactorBackupCode
+	for rows.Next() {
+		var code TwoFactorBackupCode
+		var usedAt sql.NullTime
+
+		err := rows.Scan(&code.ID, &code.UserID, &code.Code, &usedAt, &code.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan 2FA backup code: %w", err)
+		}
+
+		if usedAt.Valid {
+			code.UsedAt = &usedAt.Time
+		}
+
+		codes = append(codes, &code)
+	}
+
+	return codes, nil
+}
+
+func (p *PostgresStorage) GetBackupCodeByCode(code string) (*TwoFactorBackupCode, error) {
+	query := `SELECT id, user_id, code, used_at, created_at
+			  FROM two_factor_backup_codes
+			  WHERE code = $1 AND used_at IS NULL`
+
+	var backupCode TwoFactorBackupCode
+	var usedAt sql.NullTime
+
+	err := p.db.QueryRow(query, code).Scan(
+		&backupCode.ID,
+		&backupCode.UserID,
+		&backupCode.Code,
+		&usedAt,
+		&backupCode.CreatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get 2FA backup code: %w", err)
+	}
+
+	if usedAt.Valid {
+		backupCode.UsedAt = &usedAt.Time
+	}
+
+	return &backupCode, nil
+}
+
+func (p *PostgresStorage) Use2FABackupCode(userID uint, code string) error {
+	query := `UPDATE two_factor_backup_codes SET used_at = $1 WHERE user_id = $2 AND code = $3 AND used_at IS NULL`
+
+	result, err := p.db.Exec(query, time.Now(), userID, code)
+	if err != nil {
+		return fmt.Errorf("failed to use 2FA backup code: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("2FA backup code not found or already used")
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) Regenerate2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
+	// Delete old backup codes
+	if _, err := p.db.Exec("DELETE FROM two_factor_backup_codes WHERE user_id = $1", userID); err != nil {
+		return nil, fmt.Errorf("failed to delete old 2FA backup codes: %w", err)
+	}
+
+	// Create new backup codes
+	backupCodes := make([]*TwoFactorBackupCode, 0, 10)
+	for i := 0; i < 10; i++ {
+		code, _ := GenerateSecureToken(3)
+
+		backupCode := &TwoFactorBackupCode{
+			UserID:    userID,
+			Code:      code,
+			CreatedAt: time.Now(),
+		}
+
+		if err := p.Create2FABackupCode(backupCode); err != nil {
+			return nil, fmt.Errorf("failed to create 2FA backup code: %w", err)
+		}
+
+		backupCodes = append(backupCodes, backupCode)
+	}
+
+	return backupCodes, nil
+}
+
+func (p *PostgresStorage) CreateRefreshToken(token *RefreshToken) error {
+	query := `INSERT INTO refresh_tokens (token, user_id, session_id, expires_at, created_at)
+			  VALUES ($1, $2, $3, $4, $5) RETURNING id`
+
+	err := p.db.QueryRow(query,
+		token.Token, token.UserID, token.SessionID, token.ExpiresAt, token.CreatedAt).Scan(&token.ID)
+
+	if err != nil {
+		return fmt.Errorf("failed to create refresh token: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) GetRefreshToken(token string) (*RefreshToken, error) {
+	query := `SELECT id, token, user_id, session_id, expires_at, created_at, last_used_at
+			  FROM refresh_tokens
+			  WHERE token = $1`
+
+	var refreshToken RefreshToken
+	var lastUsedAt sql.NullTime
+
+	err := p.db.QueryRow(query, token).Scan(
+		&refreshToken.ID,
+		&refreshToken.Token,
+		&refreshToken.UserID,
+		&refreshToken.SessionID,
+		&refreshToken.ExpiresAt,
+		&refreshToken.CreatedAt,
+		&lastUsedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get refresh token: %w", err)
+	}
+
+	if lastUsedAt.Valid {
+		refreshToken.LastUsedAt = &lastUsedAt.Time
+	}
+
+	return &refreshToken, nil
+}
+
+func (p *PostgresStorage) UpdateRefreshToken(token *RefreshToken) error {
+	query := `UPDATE refresh_tokens SET session_id = $1, last_used_at = $2 WHERE token = $3`
+
+	_, err := p.db.Exec(query, token.SessionID, time.Now(), token.Token)
+	if err != nil {
+		return fmt.Errorf("failed to update refresh token: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) DeleteRefreshToken(token string) error {
+	query := `DELETE FROM refresh_tokens WHERE token = $1`
+
+	_, err := p.db.Exec(query, token)
+	if err != nil {
+		return fmt.Errorf("failed to delete refresh token: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) DeleteUserRefreshTokens(userID uint) error {
+	query := `DELETE FROM refresh_tokens WHERE user_id = $1`
+
+	_, err := p.db.Exec(query, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete user refresh tokens: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) CleanupExpired2FACodes() error {
+	query := `DELETE FROM two_factor_codes WHERE expires_at < $1`
+
+	_, err := p.db.Exec(query, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to cleanup expired 2FA codes: %w", err)
+	}
+
+	return nil
+}
+
+func (p *PostgresStorage) CleanupExpiredRefreshTokens() error {
+	query := `DELETE FROM refresh_tokens WHERE expires_at < $1`
+
+	_, err := p.db.Exec(query, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to cleanup expired refresh tokens: %w", err)
+	}
+
+	return nil
+}
+
 // Health check
 func (p *PostgresStorage) Ping() error {
 	return p.db.Ping()

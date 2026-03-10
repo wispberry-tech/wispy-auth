@@ -135,6 +135,43 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- 2FA Codes table - Temporary verification codes
+CREATE TABLE IF NOT EXISTS two_factor_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    code VARCHAR(10) NOT NULL,
+    code_type VARCHAR(20) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Backup Codes table - One-time use backup codes
+CREATE TABLE IF NOT EXISTS two_factor_backup_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    code VARCHAR(10) NOT NULL,
+    used_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Refresh Tokens table - Session renewal
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token VARCHAR(255) UNIQUE NOT NULL,
+    user_id INTEGER NOT NULL,
+    session_id INTEGER,
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_used_at DATETIME,
+
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_uuid ON users(uuid);
@@ -154,3 +191,17 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires_at ON oauth_states(expires_a
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
+-- Compound indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_users_id_active ON users(id, is_active);
+CREATE INDEX IF NOT EXISTS idx_password_tokens_user_expires_used ON password_reset_tokens(user_id, expires_at, used_at);
+
+-- 2FA compound indexes
+CREATE INDEX IF NOT EXISTS idx_2fa_codes_user_code ON two_factor_codes(user_id, code);
+CREATE INDEX IF NOT EXISTS idx_2fa_codes_user_expires ON two_factor_codes(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_2fa_codes_user_expires_used ON two_factor_codes(user_id, expires_at, used_at);
+
+-- Backup codes compound indexes
+CREATE INDEX IF NOT EXISTS idx_backup_codes_used ON two_factor_backup_codes(used_at);
+
+-- Refresh token compound indexes
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_expires ON refresh_tokens(user_id, expires_at);

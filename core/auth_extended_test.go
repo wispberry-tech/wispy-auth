@@ -196,17 +196,17 @@ func TestSecurityConfig_EdgeCases(t *testing.T) {
 				LockoutDuration:   -1 * time.Hour,
 				SessionLifetime:   -1 * time.Hour,
 			},
-			valid: true, // Should use defaults or handle gracefully
+			valid: false, // Negative values are invalid
 		},
 		{
 			name: "extreme_values",
 			config: SecurityConfig{
-				PasswordMinLength: 1000,
-				MaxLoginAttempts:  1000,
+				PasswordMinLength: 1000, // exceeds max of 128
+				MaxLoginAttempts:  1000, // exceeds max of 20
 				LockoutDuration:   24 * time.Hour,
-				SessionLifetime:   365 * 24 * time.Hour,
+				SessionLifetime:   365 * 24 * time.Hour, // exceeds max of 30 days
 			},
-			valid: true,
+			valid: false, // Some extreme values exceed limits
 		},
 	}
 

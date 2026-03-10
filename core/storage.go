@@ -128,6 +128,37 @@ type PasswordResetToken struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
+// TwoFactorCode represents a temporary 2FA verification code
+type TwoFactorCode struct {
+	ID        uint       `json:"id"`
+	UserID    uint       `json:"user_id"`
+	Code      string     `json:"code"`      // 6-digit code
+	CodeType  string     `json:"code_type"` // "enable", "login", "disable"
+	ExpiresAt time.Time  `json:"expires_at"`
+	UsedAt    *time.Time `json:"used_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// TwoFactorBackupCode represents a backup 2FA code
+type TwoFactorBackupCode struct {
+	ID        uint       `json:"id"`
+	UserID    uint       `json:"user_id"`
+	Code      string     `json:"code"`
+	UsedAt    *time.Time `json:"used_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// RefreshToken represents a refresh token for session renewal
+type RefreshToken struct {
+	ID         uint       `json:"id"`
+	Token      string     `json:"token"`
+	UserID     uint       `json:"user_id"`
+	SessionID  uint       `json:"session_id"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
 // Storage defines the contract for core authentication data storage operations
 type Storage interface {
 	// User operations - core identity only
@@ -168,6 +199,7 @@ type Storage interface {
 	StoreOAuthState(state *OAuthState) error
 	GetOAuthState(state string) (*OAuthState, error)
 	DeleteOAuthState(state string) error
+	CleanupExpiredOAuthStates() error
 
 	// Security Event operations
 	CreateSecurityEvent(event *SecurityEvent) error
@@ -179,6 +211,28 @@ type Storage interface {
 	GetPasswordResetToken(token string) (*PasswordResetToken, error)
 	UsePasswordResetToken(token string) error
 	CleanupExpiredPasswordResetTokens() error
+
+	// 2FA Code operations
+	Create2FACode(code *TwoFactorCode) error
+	Get2FACode(userID uint, code string) (*TwoFactorCode, error)
+	GetLatestPending2FACode(code string) (*TwoFactorCode, error)
+	Use2FACode(userID uint, code string) error
+	CleanupExpired2FACodes() error
+
+	// Backup Code operations
+	Create2FABackupCode(code *TwoFactorBackupCode) error
+	Get2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error)
+	GetBackupCodeByCode(code string) (*TwoFactorBackupCode, error)
+	Use2FABackupCode(userID uint, code string) error
+	Regenerate2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error)
+
+	// Refresh Token operations
+	CreateRefreshToken(token *RefreshToken) error
+	GetRefreshToken(token string) (*RefreshToken, error)
+	UpdateRefreshToken(token *RefreshToken) error
+	DeleteRefreshToken(token string) error
+	DeleteUserRefreshTokens(userID uint) error
+	CleanupExpiredRefreshTokens() error
 
 	// Health check
 	Ping() error

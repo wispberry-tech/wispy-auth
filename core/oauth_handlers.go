@@ -34,7 +34,7 @@ func (a *AuthService) OAuthInitHandler(r *http.Request, provider string) OAuthRe
 	}
 
 	// Generate state and CSRF tokens for security
-	stateToken, err := generateSecureToken(32)
+	stateToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate state token", "error", err)
 		return OAuthResponse{
@@ -43,7 +43,7 @@ func (a *AuthService) OAuthInitHandler(r *http.Request, provider string) OAuthRe
 		}
 	}
 
-	csrfToken, err := generateSecureToken(32)
+	csrfToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate CSRF token", "error", err)
 		return OAuthResponse{
@@ -277,7 +277,7 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 	}
 
 	// Create session
-	sessionToken, err := generateSecureToken(32)
+	sessionToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate session token", "error", err)
 		return OAuthResponse{

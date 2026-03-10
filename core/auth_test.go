@@ -488,7 +488,7 @@ func TestAuthService_GetSessionsHandler(t *testing.T) {
 		name           string
 		setupRequest   func() *http.Request
 		expectedStatus int
-		checkResponse  func(t *testing.T, response SessionsResponse)
+		checkResponse  func(t *testing.T, response GetSessionsResponse)
 	}{
 		{
 			name: "valid_request",
@@ -500,7 +500,7 @@ func TestAuthService_GetSessionsHandler(t *testing.T) {
 				return req.WithContext(ctx)
 			},
 			expectedStatus: http.StatusOK,
-			checkResponse: func(t *testing.T, response SessionsResponse) {
+			checkResponse: func(t *testing.T, response GetSessionsResponse) {
 				if len(response.Sessions) == 0 {
 					t.Error("Expected at least one session")
 				}
@@ -512,7 +512,7 @@ func TestAuthService_GetSessionsHandler(t *testing.T) {
 				return httptest.NewRequest("GET", "/sessions", nil)
 			},
 			expectedStatus: http.StatusUnauthorized,
-			checkResponse: func(t *testing.T, response SessionsResponse) {
+			checkResponse: func(t *testing.T, response GetSessionsResponse) {
 				if response.Error == "" {
 					t.Error("Expected error message for unauthorized request")
 				}
@@ -744,18 +744,24 @@ func (m *mockStorage) CreateUser(user *User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Check if user already exists
+	key := user.Email + ":" + user.Provider
+	if _, exists := m.users[key]; exists {
+		return fmt.Errorf("user already exists")
+	}
+
 	user.ID = m.nextUserID
 	m.nextUserID++
 	user.CreatedAt = time.Now()
 	user.UpdatedAt = time.Now()
 	// Generate UUID if not set
 	if user.UUID == "" {
-		token, _ := generateSecureToken(16)
+		token, _ := GenerateSecureToken(16)
 		user.UUID = token
 	}
 	// Create a copy to avoid issues when handlers modify the original
 	userCopy := *user
-	m.users[user.Email+":"+user.Provider] = &userCopy
+	m.users[key] = &userCopy
 	return nil
 }
 
@@ -1037,6 +1043,12 @@ func (m *mockStorage) CreateUserWithSecurity(user *User, security *UserSecurity)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Check if user already exists
+	key := user.Email + ":" + user.Provider
+	if _, exists := m.users[key]; exists {
+		return fmt.Errorf("user already exists")
+	}
+
 	// Create user
 	user.ID = m.nextUserID
 	m.nextUserID++
@@ -1044,12 +1056,12 @@ func (m *mockStorage) CreateUserWithSecurity(user *User, security *UserSecurity)
 	user.UpdatedAt = time.Now()
 	// Generate UUID if not set
 	if user.UUID == "" {
-		token, _ := generateSecureToken(16)
+		token, _ := GenerateSecureToken(16)
 		user.UUID = token
 	}
 	// Create a copy to avoid issues when handlers modify the original
 	userCopy := *user
-	m.users[user.Email+":"+user.Provider] = &userCopy
+	m.users[key] = &userCopy
 
 	// Create security record
 	security.UserID = user.ID
@@ -1191,6 +1203,107 @@ func (m *mockStorage) CleanupExpiredPasswordResetTokens() error {
 }
 
 func (m *mockStorage) Ping() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+// 2FA Code operations
+func (m *mockStorage) Create2FACode(code *TwoFactorCode) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+func (m *mockStorage) Get2FACode(userID uint, code string) (*TwoFactorCode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil, nil
+}
+
+func (m *mockStorage) Use2FACode(userID uint, code string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+func (m *mockStorage) GetLatestPending2FACode(code string) (*TwoFactorCode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil, nil
+}
+
+func (m *mockStorage) CleanupExpired2FACodes() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+// Backup Code operations
+func (m *mockStorage) Create2FABackupCode(code *TwoFactorBackupCode) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+func (m *mockStorage) Get2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return make([]*TwoFactorBackupCode, 0), nil
+}
+
+func (m *mockStorage) GetBackupCodeByCode(code string) (*TwoFactorBackupCode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil, nil
+}
+
+func (m *mockStorage) Use2FABackupCode(userID uint, code string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+func (m *mockStorage) Regenerate2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return make([]*TwoFactorBackupCode, 0), nil
+}
+
+// Refresh Token operations
+func (m *mockStorage) CreateRefreshToken(token *RefreshToken) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+func (m *mockStorage) GetRefreshToken(token string) (*RefreshToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil, nil
+}
+
+func (m *mockStorage) UpdateRefreshToken(token *RefreshToken) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+func (m *mockStorage) DeleteRefreshToken(token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+func (m *mockStorage) DeleteUserRefreshTokens(userID uint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil
+}
+
+func (m *mockStorage) CleanupExpiredRefreshTokens() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return nil
 }
 
