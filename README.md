@@ -285,6 +285,26 @@ config := storage.PostgresConfig{
 storage, err := storage.NewPostgresStorage(config)
 ```
 
+### Database Schema
+
+The library requires **9 database tables** to be created before use. Both SQLite and PostgreSQL backends auto-initialize the schema on first connection:
+
+| Table | Purpose |
+|---|---|
+| `users` | Core user identity and credentials |
+| `user_security` | Login attempt tracking, lockout state, 2FA settings |
+| `sessions` | Session tokens with device and IP tracking |
+| `security_events` | Full security audit log |
+| `oauth_states` | OAuth CSRF protection state tokens |
+| `password_reset_tokens` | Password reset flow tokens |
+| `two_factor_codes` | Temporary 2FA verification codes |
+| `two_factor_backup_codes` | One-time use 2FA backup codes |
+| `refresh_tokens` | Session renewal tokens |
+
+The complete schema definitions can be found in the repository:
+- [SQLite Schema](https://github.com/wispberry-tech/wispy-auth/blob/main/core/sql/sqlite_core.sql)
+- [PostgreSQL Schema](https://github.com/wispberry-tech/wispy-auth/blob/main/core/sql/postgres_core.sql)
+
 ## 🔒 Security Features
 
 ### Comprehensive Audit Logging
