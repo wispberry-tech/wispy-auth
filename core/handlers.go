@@ -735,9 +735,6 @@ func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordRespo
 	a.logSecurityEvent(&user.ID, "password_reset", "Password reset requested",
 		extractIP(r), r.Header.Get("User-Agent"), true)
 
-	resetURL := fmt.Sprintf("http://localhost:8080/reset-password?token=%s", token)
-	slog.Info("Password reset requested", "email", req.Email, "reset_url", resetURL)
-
 	response := ForgotPasswordResponse{
 		StatusCode: http.StatusOK,
 		Message:    "If an account with this email exists, a password reset link has been sent.",
@@ -780,7 +777,7 @@ func (a *AuthService) ResetPasswordHandler(r *http.Request) ResetPasswordRespons
 	// Get and validate reset token
 	resetToken, err := a.storage.GetPasswordResetToken(req.Token)
 	if err != nil || resetToken == nil {
-		slog.Warn("Invalid or expired password reset token", "token", req.Token)
+		slog.Warn("Invalid or expired password reset token")
 		return ResetPasswordResponse{
 			StatusCode: http.StatusBadRequest,
 			Error:      "Invalid or expired reset token",

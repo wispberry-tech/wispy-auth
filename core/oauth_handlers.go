@@ -72,7 +72,7 @@ func (a *AuthService) OAuthInitHandler(r *http.Request, provider string) OAuthRe
 	// Generate OAuth URL
 	url := oauthConfig.AuthCodeURL(stateToken)
 
-	slog.Debug("OAuth flow initiated", "provider", provider, "state", stateToken)
+	slog.Debug("OAuth flow initiated", "provider", provider)
 
 	return OAuthResponse{
 		StatusCode: http.StatusOK,
