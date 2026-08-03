@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -54,14 +55,14 @@ func (s *SQLiteStorage) GetDB() (*sql.DB, error) {
 }
 
 // User operations
-func (s *SQLiteStorage) CreateUser(user *User) error {
-	query := `INSERT INTO users (email, username, first_name, last_name, password_hash,
+func (s *SQLiteStorage) CreateUser(ctx context.Context, user *User) error {
+	query := `INSERT INTO users (email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	result, err := s.db.Exec(query,
-		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash,
+	result, err := s.db.ExecContext(ctx, query,
+		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash, user.AvatarURL,
 		user.Provider, user.ProviderID, user.EmailVerified,
 		user.IsActive, user.IsSuspended,
 		time.Now(), time.Now())
@@ -81,7 +82,7 @@ func (s *SQLiteStorage) CreateUser(user *User) error {
 	user.ID = uint(id)
 
 	// Retrieve the generated UUID
-	err = s.db.QueryRow("SELECT uuid FROM users WHERE id = ?", user.ID).Scan(&user.UUID)
+	err = s.db.QueryRowContext(ctx, "SELECT uuid FROM users WHERE id = ?", user.ID).Scan(&user.UUID)
 	if err != nil {
 		return fmt.Errorf("failed to get user UUID: %w", err)
 	}
@@ -89,16 +90,16 @@ func (s *SQLiteStorage) CreateUser(user *User) error {
 	return nil
 }
 
-func (s *SQLiteStorage) GetUserByEmail(email, provider string) (*User, error) {
+func (s *SQLiteStorage) GetUserByEmail(ctx context.Context, email, provider string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash,
+	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at
 			  FROM users WHERE email = ? AND provider = ?`
 
-	err := s.db.QueryRow(query, email, provider).Scan(
+	err := s.db.QueryRowContext(ctx, query, email, provider).Scan(
 		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
-		&user.PasswordHash, &user.Provider, &user.ProviderID, &user.EmailVerified,
+		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
@@ -111,16 +112,16 @@ func (s *SQLiteStorage) GetUserByEmail(email, provider string) (*User, error) {
 	return user, nil
 }
 
-func (s *SQLiteStorage) GetUserByEmailAnyProvider(email string) (*User, error) {
+func (s *SQLiteStorage) GetUserByEmailAnyProvider(ctx context.Context, email string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash,
+	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at
-			  FROM users WHERE email = ?`
+			  FROM users WHERE email = ? ORDER BY provider = 'email' DESC`
 
-	err := s.db.QueryRow(query, email).Scan(
+	err := s.db.QueryRowContext(ctx, query, email).Scan(
 		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
-		&user.PasswordHash, &user.Provider, &user.ProviderID, &user.EmailVerified,
+		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
@@ -133,16 +134,16 @@ func (s *SQLiteStorage) GetUserByEmailAnyProvider(email string) (*User, error) {
 	return user, nil
 }
 
-func (s *SQLiteStorage) GetUserByProviderID(provider, providerID string) (*User, error) {
+func (s *SQLiteStorage) GetUserByProviderID(ctx context.Context, provider, providerID string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash,
+	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at
 			  FROM users WHERE provider = ? AND provider_id = ?`
 
-	err := s.db.QueryRow(query, provider, providerID).Scan(
+	err := s.db.QueryRowContext(ctx, query, provider, providerID).Scan(
 		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
-		&user.PasswordHash, &user.Provider, &user.ProviderID, &user.EmailVerified,
+		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
@@ -155,16 +156,16 @@ func (s *SQLiteStorage) GetUserByProviderID(provider, providerID string) (*User,
 	return user, nil
 }
 
-func (s *SQLiteStorage) GetUserByID(id uint) (*User, error) {
+func (s *SQLiteStorage) GetUserByID(ctx context.Context, id uint) (*User, error) {
 	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash,
+	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at
 			  FROM users WHERE id = ?`
 
-	err := s.db.QueryRow(query, id).Scan(
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
-		&user.PasswordHash, &user.Provider, &user.ProviderID, &user.EmailVerified,
+		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
@@ -177,16 +178,16 @@ func (s *SQLiteStorage) GetUserByID(id uint) (*User, error) {
 	return user, nil
 }
 
-func (s *SQLiteStorage) GetUserByUUID(uuid string) (*User, error) {
+func (s *SQLiteStorage) GetUserByUUID(ctx context.Context, uuid string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash,
+	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at
 			  FROM users WHERE uuid = ?`
 
-	err := s.db.QueryRow(query, uuid).Scan(
+	err := s.db.QueryRowContext(ctx, query, uuid).Scan(
 		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
-		&user.PasswordHash, &user.Provider, &user.ProviderID, &user.EmailVerified,
+		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
@@ -199,14 +200,14 @@ func (s *SQLiteStorage) GetUserByUUID(uuid string) (*User, error) {
 	return user, nil
 }
 
-func (s *SQLiteStorage) UpdateUser(user *User) error {
+func (s *SQLiteStorage) UpdateUser(ctx context.Context, user *User) error {
 	query := `UPDATE users SET email = ?, username = ?, first_name = ?, last_name = ?,
-			  password_hash = ?, provider = ?, provider_id = ?, email_verified = ?,
+			  password_hash = ?, avatar_url = ?, provider = ?, provider_id = ?, email_verified = ?,
 			  is_active = ?, is_suspended = ?, updated_at = ?
 			  WHERE id = ?`
 
-	_, err := s.db.Exec(query,
-		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash,
+	_, err := s.db.ExecContext(ctx, query,
+		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash, user.AvatarURL,
 		user.Provider, user.ProviderID, user.EmailVerified,
 		user.IsActive, user.IsSuspended, time.Now(), user.ID)
 
@@ -218,7 +219,7 @@ func (s *SQLiteStorage) UpdateUser(user *User) error {
 }
 
 // CreateUserWithSecurity creates a user and their security record in a transaction
-func (s *SQLiteStorage) CreateUserWithSecurity(user *User, security *UserSecurity) error {
+func (s *SQLiteStorage) CreateUserWithSecurity(ctx context.Context, user *User, security *UserSecurity) error {
 	// Begin transaction
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -233,13 +234,13 @@ func (s *SQLiteStorage) CreateUserWithSecurity(user *User, security *UserSecurit
 	}()
 
 	// Create user first
-	userQuery := `INSERT INTO users (email, username, first_name, last_name, password_hash,
+	userQuery := `INSERT INTO users (email, username, first_name, last_name, password_hash, avatar_url,
 				  provider, provider_id, email_verified, is_active, is_suspended,
 				  created_at, updated_at)
-				  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	result, err := tx.Exec(userQuery,
-		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash,
+	result, err := tx.ExecContext(ctx, userQuery,
+		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash, user.AvatarURL,
 		user.Provider, user.ProviderID, user.EmailVerified,
 		user.IsActive, user.IsSuspended,
 		time.Now(), time.Now())
@@ -260,7 +261,7 @@ func (s *SQLiteStorage) CreateUserWithSecurity(user *User, security *UserSecurit
 	security.UserID = user.ID
 
 	// Retrieve the generated UUID
-	err = tx.QueryRow("SELECT uuid FROM users WHERE id = ?", user.ID).Scan(&user.UUID)
+	err = tx.QueryRowContext(ctx, "SELECT uuid FROM users WHERE id = ?", user.ID).Scan(&user.UUID)
 	if err != nil {
 		return fmt.Errorf("failed to get user UUID: %w", err)
 	}
@@ -272,7 +273,7 @@ func (s *SQLiteStorage) CreateUserWithSecurity(user *User, security *UserSecurit
 					  created_at, updated_at)
 					  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err = tx.Exec(securityQuery,
+	_, err = tx.ExecContext(ctx, securityQuery,
 		security.UserID, security.LoginAttempts, security.LastLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
 		security.ConcurrentSessions, security.SecurityVersion, security.RiskScore,
@@ -292,7 +293,7 @@ func (s *SQLiteStorage) CreateUserWithSecurity(user *User, security *UserSecurit
 }
 
 // User Security operations
-func (s *SQLiteStorage) CreateUserSecurity(security *UserSecurity) error {
+func (s *SQLiteStorage) CreateUserSecurity(ctx context.Context, security *UserSecurity) error {
 	query := `INSERT INTO user_security (user_id, login_attempts, last_login_ip,
 			  password_changed_at, force_password_change, two_factor_enabled,
 			  concurrent_sessions, security_version, risk_score, suspicious_activity_count,
@@ -306,7 +307,7 @@ func (s *SQLiteStorage) CreateUserSecurity(security *UserSecurity) error {
 		lastLoginIP.Valid = true
 	}
 
-	_, err := s.db.Exec(query,
+	_, err := s.db.ExecContext(ctx, query,
 		security.UserID, security.LoginAttempts, lastLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
 		security.ConcurrentSessions, security.SecurityVersion, security.RiskScore,
@@ -319,7 +320,7 @@ func (s *SQLiteStorage) CreateUserSecurity(security *UserSecurity) error {
 	return nil
 }
 
-func (s *SQLiteStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
+func (s *SQLiteStorage) GetUserSecurity(ctx context.Context, userID uint) (*UserSecurity, error) {
 	security := &UserSecurity{}
 	query := `SELECT user_id, login_attempts, locked_until, last_login_at, last_login_ip,
 			  last_failed_login_at, last_failed_login_ip, password_changed_at,
@@ -334,7 +335,7 @@ func (s *SQLiteStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
 	var lastLoginIP, lastFailedLoginIP, twoFactorSecret, twoFactorBackupCodes sql.NullString
 	var lastSessionToken, deviceFingerprint, knownDevices sql.NullString
 
-	err := s.db.QueryRow(query, userID).Scan(
+	err := s.db.QueryRowContext(ctx, query, userID).Scan(
 		&security.UserID, &security.LoginAttempts, &security.LockedUntil,
 		&security.LastLoginAt, &lastLoginIP, &security.LastFailedLoginAt,
 		&lastFailedLoginIP, &security.PasswordChangedAt, &security.ForcePasswordChange,
@@ -376,7 +377,7 @@ func (s *SQLiteStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
 	return security, nil
 }
 
-func (s *SQLiteStorage) UpdateUserSecurity(security *UserSecurity) error {
+func (s *SQLiteStorage) UpdateUserSecurity(ctx context.Context, security *UserSecurity) error {
 	query := `UPDATE user_security SET login_attempts = ?, locked_until = ?,
 			  last_login_at = ?, last_login_ip = ?, last_failed_login_at = ?,
 			  last_failed_login_ip = ?, password_changed_at = ?, force_password_change = ?,
@@ -397,7 +398,7 @@ func (s *SQLiteStorage) UpdateUserSecurity(security *UserSecurity) error {
 		lastFailedLoginIP.Valid = true
 	}
 
-	_, err := s.db.Exec(query,
+	_, err := s.db.ExecContext(ctx, query,
 		security.LoginAttempts, security.LockedUntil, security.LastLoginAt,
 		lastLoginIP, security.LastFailedLoginAt, lastFailedLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
@@ -414,37 +415,37 @@ func (s *SQLiteStorage) UpdateUserSecurity(security *UserSecurity) error {
 }
 
 // Optimized security operations
-func (s *SQLiteStorage) IncrementLoginAttempts(userID uint) error {
+func (s *SQLiteStorage) IncrementLoginAttempts(ctx context.Context, userID uint) error {
 	query := `UPDATE user_security SET login_attempts = login_attempts + 1, updated_at = ?
 			  WHERE user_id = ?`
-	_, err := s.db.Exec(query, time.Now(), userID)
+	_, err := s.db.ExecContext(ctx, query, time.Now(), userID)
 	if err != nil {
 		return fmt.Errorf("failed to increment login attempts: %w", err)
 	}
 	return nil
 }
 
-func (s *SQLiteStorage) ResetLoginAttempts(userID uint) error {
+func (s *SQLiteStorage) ResetLoginAttempts(ctx context.Context, userID uint) error {
 	query := `UPDATE user_security SET login_attempts = 0, locked_until = NULL, updated_at = ?
 			  WHERE user_id = ?`
-	_, err := s.db.Exec(query, time.Now(), userID)
+	_, err := s.db.ExecContext(ctx, query, time.Now(), userID)
 	if err != nil {
 		return fmt.Errorf("failed to reset login attempts: %w", err)
 	}
 	return nil
 }
 
-func (s *SQLiteStorage) SetUserLocked(userID uint, until time.Time) error {
+func (s *SQLiteStorage) SetUserLocked(ctx context.Context, userID uint, until time.Time) error {
 	query := `UPDATE user_security SET locked_until = ?, updated_at = ?
 			  WHERE user_id = ?`
-	_, err := s.db.Exec(query, until, time.Now(), userID)
+	_, err := s.db.ExecContext(ctx, query, until, time.Now(), userID)
 	if err != nil {
 		return fmt.Errorf("failed to set user locked: %w", err)
 	}
 	return nil
 }
 
-func (s *SQLiteStorage) UpdateLastLogin(userID uint, ipAddress *string) error {
+func (s *SQLiteStorage) UpdateLastLogin(ctx context.Context, userID uint, ipAddress *string) error {
 	query := `UPDATE user_security SET last_login_at = ?, last_login_ip = ?, updated_at = ?
 			  WHERE user_id = ?`
 
@@ -455,7 +456,7 @@ func (s *SQLiteStorage) UpdateLastLogin(userID uint, ipAddress *string) error {
 		ip.Valid = true
 	}
 
-	_, err := s.db.Exec(query, time.Now(), ip, time.Now(), userID)
+	_, err := s.db.ExecContext(ctx, query, time.Now(), ip, time.Now(), userID)
 	if err != nil {
 		return fmt.Errorf("failed to update last login: %w", err)
 	}
@@ -463,7 +464,7 @@ func (s *SQLiteStorage) UpdateLastLogin(userID uint, ipAddress *string) error {
 }
 
 // Session operations
-func (s *SQLiteStorage) CreateSession(session *Session) error {
+func (s *SQLiteStorage) CreateSession(ctx context.Context, session *Session) error {
 	query := `INSERT INTO sessions (token, user_id, expires_at, device_fingerprint,
 			  user_agent, ip_address, is_active, last_accessed_at, created_at)
 			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -483,7 +484,7 @@ func (s *SQLiteStorage) CreateSession(session *Session) error {
 		deviceFingerprint.Valid = true
 	}
 
-	result, err := s.db.Exec(query,
+	result, err := s.db.ExecContext(ctx, query,
 		session.Token, session.UserID, session.ExpiresAt, deviceFingerprint,
 		userAgent, ipAddress, session.IsActive, session.LastAccessedAt,
 		time.Now())
@@ -504,7 +505,7 @@ func (s *SQLiteStorage) CreateSession(session *Session) error {
 	return nil
 }
 
-func (s *SQLiteStorage) GetSession(token string) (*Session, error) {
+func (s *SQLiteStorage) GetSession(ctx context.Context, token string) (*Session, error) {
 	session := &Session{}
 	query := `SELECT id, user_id, token, expires_at, device_fingerprint,
 			  user_agent, ip_address, is_active, last_accessed_at, created_at
@@ -513,7 +514,7 @@ func (s *SQLiteStorage) GetSession(token string) (*Session, error) {
 	// Use sql.NullString for nullable fields to handle NULL values
 	var ipAddress, userAgent, deviceFingerprint sql.NullString
 
-	err := s.db.QueryRow(query, token).Scan(
+	err := s.db.QueryRowContext(ctx, query, token).Scan(
 		&session.ID, &session.UserID, &session.Token, &session.ExpiresAt,
 		&deviceFingerprint, &userAgent, &ipAddress,
 		&session.IsActive, &session.LastAccessedAt, &session.CreatedAt)
@@ -539,12 +540,12 @@ func (s *SQLiteStorage) GetSession(token string) (*Session, error) {
 	return session, nil
 }
 
-func (s *SQLiteStorage) GetUserSessions(userID uint) ([]*Session, error) {
+func (s *SQLiteStorage) GetUserSessions(ctx context.Context, userID uint) ([]*Session, error) {
 	query := `SELECT id, user_id, token, expires_at, device_fingerprint,
 			  user_agent, ip_address, is_active, last_accessed_at, created_at
 			  FROM sessions WHERE user_id = ? ORDER BY last_accessed_at DESC`
 
-	rows, err := s.db.Query(query, userID)
+	rows, err := s.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user sessions: %w", err)
 	}
@@ -582,7 +583,7 @@ func (s *SQLiteStorage) GetUserSessions(userID uint) ([]*Session, error) {
 	return sessions, nil
 }
 
-func (s *SQLiteStorage) UpdateSession(session *Session) error {
+func (s *SQLiteStorage) UpdateSession(ctx context.Context, session *Session) error {
 	query := `UPDATE sessions SET expires_at = ?, device_fingerprint = ?,
 			  user_agent = ?, ip_address = ?, is_active = ?, last_accessed_at = ?
 			  WHERE id = ?`
@@ -602,7 +603,7 @@ func (s *SQLiteStorage) UpdateSession(session *Session) error {
 		deviceFingerprint.Valid = true
 	}
 
-	_, err := s.db.Exec(query,
+	_, err := s.db.ExecContext(ctx, query,
 		session.ExpiresAt, deviceFingerprint, userAgent,
 		ipAddress, session.IsActive, session.LastAccessedAt, session.ID)
 
@@ -613,37 +614,37 @@ func (s *SQLiteStorage) UpdateSession(session *Session) error {
 	return nil
 }
 
-func (s *SQLiteStorage) DeleteSession(token string) error {
+func (s *SQLiteStorage) DeleteSession(ctx context.Context, token string) error {
 	query := `DELETE FROM sessions WHERE token = ?`
-	_, err := s.db.Exec(query, token)
+	_, err := s.db.ExecContext(ctx, query, token)
 	if err != nil {
 		return fmt.Errorf("failed to delete session: %w", err)
 	}
 	return nil
 }
 
-func (s *SQLiteStorage) DeleteUserSessions(userID uint) error {
+func (s *SQLiteStorage) DeleteUserSessions(ctx context.Context, userID uint) error {
 	query := `DELETE FROM sessions WHERE user_id = ?`
-	_, err := s.db.Exec(query, userID)
+	_, err := s.db.ExecContext(ctx, query, userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete user sessions: %w", err)
 	}
 	return nil
 }
 
-func (s *SQLiteStorage) CleanupExpiredSessions() error {
+func (s *SQLiteStorage) CleanupExpiredSessions(ctx context.Context) error {
 	query := `DELETE FROM sessions WHERE expires_at < ? OR is_active = 0`
-	_, err := s.db.Exec(query, time.Now())
+	_, err := s.db.ExecContext(ctx, query, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired sessions: %w", err)
 	}
 	return nil
 }
 
-func (s *SQLiteStorage) CountActiveSessions(userID uint) (int, error) {
+func (s *SQLiteStorage) CountActiveSessions(ctx context.Context, userID uint) (int, error) {
 	var count int
 	query := `SELECT COUNT(*) FROM sessions WHERE user_id = ? AND is_active = 1 AND expires_at > ?`
-	err := s.db.QueryRow(query, userID, time.Now()).Scan(&count)
+	err := s.db.QueryRowContext(ctx, query, userID, time.Now()).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count active sessions: %w", err)
 	}
@@ -651,7 +652,7 @@ func (s *SQLiteStorage) CountActiveSessions(userID uint) (int, error) {
 }
 
 // OAuth state operations
-func (s *SQLiteStorage) StoreOAuthState(state *OAuthState) error {
+func (s *SQLiteStorage) StoreOAuthState(ctx context.Context, state *OAuthState) error {
 	query := `INSERT INTO oauth_states (state, csrf, provider, redirect_url, expires_at, created_at)
 			  VALUES (?, ?, ?, ?, ?, ?)`
 
@@ -662,7 +663,7 @@ func (s *SQLiteStorage) StoreOAuthState(state *OAuthState) error {
 		redirectURL.Valid = true
 	}
 
-	result, err := s.db.Exec(query,
+	result, err := s.db.ExecContext(ctx, query,
 		state.State, state.CSRF, state.Provider, redirectURL,
 		state.ExpiresAt, time.Now())
 
@@ -682,7 +683,7 @@ func (s *SQLiteStorage) StoreOAuthState(state *OAuthState) error {
 	return nil
 }
 
-func (s *SQLiteStorage) GetOAuthState(state string) (*OAuthState, error) {
+func (s *SQLiteStorage) GetOAuthState(ctx context.Context, state string) (*OAuthState, error) {
 	oauthState := &OAuthState{}
 	query := `SELECT id, state, csrf, provider, redirect_url, expires_at, created_at
 			  FROM oauth_states WHERE state = ?`
@@ -690,7 +691,7 @@ func (s *SQLiteStorage) GetOAuthState(state string) (*OAuthState, error) {
 	// Use sql.NullString for redirect_url to handle NULL values
 	var redirectURL sql.NullString
 
-	err := s.db.QueryRow(query, state).Scan(
+	err := s.db.QueryRowContext(ctx, query, state).Scan(
 		&oauthState.ID, &oauthState.State, &oauthState.CSRF, &oauthState.Provider,
 		&redirectURL, &oauthState.ExpiresAt, &oauthState.CreatedAt)
 
@@ -709,9 +710,9 @@ func (s *SQLiteStorage) GetOAuthState(state string) (*OAuthState, error) {
 	return oauthState, nil
 }
 
-func (s *SQLiteStorage) DeleteOAuthState(state string) error {
+func (s *SQLiteStorage) DeleteOAuthState(ctx context.Context, state string) error {
 	query := `DELETE FROM oauth_states WHERE state = ?`
-	_, err := s.db.Exec(query, state)
+	_, err := s.db.ExecContext(ctx, query, state)
 	if err != nil {
 		return fmt.Errorf("failed to delete OAuth state: %w", err)
 	}
@@ -719,7 +720,7 @@ func (s *SQLiteStorage) DeleteOAuthState(state string) error {
 }
 
 // Security Event operations
-func (s *SQLiteStorage) CreateSecurityEvent(event *SecurityEvent) error {
+func (s *SQLiteStorage) CreateSecurityEvent(ctx context.Context, event *SecurityEvent) error {
 	query := `INSERT INTO security_events (user_id, event_type, description,
 			  ip_address, user_agent, device_fingerprint, severity,
 			  success, metadata, created_at)
@@ -748,7 +749,7 @@ func (s *SQLiteStorage) CreateSecurityEvent(event *SecurityEvent) error {
 		metadata.Valid = true
 	}
 
-	result, err := s.db.Exec(query,
+	result, err := s.db.ExecContext(ctx, query,
 		event.UserID, event.EventType, description, ipAddress,
 		userAgent, deviceFingerprint, event.Severity,
 		event.Success, metadata, time.Now())
@@ -769,7 +770,7 @@ func (s *SQLiteStorage) CreateSecurityEvent(event *SecurityEvent) error {
 	return nil
 }
 
-func (s *SQLiteStorage) GetSecurityEvents(userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error) {
+func (s *SQLiteStorage) GetSecurityEvents(ctx context.Context, userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error) {
 	query := `SELECT id, user_id, event_type, description, ip_address,
 			  user_agent, device_fingerprint, severity, success, metadata, created_at
 			  FROM security_events WHERE 1=1`
@@ -788,7 +789,7 @@ func (s *SQLiteStorage) GetSecurityEvents(userID *uint, eventType string, limit 
 	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get security events: %w", err)
 	}
@@ -832,12 +833,12 @@ func (s *SQLiteStorage) GetSecurityEvents(userID *uint, eventType string, limit 
 	return events, nil
 }
 
-func (s *SQLiteStorage) GetSecurityEventsByUser(userID uint, limit int, offset int) ([]*SecurityEvent, error) {
-	return s.GetSecurityEvents(&userID, "", limit, offset)
+func (s *SQLiteStorage) GetSecurityEventsByUser(ctx context.Context, userID uint, limit int, offset int) ([]*SecurityEvent, error) {
+	return s.GetSecurityEvents(ctx, &userID, "", limit, offset)
 }
 
 // HandleFailedLogin atomically increments login attempts and locks account if needed
-func (s *SQLiteStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) {
+func (s *SQLiteStorage) HandleFailedLogin(ctx context.Context, userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) {
 	// Begin transaction
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -856,7 +857,7 @@ func (s *SQLiteStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutD
 	incrementQuery := `UPDATE user_security SET login_attempts = login_attempts + 1, updated_at = ?
 					   WHERE user_id = ? RETURNING login_attempts`
 
-	err = tx.QueryRow(incrementQuery, time.Now(), userID).Scan(&currentAttempts)
+	err = tx.QueryRowContext(ctx, incrementQuery, time.Now(), userID).Scan(&currentAttempts)
 	if err != nil {
 		return false, fmt.Errorf("failed to increment login attempts: %w", err)
 	}
@@ -867,7 +868,7 @@ func (s *SQLiteStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutD
 		lockUntil := time.Now().Add(lockoutDuration)
 		lockQuery := `UPDATE user_security SET locked_until = ?, updated_at = ? WHERE user_id = ?`
 
-		_, err = tx.Exec(lockQuery, lockUntil, time.Now(), userID)
+		_, err = tx.ExecContext(ctx, lockQuery, lockUntil, time.Now(), userID)
 		if err != nil {
 			return false, fmt.Errorf("failed to lock user account: %w", err)
 		}
@@ -884,12 +885,12 @@ func (s *SQLiteStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutD
 }
 
 // Password Reset Token operations
-func (s *SQLiteStorage) CreatePasswordResetToken(token *PasswordResetToken) error {
+func (s *SQLiteStorage) CreatePasswordResetToken(ctx context.Context, token *PasswordResetToken) error {
 	query := `
 		INSERT INTO password_reset_tokens (user_id, token, expires_at, created_at)
 		VALUES (?, ?, ?, ?)`
 
-	_, err := s.db.Exec(query, token.UserID, token.Token, token.ExpiresAt, token.CreatedAt)
+	_, err := s.db.ExecContext(ctx, query, token.UserID, token.Token, token.ExpiresAt, token.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create password reset token: %w", err)
 	}
@@ -897,7 +898,7 @@ func (s *SQLiteStorage) CreatePasswordResetToken(token *PasswordResetToken) erro
 	return nil
 }
 
-func (s *SQLiteStorage) GetPasswordResetToken(token string) (*PasswordResetToken, error) {
+func (s *SQLiteStorage) GetPasswordResetToken(ctx context.Context, token string) (*PasswordResetToken, error) {
 	query := `
 		SELECT id, user_id, token, expires_at, used_at, created_at
 		FROM password_reset_tokens
@@ -906,7 +907,7 @@ func (s *SQLiteStorage) GetPasswordResetToken(token string) (*PasswordResetToken
 	var resetToken PasswordResetToken
 	var usedAt sql.NullTime
 
-	err := s.db.QueryRow(query, token, time.Now()).Scan(
+	err := s.db.QueryRowContext(ctx, query, token, time.Now()).Scan(
 		&resetToken.ID,
 		&resetToken.UserID,
 		&resetToken.Token,
@@ -929,10 +930,10 @@ func (s *SQLiteStorage) GetPasswordResetToken(token string) (*PasswordResetToken
 	return &resetToken, nil
 }
 
-func (s *SQLiteStorage) UsePasswordResetToken(token string) error {
+func (s *SQLiteStorage) UsePasswordResetToken(ctx context.Context, token string) error {
 	query := `UPDATE password_reset_tokens SET used_at = ? WHERE token = ? AND used_at IS NULL`
 
-	result, err := s.db.Exec(query, time.Now(), token)
+	result, err := s.db.ExecContext(ctx, query, time.Now(), token)
 	if err != nil {
 		return fmt.Errorf("failed to use password reset token: %w", err)
 	}
@@ -949,12 +950,12 @@ func (s *SQLiteStorage) UsePasswordResetToken(token string) error {
 	return nil
 }
 
-func (s *SQLiteStorage) CleanupExpiredPasswordResetTokens() error {
+func (s *SQLiteStorage) CleanupExpiredPasswordResetTokens(ctx context.Context) error {
 	query := `DELETE FROM password_reset_tokens WHERE expires_at < ? OR (used_at IS NOT NULL AND used_at < ?)`
 
 	cutoffTime := time.Now().Add(-24 * time.Hour) // Keep used tokens for 24 hours
 
-	_, err := s.db.Exec(query, time.Now(), cutoffTime)
+	_, err := s.db.ExecContext(ctx, query, time.Now(), cutoffTime)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired password reset tokens: %w", err)
 	}
@@ -962,10 +963,10 @@ func (s *SQLiteStorage) CleanupExpiredPasswordResetTokens() error {
 	return nil
 }
 
-func (s *SQLiteStorage) CleanupExpiredOAuthStates() error {
+func (s *SQLiteStorage) CleanupExpiredOAuthStates(ctx context.Context) error {
 	query := `DELETE FROM oauth_states WHERE expires_at < ?`
 
-	_, err := s.db.Exec(query, time.Now())
+	_, err := s.db.ExecContext(ctx, query, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired OAuth states: %w", err)
 	}
@@ -973,10 +974,10 @@ func (s *SQLiteStorage) CleanupExpiredOAuthStates() error {
 	return nil
 }
 
-func (s *SQLiteStorage) CleanupExpired2FACodes() error {
+func (s *SQLiteStorage) CleanupExpired2FACodes(ctx context.Context) error {
 	query := `DELETE FROM two_factor_codes WHERE expires_at < ?`
 
-	_, err := s.db.Exec(query, time.Now())
+	_, err := s.db.ExecContext(ctx, query, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired 2FA codes: %w", err)
 	}
@@ -984,10 +985,10 @@ func (s *SQLiteStorage) CleanupExpired2FACodes() error {
 	return nil
 }
 
-func (s *SQLiteStorage) CleanupExpiredRefreshTokens() error {
+func (s *SQLiteStorage) CleanupExpiredRefreshTokens(ctx context.Context) error {
 	query := `DELETE FROM refresh_tokens WHERE expires_at < ?`
 
-	_, err := s.db.Exec(query, time.Now())
+	_, err := s.db.ExecContext(ctx, query, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired refresh tokens: %w", err)
 	}
@@ -995,11 +996,11 @@ func (s *SQLiteStorage) CleanupExpiredRefreshTokens() error {
 	return nil
 }
 
-func (s *SQLiteStorage) Create2FACode(code *TwoFactorCode) error {
+func (s *SQLiteStorage) Create2FACode(ctx context.Context, code *TwoFactorCode) error {
 	query := `INSERT INTO two_factor_codes (user_id, code, code_type, expires_at, created_at)
 			  VALUES (?, ?, ?, ?, ?)`
 
-	result, err := s.db.Exec(query,
+	result, err := s.db.ExecContext(ctx, query,
 		code.UserID, code.Code, code.CodeType, code.ExpiresAt, code.CreatedAt)
 
 	if err != nil {
@@ -1019,15 +1020,15 @@ func (s *SQLiteStorage) Create2FACode(code *TwoFactorCode) error {
 	return nil
 }
 
-func (s *SQLiteStorage) Get2FACode(userID uint, code string) (*TwoFactorCode, error) {
+func (s *SQLiteStorage) Get2FACode(ctx context.Context, userID uint, code string, codeType string) (*TwoFactorCode, error) {
 	query := `SELECT id, user_id, code, code_type, expires_at, used_at, created_at
 			  FROM two_factor_codes
-			  WHERE user_id = ? AND code = ?`
+			  WHERE user_id = ? AND code = ? AND code_type = ?`
 
 	var twoFactorCode TwoFactorCode
 	var usedAt sql.NullTime
 
-	err := s.db.QueryRow(query, userID, code).Scan(
+	err := s.db.QueryRowContext(ctx, query, userID, code, codeType).Scan(
 		&twoFactorCode.ID,
 		&twoFactorCode.UserID,
 		&twoFactorCode.Code,
@@ -1051,17 +1052,17 @@ func (s *SQLiteStorage) Get2FACode(userID uint, code string) (*TwoFactorCode, er
 	return &twoFactorCode, nil
 }
 
-func (s *SQLiteStorage) GetLatestPending2FACode(code string) (*TwoFactorCode, error) {
+func (s *SQLiteStorage) GetLatestPending2FACode(ctx context.Context, code string, codeType string) (*TwoFactorCode, error) {
 	query := `SELECT id, user_id, code, code_type, expires_at, used_at, created_at
 			  FROM two_factor_codes
-			  WHERE code = ? AND used_at IS NULL
+			  WHERE code = ? AND used_at IS NULL AND code_type = ?
 			  ORDER BY created_at DESC
 			  LIMIT 1`
 
 	var twoFactorCode TwoFactorCode
 	var usedAt sql.NullTime
 
-	err := s.db.QueryRow(query, code).Scan(
+	err := s.db.QueryRowContext(ctx, query, code, codeType).Scan(
 		&twoFactorCode.ID,
 		&twoFactorCode.UserID,
 		&twoFactorCode.Code,
@@ -1085,10 +1086,10 @@ func (s *SQLiteStorage) GetLatestPending2FACode(code string) (*TwoFactorCode, er
 	return &twoFactorCode, nil
 }
 
-func (s *SQLiteStorage) Use2FACode(userID uint, code string) error {
+func (s *SQLiteStorage) Use2FACode(ctx context.Context, userID uint, code string) error {
 	query := `UPDATE two_factor_codes SET used_at = ? WHERE user_id = ? AND code = ? AND used_at IS NULL`
 
-	_, err := s.db.Exec(query, time.Now(), userID, code)
+	_, err := s.db.ExecContext(ctx, query, time.Now(), userID, code)
 	if err != nil {
 		return fmt.Errorf("failed to use 2FA code: %w", err)
 	}
@@ -1096,10 +1097,10 @@ func (s *SQLiteStorage) Use2FACode(userID uint, code string) error {
 	return nil
 }
 
-func (s *SQLiteStorage) Create2FABackupCode(code *TwoFactorBackupCode) error {
+func (s *SQLiteStorage) Create2FABackupCode(ctx context.Context, code *TwoFactorBackupCode) error {
 	query := `INSERT INTO two_factor_backup_codes (user_id, code, created_at) VALUES (?, ?, ?)`
 
-	result, err := s.db.Exec(query, code.UserID, code.Code, code.CreatedAt)
+	result, err := s.db.ExecContext(ctx, query, code.UserID, code.Code, code.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create 2FA backup code: %w", err)
 	}
@@ -1117,13 +1118,13 @@ func (s *SQLiteStorage) Create2FABackupCode(code *TwoFactorBackupCode) error {
 	return nil
 }
 
-func (s *SQLiteStorage) Get2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
+func (s *SQLiteStorage) Get2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error) {
 	query := `SELECT id, user_id, code, used_at, created_at
 			  FROM two_factor_backup_codes
 			  WHERE user_id = ?
 			  ORDER BY id`
 
-	rows, err := s.db.Query(query, userID)
+	rows, err := s.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get 2FA backup codes: %w", err)
 	}
@@ -1149,7 +1150,7 @@ func (s *SQLiteStorage) Get2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, 
 	return codes, nil
 }
 
-func (s *SQLiteStorage) GetBackupCodeByCode(code string) (*TwoFactorBackupCode, error) {
+func (s *SQLiteStorage) GetBackupCodeByCode(ctx context.Context, code string) (*TwoFactorBackupCode, error) {
 	query := `SELECT id, user_id, code, used_at, created_at
 			  FROM two_factor_backup_codes
 			  WHERE code = ? AND used_at IS NULL`
@@ -1157,7 +1158,7 @@ func (s *SQLiteStorage) GetBackupCodeByCode(code string) (*TwoFactorBackupCode, 
 	var backupCode TwoFactorBackupCode
 	var usedAt sql.NullTime
 
-	err := s.db.QueryRow(query, code).Scan(
+	err := s.db.QueryRowContext(ctx, query, code).Scan(
 		&backupCode.ID,
 		&backupCode.UserID,
 		&backupCode.Code,
@@ -1179,10 +1180,10 @@ func (s *SQLiteStorage) GetBackupCodeByCode(code string) (*TwoFactorBackupCode, 
 	return &backupCode, nil
 }
 
-func (s *SQLiteStorage) Use2FABackupCode(userID uint, code string) error {
+func (s *SQLiteStorage) Use2FABackupCode(ctx context.Context, userID uint, code string) error {
 	query := `UPDATE two_factor_backup_codes SET used_at = ? WHERE user_id = ? AND code = ? AND used_at IS NULL`
 
-	result, err := s.db.Exec(query, time.Now(), userID, code)
+	result, err := s.db.ExecContext(ctx, query, time.Now(), userID, code)
 	if err != nil {
 		return fmt.Errorf("failed to use 2FA backup code: %w", err)
 	}
@@ -1199,9 +1200,9 @@ func (s *SQLiteStorage) Use2FABackupCode(userID uint, code string) error {
 	return nil
 }
 
-func (s *SQLiteStorage) Regenerate2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
+func (s *SQLiteStorage) Regenerate2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error) {
 	// Delete old backup codes
-	if _, err := s.db.Exec("DELETE FROM two_factor_backup_codes WHERE user_id = ?", userID); err != nil {
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM two_factor_backup_codes WHERE user_id = ?", userID); err != nil {
 		return nil, fmt.Errorf("failed to delete old 2FA backup codes: %w", err)
 	}
 
@@ -1216,7 +1217,7 @@ func (s *SQLiteStorage) Regenerate2FABackupCodes(userID uint) ([]*TwoFactorBacku
 			CreatedAt: time.Now(),
 		}
 
-		if err := s.Create2FABackupCode(backupCode); err != nil {
+		if err := s.Create2FABackupCode(ctx, backupCode); err != nil {
 			return nil, fmt.Errorf("failed to create 2FA backup code: %w", err)
 		}
 
@@ -1226,11 +1227,11 @@ func (s *SQLiteStorage) Regenerate2FABackupCodes(userID uint) ([]*TwoFactorBacku
 	return backupCodes, nil
 }
 
-func (s *SQLiteStorage) CreateRefreshToken(token *RefreshToken) error {
+func (s *SQLiteStorage) CreateRefreshToken(ctx context.Context, token *RefreshToken) error {
 	query := `INSERT INTO refresh_tokens (token, user_id, session_id, expires_at, created_at)
 			  VALUES (?, ?, ?, ?, ?)`
 
-	result, err := s.db.Exec(query,
+	result, err := s.db.ExecContext(ctx, query,
 		token.Token, token.UserID, token.SessionID, token.ExpiresAt, token.CreatedAt)
 
 	if err != nil {
@@ -1250,7 +1251,7 @@ func (s *SQLiteStorage) CreateRefreshToken(token *RefreshToken) error {
 	return nil
 }
 
-func (s *SQLiteStorage) GetRefreshToken(token string) (*RefreshToken, error) {
+func (s *SQLiteStorage) GetRefreshToken(ctx context.Context, token string) (*RefreshToken, error) {
 	query := `SELECT id, token, user_id, session_id, expires_at, created_at, last_used_at
 			  FROM refresh_tokens
 			  WHERE token = ?`
@@ -1258,7 +1259,7 @@ func (s *SQLiteStorage) GetRefreshToken(token string) (*RefreshToken, error) {
 	var refreshToken RefreshToken
 	var lastUsedAt sql.NullTime
 
-	err := s.db.QueryRow(query, token).Scan(
+	err := s.db.QueryRowContext(ctx, query, token).Scan(
 		&refreshToken.ID,
 		&refreshToken.Token,
 		&refreshToken.UserID,
@@ -1282,10 +1283,10 @@ func (s *SQLiteStorage) GetRefreshToken(token string) (*RefreshToken, error) {
 	return &refreshToken, nil
 }
 
-func (s *SQLiteStorage) UpdateRefreshToken(token *RefreshToken) error {
+func (s *SQLiteStorage) UpdateRefreshToken(ctx context.Context, token *RefreshToken) error {
 	query := `UPDATE refresh_tokens SET session_id = ?, last_used_at = ? WHERE token = ?`
 
-	_, err := s.db.Exec(query, token.SessionID, time.Now(), token.Token)
+	_, err := s.db.ExecContext(ctx, query, token.SessionID, time.Now(), token.Token)
 	if err != nil {
 		return fmt.Errorf("failed to update refresh token: %w", err)
 	}
@@ -1293,10 +1294,10 @@ func (s *SQLiteStorage) UpdateRefreshToken(token *RefreshToken) error {
 	return nil
 }
 
-func (s *SQLiteStorage) DeleteRefreshToken(token string) error {
+func (s *SQLiteStorage) DeleteRefreshToken(ctx context.Context, token string) error {
 	query := `DELETE FROM refresh_tokens WHERE token = ?`
 
-	_, err := s.db.Exec(query, token)
+	_, err := s.db.ExecContext(ctx, query, token)
 	if err != nil {
 		return fmt.Errorf("failed to delete refresh token: %w", err)
 	}
@@ -1304,10 +1305,10 @@ func (s *SQLiteStorage) DeleteRefreshToken(token string) error {
 	return nil
 }
 
-func (s *SQLiteStorage) DeleteUserRefreshTokens(userID uint) error {
+func (s *SQLiteStorage) DeleteUserRefreshTokens(ctx context.Context, userID uint) error {
 	query := `DELETE FROM refresh_tokens WHERE user_id = ?`
 
-	_, err := s.db.Exec(query, userID)
+	_, err := s.db.ExecContext(ctx, query, userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete user refresh tokens: %w", err)
 	}

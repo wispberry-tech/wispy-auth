@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -83,8 +84,11 @@ func TestAuthMiddleware_ValidToken_HeaderPriority(t *testing.T) {
 		"password":   "TestPassword123!",
 		"first_name": "User2",
 	})
-	signupResp2 := authService.SignUpHandler(signupReq2)
-	if signupResp2.StatusCode != 201 {
+	rec2 := httptest.NewRecorder()
+	authService.SignUpHandler(rec2, signupReq2)
+	var signupResp2 SignUpResponse
+	json.NewDecoder(rec2.Body).Decode(&signupResp2)
+	if rec2.Code != 201 {
 		t.Fatalf("Failed to create second user")
 	}
 	token2 := signupResp2.Token
@@ -177,7 +181,7 @@ func TestAuthMiddleware_ExpiredSession(t *testing.T) {
 		UserID:    signupUser.ID,
 		ExpiresAt: time.Now().Add(-1 * time.Hour),
 	}
-	mockStore.CreateSession(expiredSession)
+	mockStore.CreateSession(context.Background(), expiredSession)
 
 	called := false
 	handler := authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +215,7 @@ func TestAuthMiddleware_UserNotFound(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
 	mockStore := authService.storage.(*mockStorage)
-	mockStore.CreateSession(fakeSession)
+	mockStore.CreateSession(context.Background(), fakeSession)
 
 	called := false
 	handler := authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +247,7 @@ func TestAuthMiddleware_InactiveUser(t *testing.T) {
 
 	// Deactivate user
 	signupUser.IsActive = false
-	mockStore.UpdateUser(signupUser)
+	mockStore.UpdateUser(context.Background(), signupUser)
 
 	called := false
 	handler := authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +279,7 @@ func TestAuthMiddleware_SuspendedUser(t *testing.T) {
 
 	// Suspend user
 	signupUser.IsSuspended = true
-	mockStore.UpdateUser(signupUser)
+	mockStore.UpdateUser(context.Background(), signupUser)
 
 	called := false
 	handler := authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +378,7 @@ func TestAuthMiddleware_ExpirationBoundary(t *testing.T) {
 		UserID:    signupUser.ID,
 		ExpiresAt: now,
 	}
-	mockStore.CreateSession(boundarySession)
+	mockStore.CreateSession(context.Background(), boundarySession)
 
 	called := false
 	handler := authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -469,7 +473,7 @@ func TestOptionalAuthMiddleware_ExpiredToken(t *testing.T) {
 		UserID:    signupUser.ID,
 		ExpiresAt: time.Now().Add(-1 * time.Hour),
 	}
-	mockStore.CreateSession(expiredSession)
+	mockStore.CreateSession(context.Background(), expiredSession)
 
 	called := false
 	handler := authService.OptionalAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -528,7 +532,7 @@ func TestRateLimitMiddleware_UnderLimit(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.EnableRateLimiting = true
+	authService.securityConfig.EnableRateLimiting = boolPtr(true)
 	authService.securityConfig.RateLimitRequests = 3
 	authService.securityConfig.RateLimitWindow = 1 * time.Second
 
@@ -554,10 +558,7 @@ func TestRateLimitMiddleware_OverLimit(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.EnableRateLimiting = true
-	authService.securityConfig.RateLimitRequests = 2
-	authService.securityConfig.RateLimitWindow = 1 * time.Second
-
+	// DefaultSecurityConfig has 10 requests per minute; use default rate limiter
 	handler := authService.RateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -565,8 +566,8 @@ func TestRateLimitMiddleware_OverLimit(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api", nil)
 	req.RemoteAddr = "192.168.1.1:12345"
 
-	// Make 2 successful requests
-	for i := 0; i < 2; i++ {
+	// Make 10 successful requests (default limit)
+	for i := range 10 {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -574,11 +575,11 @@ func TestRateLimitMiddleware_OverLimit(t *testing.T) {
 		}
 	}
 
-	// 3rd request should be rate limited
+	// 11th request should be rate limited
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusTooManyRequests {
-		t.Errorf("3rd request should be rate limited, got %d", w.Code)
+		t.Errorf("11th request should be rate limited, got %d", w.Code)
 	}
 }
 
@@ -587,16 +588,12 @@ func TestRateLimitMiddleware_PerIPTracking(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.EnableRateLimiting = true
-	authService.securityConfig.RateLimitRequests = 2
-	authService.securityConfig.RateLimitWindow = 1 * time.Second
-
 	handler := authService.RateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	// Make 2 requests from IP1
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest("GET", "/api", nil)
 		req.RemoteAddr = "192.168.1.1:12345"
 		w := httptest.NewRecorder()
@@ -607,7 +604,7 @@ func TestRateLimitMiddleware_PerIPTracking(t *testing.T) {
 	}
 
 	// IP2 should have separate limit
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest("GET", "/api", nil)
 		req.RemoteAddr = "192.168.1.2:12345"
 		w := httptest.NewRecorder()
@@ -623,7 +620,7 @@ func TestRateLimitMiddleware_Disabled(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.EnableRateLimiting = false
+	authService.securityConfig.EnableRateLimiting = boolPtr(false)
 
 	handler := authService.RateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

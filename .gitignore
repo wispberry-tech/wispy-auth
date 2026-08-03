@@ -7,3 +7,4 @@ examples/core/auth_test.db-wal
 coverage
 coverage.out
 examples/core/core
+/admin-password-reset

@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -61,10 +63,13 @@ func TestAuthService_OAuthInitHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/auth/"+tt.provider, nil)
-			response := authService.OAuthInitHandler(req, tt.provider)
+			rec := httptest.NewRecorder()
+			authService.OAuthInitHandler(rec, req, tt.provider)
+			var response OAuthResponse
+			json.NewDecoder(rec.Body).Decode(&response)
 
-			if response.StatusCode != tt.expectedStatus {
-				t.Errorf("OAuthInitHandler() status = %d, expected %d", response.StatusCode, tt.expectedStatus)
+			if rec.Code != tt.expectedStatus {
+				t.Errorf("OAuthInitHandler() status = %d, expected %d", rec.Code, tt.expectedStatus)
 			}
 
 			if tt.checkResponse != nil {
@@ -88,7 +93,7 @@ func TestAuthService_OAuthCallbackHandler(t *testing.T) {
 		RedirectURL: "http://localhost/callback",
 		ExpiresAt:   time.Now().Add(10 * time.Minute),
 	}
-	mockStore.StoreOAuthState(oauthState)
+	mockStore.StoreOAuthState(context.Background(), oauthState)
 
 	tests := []struct {
 		name           string
@@ -158,10 +163,13 @@ func TestAuthService_OAuthCallbackHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := tt.setupRequest()
-			response := authService.OAuthCallbackHandler(req, tt.provider)
+			rec := httptest.NewRecorder()
+			authService.OAuthCallbackHandler(rec, req, tt.provider)
+			var response OAuthResponse
+			json.NewDecoder(rec.Body).Decode(&response)
 
-			if response.StatusCode != tt.expectedStatus {
-				t.Errorf("OAuthCallbackHandler() status = %d, expected %d", response.StatusCode, tt.expectedStatus)
+			if rec.Code != tt.expectedStatus {
+				t.Errorf("OAuthCallbackHandler() status = %d, expected %d", rec.Code, tt.expectedStatus)
 			}
 
 			if tt.checkResponse != nil {
@@ -245,16 +253,19 @@ func TestAuthService_ConcurrentAccess(t *testing.T) {
 			go func(userNum int) {
 				defer func() { done <- true }()
 
-				req := createTestRequest(t, "POST", "/signup", map[string]interface{}{
-					"email":      fmt.Sprintf("user%d@example.com", userNum),
-					"password":   "TestPassword123!",
-					"first_name": fmt.Sprintf("User%d", userNum),
-				})
+		req := createTestRequest(t, "POST", "/signup", map[string]interface{}{
+				"email":      fmt.Sprintf("user%d@example.com", userNum),
+				"password":   "TestPassword123!",
+				"first_name": fmt.Sprintf("User%d", userNum),
+			})
 
-				response := authService.SignUpHandler(req)
-				if response.StatusCode != http.StatusCreated {
-					t.Errorf("Concurrent signup failed for user %d: %+v", userNum, response)
-				}
+			rec := httptest.NewRecorder()
+			authService.SignUpHandler(rec, req)
+			var response SignUpResponse
+			json.NewDecoder(rec.Body).Decode(&response)
+			if rec.Code != http.StatusCreated {
+				t.Errorf("Concurrent signup failed for user %d: %+v", userNum, response)
+			}
 			}(i)
 		}
 
@@ -271,8 +282,11 @@ func TestAuthService_ConcurrentAccess(t *testing.T) {
 			"email":    "concurrent@example.com",
 			"password": "TestPassword123!",
 		})
-		signupResp := authService.SignUpHandler(signupReq)
-		if signupResp.StatusCode != http.StatusCreated {
+		signupRec := httptest.NewRecorder()
+		authService.SignUpHandler(signupRec, signupReq)
+		var signupResp SignUpResponse
+		json.NewDecoder(signupRec.Body).Decode(&signupResp)
+		if signupRec.Code != http.StatusCreated {
 			t.Fatalf("Failed to create user for concurrent test: %+v", signupResp)
 		}
 
@@ -288,8 +302,11 @@ func TestAuthService_ConcurrentAccess(t *testing.T) {
 					"password": "TestPassword123!",
 				})
 
-				response := authService.SignInHandler(req)
-				if response.StatusCode != http.StatusOK {
+				rec := httptest.NewRecorder()
+				authService.SignInHandler(rec, req)
+				var response SignInResponse
+				json.NewDecoder(rec.Body).Decode(&response)
+				if rec.Code != http.StatusOK {
 					t.Errorf("Concurrent signin failed for request %d: %+v", reqNum, response)
 				}
 			}(i)
@@ -397,15 +414,18 @@ func TestSessionManagement(t *testing.T) {
 			UserID:    user.ID,
 			ExpiresAt: time.Now().Add(-1 * time.Hour), // Expired
 		}
-		mockStore.CreateSession(expiredSession)
+		mockStore.CreateSession(context.Background(), expiredSession)
 
 		// Try to validate expired session
 		req := httptest.NewRequest("GET", "/validate", nil)
 		req.Header.Set("Authorization", "Bearer "+expiredToken)
-		response := authService.ValidateHandler(req)
+		rec := httptest.NewRecorder()
+		authService.ValidateHandler(rec, req)
+		var response ValidateResponse
+		json.NewDecoder(rec.Body).Decode(&response)
 
-		if response.StatusCode != http.StatusUnauthorized {
-			t.Errorf("Expected 401 for expired session, got %d", response.StatusCode)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for expired session, got %d", rec.Code)
 		}
 	})
 
@@ -418,11 +438,11 @@ func TestSessionManagement(t *testing.T) {
 				UserID:    user.ID,
 				ExpiresAt: time.Now().Add(1 * time.Hour),
 			}
-			mockStore.CreateSession(session)
+			mockStore.CreateSession(context.Background(), session)
 		}
 
 		// Get user sessions
-		sessions, err := mockStore.GetUserSessions(user.ID)
+		sessions, err := mockStore.GetUserSessions(context.Background(), user.ID)
 		if err != nil {
 			t.Fatalf("Failed to get user sessions: %v", err)
 		}

@@ -37,7 +37,7 @@ func TestAuthService_NewAuthService(t *testing.T) {
 					MaxLoginAttempts:  3,
 					LockoutDuration:   30 * time.Minute,
 					SessionLifetime:   2 * time.Hour,
-					RequireTwoFactor:  true,
+					RequireTwoFactor:  boolPtr(true),
 				},
 			},
 			wantErr: false,
@@ -195,10 +195,13 @@ func TestAuthService_SignUpHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := createTestRequest(t, "POST", "/signup", tt.requestBody)
-			response := authService.SignUpHandler(req)
+			rec := httptest.NewRecorder()
+			authService.SignUpHandler(rec, req)
+			var response SignUpResponse
+			json.NewDecoder(rec.Body).Decode(&response)
 
-			if response.StatusCode != tt.expectedStatus {
-				t.Errorf("SignUpHandler() status = %d, expected %d", response.StatusCode, tt.expectedStatus)
+			if rec.Code != tt.expectedStatus {
+				t.Errorf("SignUpHandler() status = %d, expected %d", rec.Code, tt.expectedStatus)
 			}
 
 			if tt.checkResponse != nil {
@@ -220,8 +223,11 @@ func TestAuthService_SignInHandler(t *testing.T) {
 		"first_name": "Test",
 		"last_name":  "User",
 	})
-	signupResp := authService.SignUpHandler(signupReq)
-	if signupResp.StatusCode != http.StatusCreated {
+	rec := httptest.NewRecorder()
+	authService.SignUpHandler(rec, signupReq)
+	var signupResp SignUpResponse
+	json.NewDecoder(rec.Body).Decode(&signupResp)
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("Failed to create test user: %+v", signupResp)
 	}
 
@@ -298,10 +304,13 @@ func TestAuthService_SignInHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := createTestRequest(t, "POST", "/signin", tt.requestBody)
-			response := authService.SignInHandler(req)
+			rec := httptest.NewRecorder()
+			authService.SignInHandler(rec, req)
+			var response SignInResponse
+			json.NewDecoder(rec.Body).Decode(&response)
 
-			if response.StatusCode != tt.expectedStatus {
-				t.Errorf("SignInHandler() status = %d, expected %d", response.StatusCode, tt.expectedStatus)
+			if rec.Code != tt.expectedStatus {
+				t.Errorf("SignInHandler() status = %d, expected %d", rec.Code, tt.expectedStatus)
 			}
 
 			if tt.checkResponse != nil {
@@ -330,7 +339,8 @@ func TestAuthService_ValidateHandler(t *testing.T) {
 			setupRequest: func() *http.Request {
 				req := httptest.NewRequest("GET", "/validate", nil)
 				req.Header.Set("Authorization", "Bearer "+token)
-				return req
+				ctx := context.WithValue(req.Context(), "user", user)
+				return req.WithContext(ctx)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, response ValidateResponse) {
@@ -351,7 +361,8 @@ func TestAuthService_ValidateHandler(t *testing.T) {
 					Name:  "auth_token",
 					Value: token,
 				})
-				return req
+				ctx := context.WithValue(req.Context(), "user", user)
+				return req.WithContext(ctx)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, response ValidateResponse) {
@@ -395,10 +406,13 @@ func TestAuthService_ValidateHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := tt.setupRequest()
-			response := authService.ValidateHandler(req)
+			rec := httptest.NewRecorder()
+			authService.ValidateHandler(rec, req)
+			var response ValidateResponse
+			json.NewDecoder(rec.Body).Decode(&response)
 
-			if response.StatusCode != tt.expectedStatus {
-				t.Errorf("ValidateHandler() status = %d, expected %d", response.StatusCode, tt.expectedStatus)
+			if rec.Code != tt.expectedStatus {
+				t.Errorf("ValidateHandler() status = %d, expected %d", rec.Code, tt.expectedStatus)
 			}
 
 			if tt.checkResponse != nil {
@@ -414,7 +428,11 @@ func TestAuthService_LogoutHandler(t *testing.T) {
 	defer authService.Close()
 
 	// Create a user and get their token
-	_, token := mustCreateTestUserWithToken(t, authService)
+	user, token := mustCreateTestUserWithToken(t, authService)
+	mockStore := authService.storage.(*mockStorage)
+
+	// Look up the session
+	session, _ := mockStore.GetSession(context.Background(), token)
 
 	tests := []struct {
 		name           string
@@ -427,7 +445,9 @@ func TestAuthService_LogoutHandler(t *testing.T) {
 			setupRequest: func() *http.Request {
 				req := httptest.NewRequest("POST", "/logout", nil)
 				req.Header.Set("Authorization", "Bearer "+token)
-				return req
+				ctx := context.WithValue(req.Context(), "user", user)
+				ctx = context.WithValue(ctx, "session", session)
+				return req.WithContext(ctx)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, response LogoutResponse) {
@@ -441,7 +461,7 @@ func TestAuthService_LogoutHandler(t *testing.T) {
 			setupRequest: func() *http.Request {
 				return httptest.NewRequest("POST", "/logout", nil)
 			},
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, response LogoutResponse) {
 				if response.Error == "" {
 					t.Error("Expected error message for missing token")
@@ -453,10 +473,13 @@ func TestAuthService_LogoutHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := tt.setupRequest()
-			response := authService.LogoutHandler(req)
+			rec := httptest.NewRecorder()
+			authService.LogoutHandler(rec, req)
+			var response LogoutResponse
+			json.NewDecoder(rec.Body).Decode(&response)
 
-			if response.StatusCode != tt.expectedStatus {
-				t.Errorf("LogoutHandler() status = %d, expected %d", response.StatusCode, tt.expectedStatus)
+			if rec.Code != tt.expectedStatus {
+				t.Errorf("LogoutHandler() status = %d, expected %d", rec.Code, tt.expectedStatus)
 			}
 
 			if tt.checkResponse != nil {
@@ -464,12 +487,11 @@ func TestAuthService_LogoutHandler(t *testing.T) {
 			}
 
 			// If logout was successful, token should be invalid
-			if response.StatusCode == http.StatusOK {
-				validateReq := httptest.NewRequest("GET", "/validate", nil)
-				validateReq.Header.Set("Authorization", "Bearer "+token)
-				validateResp := authService.ValidateHandler(validateReq)
-				if validateResp.StatusCode != http.StatusUnauthorized {
-					t.Error("Token should be invalid after logout")
+			if rec.Code == http.StatusOK {
+				// Verify the session was deleted from storage
+				deletedSession, _ := mockStore.GetSession(context.Background(), token)
+				if deletedSession != nil {
+					t.Error("Session should be deleted after logout")
 				}
 			}
 		})
@@ -523,10 +545,13 @@ func TestAuthService_GetSessionsHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := tt.setupRequest()
-			response := authService.GetSessionsHandler(req)
+			rec := httptest.NewRecorder()
+			authService.GetSessionsHandler(rec, req)
+			var response GetSessionsResponse
+			json.NewDecoder(rec.Body).Decode(&response)
 
-			if response.StatusCode != tt.expectedStatus {
-				t.Errorf("GetSessionsHandler() status = %d, expected %d", response.StatusCode, tt.expectedStatus)
+			if rec.Code != tt.expectedStatus {
+				t.Errorf("GetSessionsHandler() status = %d, expected %d", rec.Code, tt.expectedStatus)
 			}
 
 			if tt.checkResponse != nil {
@@ -714,6 +739,11 @@ func TestOAuthProviderConfigurations(t *testing.T) {
 	})
 }
 
+// boolPtr returns a pointer to a bool value, useful for *bool struct fields.
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 // Helper functions for tests
 
 // mockStorage implements the Storage interface for testing
@@ -725,9 +755,10 @@ type mockStorage struct {
 	securityEvents      []*SecurityEvent
 	oauthStates         map[string]*OAuthState
 	passwordResetTokens map[string]*PasswordResetToken
+	twoFactorCodes      map[string]*TwoFactorCode
+	twoFactorBackupCodes map[string][]*TwoFactorBackupCode
 	nextUserID          uint
 }
-
 func newMockStorage() *mockStorage {
 	return &mockStorage{
 		users:               make(map[string]*User),
@@ -736,11 +767,13 @@ func newMockStorage() *mockStorage {
 		securityEvents:      make([]*SecurityEvent, 0),
 		oauthStates:         make(map[string]*OAuthState),
 		passwordResetTokens: make(map[string]*PasswordResetToken),
+		twoFactorCodes:      make(map[string]*TwoFactorCode),
+		twoFactorBackupCodes: make(map[string][]*TwoFactorBackupCode),
 		nextUserID:          1,
 	}
 }
 
-func (m *mockStorage) CreateUser(user *User) error {
+func (m *mockStorage) CreateUser(ctx context.Context, user *User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -765,7 +798,7 @@ func (m *mockStorage) CreateUser(user *User) error {
 	return nil
 }
 
-func (m *mockStorage) GetUserByEmail(email, provider string) (*User, error) {
+func (m *mockStorage) GetUserByEmail(ctx context.Context, email, provider string) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -778,7 +811,7 @@ func (m *mockStorage) GetUserByEmail(email, provider string) (*User, error) {
 	return nil, nil // Return nil when user not found, not an error
 }
 
-func (m *mockStorage) GetUserByEmailAnyProvider(email string) (*User, error) {
+func (m *mockStorage) GetUserByEmailAnyProvider(ctx context.Context, email string) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -792,7 +825,7 @@ func (m *mockStorage) GetUserByEmailAnyProvider(email string) (*User, error) {
 	return nil, nil // Return nil when user not found, not an error
 }
 
-func (m *mockStorage) GetUserByProviderID(provider, providerID string) (*User, error) {
+func (m *mockStorage) GetUserByProviderID(ctx context.Context, provider, providerID string) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -806,7 +839,7 @@ func (m *mockStorage) GetUserByProviderID(provider, providerID string) (*User, e
 	return nil, nil // Return nil when user not found, not an error
 }
 
-func (m *mockStorage) GetUserByID(id uint) (*User, error) {
+func (m *mockStorage) GetUserByID(ctx context.Context, id uint) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -820,7 +853,7 @@ func (m *mockStorage) GetUserByID(id uint) (*User, error) {
 	return nil, nil // Return nil when user not found, not an error
 }
 
-func (m *mockStorage) GetUserByUUID(uuid string) (*User, error) {
+func (m *mockStorage) GetUserByUUID(ctx context.Context, uuid string) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -834,7 +867,7 @@ func (m *mockStorage) GetUserByUUID(uuid string) (*User, error) {
 	return nil, nil // Return nil when user not found, not an error
 }
 
-func (m *mockStorage) UpdateUser(user *User) error {
+func (m *mockStorage) UpdateUser(ctx context.Context, user *User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -848,7 +881,7 @@ func (m *mockStorage) UpdateUser(user *User) error {
 	return nil
 }
 
-func (m *mockStorage) CreateUserSecurity(security *UserSecurity) error {
+func (m *mockStorage) CreateUserSecurity(ctx context.Context, security *UserSecurity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -858,7 +891,7 @@ func (m *mockStorage) CreateUserSecurity(security *UserSecurity) error {
 	return nil
 }
 
-func (m *mockStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
+func (m *mockStorage) GetUserSecurity(ctx context.Context, userID uint) (*UserSecurity, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -870,7 +903,7 @@ func (m *mockStorage) GetUserSecurity(userID uint) (*UserSecurity, error) {
 	return nil, nil // Return nil when security record not found, not an error
 }
 
-func (m *mockStorage) UpdateUserSecurity(security *UserSecurity) error {
+func (m *mockStorage) UpdateUserSecurity(ctx context.Context, security *UserSecurity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -879,7 +912,7 @@ func (m *mockStorage) UpdateUserSecurity(security *UserSecurity) error {
 	return nil
 }
 
-func (m *mockStorage) IncrementLoginAttempts(userID uint) error {
+func (m *mockStorage) IncrementLoginAttempts(ctx context.Context, userID uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -890,7 +923,7 @@ func (m *mockStorage) IncrementLoginAttempts(userID uint) error {
 	return nil
 }
 
-func (m *mockStorage) ResetLoginAttempts(userID uint) error {
+func (m *mockStorage) ResetLoginAttempts(ctx context.Context, userID uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -901,7 +934,7 @@ func (m *mockStorage) ResetLoginAttempts(userID uint) error {
 	return nil
 }
 
-func (m *mockStorage) SetUserLocked(userID uint, until time.Time) error {
+func (m *mockStorage) SetUserLocked(ctx context.Context, userID uint, until time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -912,7 +945,7 @@ func (m *mockStorage) SetUserLocked(userID uint, until time.Time) error {
 	return nil
 }
 
-func (m *mockStorage) UpdateLastLogin(userID uint, ipAddress *string) error {
+func (m *mockStorage) UpdateLastLogin(ctx context.Context, userID uint, ipAddress *string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -925,7 +958,7 @@ func (m *mockStorage) UpdateLastLogin(userID uint, ipAddress *string) error {
 	return nil
 }
 
-func (m *mockStorage) CreateSession(session *Session) error {
+func (m *mockStorage) CreateSession(ctx context.Context, session *Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -935,7 +968,7 @@ func (m *mockStorage) CreateSession(session *Session) error {
 	return nil
 }
 
-func (m *mockStorage) GetSession(token string) (*Session, error) {
+func (m *mockStorage) GetSession(ctx context.Context, token string) (*Session, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -951,7 +984,7 @@ func (m *mockStorage) GetSession(token string) (*Session, error) {
 	return nil, nil // Return nil when session not found, not an error
 }
 
-func (m *mockStorage) GetUserSessions(userID uint) ([]*Session, error) {
+func (m *mockStorage) GetUserSessions(ctx context.Context, userID uint) ([]*Session, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -964,7 +997,7 @@ func (m *mockStorage) GetUserSessions(userID uint) ([]*Session, error) {
 	return sessions, nil
 }
 
-func (m *mockStorage) DeleteSession(token string) error {
+func (m *mockStorage) DeleteSession(ctx context.Context, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -972,7 +1005,7 @@ func (m *mockStorage) DeleteSession(token string) error {
 	return nil
 }
 
-func (m *mockStorage) DeleteUserSessions(userID uint) error {
+func (m *mockStorage) DeleteUserSessions(ctx context.Context, userID uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -984,7 +1017,7 @@ func (m *mockStorage) DeleteUserSessions(userID uint) error {
 	return nil
 }
 
-func (m *mockStorage) CleanupExpiredSessions() error {
+func (m *mockStorage) CleanupExpiredSessions(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -997,7 +1030,7 @@ func (m *mockStorage) CleanupExpiredSessions() error {
 	return nil
 }
 
-func (m *mockStorage) CreateSecurityEvent(event *SecurityEvent) error {
+func (m *mockStorage) CreateSecurityEvent(ctx context.Context, event *SecurityEvent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1006,7 +1039,7 @@ func (m *mockStorage) CreateSecurityEvent(event *SecurityEvent) error {
 	return nil
 }
 
-func (m *mockStorage) GetSecurityEvents(userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error) {
+func (m *mockStorage) GetSecurityEvents(ctx context.Context, userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1035,11 +1068,11 @@ func (m *mockStorage) GetSecurityEvents(userID *uint, eventType string, limit in
 	return events[start:end], nil
 }
 
-func (m *mockStorage) GetSecurityEventsByUser(userID uint, limit int, offset int) ([]*SecurityEvent, error) {
-	return m.GetSecurityEvents(&userID, "", limit, offset)
+func (m *mockStorage) GetSecurityEventsByUser(ctx context.Context, userID uint, limit int, offset int) ([]*SecurityEvent, error) {
+	return m.GetSecurityEvents(ctx, &userID, "", limit, offset)
 }
 
-func (m *mockStorage) CreateUserWithSecurity(user *User, security *UserSecurity) error {
+func (m *mockStorage) CreateUserWithSecurity(ctx context.Context, user *User, security *UserSecurity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1072,7 +1105,7 @@ func (m *mockStorage) CreateUserWithSecurity(user *User, security *UserSecurity)
 	return nil
 }
 
-func (m *mockStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) {
+func (m *mockStorage) HandleFailedLogin(ctx context.Context, userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1095,7 +1128,7 @@ func (m *mockStorage) HandleFailedLogin(userID uint, maxAttempts int, lockoutDur
 	return false, nil
 }
 
-func (m *mockStorage) UpdateSession(session *Session) error {
+func (m *mockStorage) UpdateSession(ctx context.Context, session *Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1104,7 +1137,7 @@ func (m *mockStorage) UpdateSession(session *Session) error {
 	return nil
 }
 
-func (m *mockStorage) CountActiveSessions(userID uint) (int, error) {
+func (m *mockStorage) CountActiveSessions(ctx context.Context, userID uint) (int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1118,7 +1151,7 @@ func (m *mockStorage) CountActiveSessions(userID uint) (int, error) {
 	return count, nil
 }
 
-func (m *mockStorage) StoreOAuthState(state *OAuthState) error {
+func (m *mockStorage) StoreOAuthState(ctx context.Context, state *OAuthState) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1127,11 +1160,11 @@ func (m *mockStorage) StoreOAuthState(state *OAuthState) error {
 	return nil
 }
 
-func (m *mockStorage) CreateOAuthState(state *OAuthState) error {
-	return m.StoreOAuthState(state)
+func (m *mockStorage) CreateOAuthState(ctx context.Context, state *OAuthState) error {
+	return m.StoreOAuthState(ctx, state)
 }
 
-func (m *mockStorage) GetOAuthState(state string) (*OAuthState, error) {
+func (m *mockStorage) GetOAuthState(ctx context.Context, state string) (*OAuthState, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1147,7 +1180,7 @@ func (m *mockStorage) GetOAuthState(state string) (*OAuthState, error) {
 	return nil, nil // Return nil when state not found, not an error
 }
 
-func (m *mockStorage) DeleteOAuthState(state string) error {
+func (m *mockStorage) DeleteOAuthState(ctx context.Context, state string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1155,7 +1188,7 @@ func (m *mockStorage) DeleteOAuthState(state string) error {
 	return nil
 }
 
-func (m *mockStorage) CleanupExpiredOAuthStates() error {
+func (m *mockStorage) CleanupExpiredOAuthStates(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1168,12 +1201,12 @@ func (m *mockStorage) CleanupExpiredOAuthStates() error {
 	return nil
 }
 
-func (m *mockStorage) CreatePasswordResetToken(token *PasswordResetToken) error {
+func (m *mockStorage) CreatePasswordResetToken(ctx context.Context, token *PasswordResetToken) error {
 	m.passwordResetTokens[token.Token] = token
 	return nil
 }
 
-func (m *mockStorage) GetPasswordResetToken(tokenStr string) (*PasswordResetToken, error) {
+func (m *mockStorage) GetPasswordResetToken(ctx context.Context, tokenStr string) (*PasswordResetToken, error) {
 	token, exists := m.passwordResetTokens[tokenStr]
 	if !exists || token.UsedAt != nil || token.ExpiresAt.Before(time.Now()) {
 		return nil, fmt.Errorf("password reset token not found or expired")
@@ -1181,7 +1214,7 @@ func (m *mockStorage) GetPasswordResetToken(tokenStr string) (*PasswordResetToke
 	return token, nil
 }
 
-func (m *mockStorage) UsePasswordResetToken(tokenStr string) error {
+func (m *mockStorage) UsePasswordResetToken(ctx context.Context, tokenStr string) error {
 	token, exists := m.passwordResetTokens[tokenStr]
 	if !exists {
 		return fmt.Errorf("password reset token not found")
@@ -1191,7 +1224,7 @@ func (m *mockStorage) UsePasswordResetToken(tokenStr string) error {
 	return nil
 }
 
-func (m *mockStorage) CleanupExpiredPasswordResetTokens() error {
+func (m *mockStorage) CleanupExpiredPasswordResetTokens(ctx context.Context) error {
 	now := time.Now()
 	cutoff := now.Add(-24 * time.Hour)
 	for tokenStr, token := range m.passwordResetTokens {
@@ -1207,101 +1240,140 @@ func (m *mockStorage) Ping() error {
 	defer m.mu.Unlock()
 	return nil
 }
-
 // 2FA Code operations
-func (m *mockStorage) Create2FACode(code *TwoFactorCode) error {
+func (m *mockStorage) Create2FACode(ctx context.Context, code *TwoFactorCode) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	code.ID = uint(len(m.twoFactorCodes) + 1)
+	m.twoFactorCodes[code.Code] = code
+	return nil
+}
+
+func (m *mockStorage) Get2FACode(ctx context.Context, userID uint, code string, codeType string) (*TwoFactorCode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c, ok := m.twoFactorCodes[code]; ok && c.UserID == userID && c.CodeType == codeType {
+		return c, nil
+	}
+	return nil, nil
+}
+
+func (m *mockStorage) Use2FACode(ctx context.Context, userID uint, code string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil
 }
 
-func (m *mockStorage) Get2FACode(userID uint, code string) (*TwoFactorCode, error) {
+func (m *mockStorage) GetLatestPending2FACode(ctx context.Context, code string, codeType string) (*TwoFactorCode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if c, ok := m.twoFactorCodes[code]; ok && c.CodeType == codeType {
+		return c, nil
+	}
 	return nil, nil
 }
 
-func (m *mockStorage) Use2FACode(userID uint, code string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return nil
-}
-
-func (m *mockStorage) GetLatestPending2FACode(code string) (*TwoFactorCode, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return nil, nil
-}
-
-func (m *mockStorage) CleanupExpired2FACodes() error {
+func (m *mockStorage) CleanupExpired2FACodes(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil
 }
 
 // Backup Code operations
-func (m *mockStorage) Create2FABackupCode(code *TwoFactorBackupCode) error {
+func (m *mockStorage) Create2FABackupCode(ctx context.Context, code *TwoFactorBackupCode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	code.ID = uint(len(m.twoFactorBackupCodes[fmt.Sprint(code.UserID)]) + 1)
+	m.twoFactorBackupCodes[fmt.Sprint(code.UserID)] = append(m.twoFactorBackupCodes[fmt.Sprint(code.UserID)], code)
 	return nil
 }
 
-func (m *mockStorage) Get2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
+func (m *mockStorage) Get2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return make([]*TwoFactorBackupCode, 0), nil
+	return m.twoFactorBackupCodes[fmt.Sprint(userID)], nil
 }
 
-func (m *mockStorage) GetBackupCodeByCode(code string) (*TwoFactorBackupCode, error) {
+func (m *mockStorage) GetBackupCodeByCode(ctx context.Context, code string) (*TwoFactorBackupCode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, codes := range m.twoFactorBackupCodes {
+		for _, c := range codes {
+			if c.Code == code {
+				return c, nil
+			}
+		}
+	}
 	return nil, nil
 }
 
-func (m *mockStorage) Use2FABackupCode(userID uint, code string) error {
+func (m *mockStorage) Use2FABackupCode(ctx context.Context, userID uint, code string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, codes := range m.twoFactorBackupCodes {
+		for _, c := range codes {
+			if c.Code == code {
+				now := time.Now()
+				c.UsedAt = &now
+				return nil
+			}
+		}
+	}
 	return nil
 }
 
-func (m *mockStorage) Regenerate2FABackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
+func (m *mockStorage) Regenerate2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return make([]*TwoFactorBackupCode, 0), nil
+	delete(m.twoFactorBackupCodes, fmt.Sprint(userID))
+	codes := make([]*TwoFactorBackupCode, 0, BackupCodeCount)
+	for range BackupCodeCount {
+		code, _ := GenerateSecureToken(3)
+		bc := &TwoFactorBackupCode{
+			ID:        uint(len(codes) + 1),
+			UserID:    userID,
+			Code:      code,
+			CreatedAt: time.Now(),
+		}
+		codes = append(codes, bc)
+		m.twoFactorBackupCodes[fmt.Sprint(userID)] = append(m.twoFactorBackupCodes[fmt.Sprint(userID)], bc)
+	}
+	return codes, nil
 }
+
 
 // Refresh Token operations
-func (m *mockStorage) CreateRefreshToken(token *RefreshToken) error {
+func (m *mockStorage) CreateRefreshToken(ctx context.Context, token *RefreshToken) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil
 }
 
-func (m *mockStorage) GetRefreshToken(token string) (*RefreshToken, error) {
+func (m *mockStorage) GetRefreshToken(ctx context.Context, token string) (*RefreshToken, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil, nil
 }
 
-func (m *mockStorage) UpdateRefreshToken(token *RefreshToken) error {
+func (m *mockStorage) UpdateRefreshToken(ctx context.Context, token *RefreshToken) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil
 }
 
-func (m *mockStorage) DeleteRefreshToken(token string) error {
+func (m *mockStorage) DeleteRefreshToken(ctx context.Context, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil
 }
 
-func (m *mockStorage) DeleteUserRefreshTokens(userID uint) error {
+func (m *mockStorage) DeleteUserRefreshTokens(ctx context.Context, userID uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil
 }
 
-func (m *mockStorage) CleanupExpiredRefreshTokens() error {
+func (m *mockStorage) CleanupExpiredRefreshTokens(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil
@@ -1323,6 +1395,7 @@ func mustCreateTestAuthService(t *testing.T) *AuthService {
 	config := Config{
 		Storage:        mustCreateTestStorage(t),
 		SecurityConfig: DefaultSecurityConfig(),
+		EmailService:   NewMockEmailService(),
 	}
 
 	authService, err := NewAuthService(config)
@@ -1372,8 +1445,12 @@ func mustCreateTestUserWithToken(t *testing.T, authService *AuthService) (*User,
 		"last_name":  "User",
 	})
 
-	signupResp := authService.SignUpHandler(signupReq)
-	if signupResp.StatusCode != http.StatusCreated {
+	w := httptest.NewRecorder()
+	authService.SignUpHandler(w, signupReq)
+	var signupResp SignUpResponse
+	json.NewDecoder(w.Body).Decode(&signupResp)
+
+	if w.Code != http.StatusCreated {
 		t.Fatalf("Failed to create test user: %+v", signupResp)
 	}
 

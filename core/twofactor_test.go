@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -15,7 +17,7 @@ func TestTwoFactor_Enable2FA_ValidFlow(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	req := createTestRequest(t, "POST", "/2fa/enable", map[string]interface{}{
 		"password": "TestPassword123!",
@@ -23,10 +25,13 @@ func TestTwoFactor_Enable2FA_ValidFlow(t *testing.T) {
 	ctx := context.WithValue(req.Context(), "user", user)
 	req = req.WithContext(ctx)
 
-	resp := authService.Enable2FAHandler(req)
+	rec := httptest.NewRecorder()
+	authService.Enable2FAHandler(rec, req)
+	var resp Enable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Enable2FAHandler() status = %d, expected %d: %s", resp.StatusCode, http.StatusOK, resp.Error)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Enable2FAHandler() status = %d, expected %d: %s", rec.Code, http.StatusOK, resp.Error)
 	}
 }
 
@@ -37,7 +42,7 @@ func TestTwoFactor_Enable2FA_InvalidPassword(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	req := createTestRequest(t, "POST", "/2fa/enable", map[string]interface{}{
 		"password": "WrongPassword!",
@@ -45,10 +50,13 @@ func TestTwoFactor_Enable2FA_InvalidPassword(t *testing.T) {
 	ctx := context.WithValue(req.Context(), "user", user)
 	req = req.WithContext(ctx)
 
-	resp := authService.Enable2FAHandler(req)
+	rec := httptest.NewRecorder()
+	authService.Enable2FAHandler(rec, req)
+	var resp Enable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for invalid password, got %d", resp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for invalid password, got %d", rec.Code)
 	}
 }
 
@@ -61,10 +69,13 @@ func TestTwoFactor_Enable2FA_NotAuthenticated(t *testing.T) {
 		"password": "TestPassword123!",
 	})
 
-	resp := authService.Enable2FAHandler(req)
+	rec := httptest.NewRecorder()
+	authService.Enable2FAHandler(rec, req)
+	var resp Enable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("Expected 401 for unauthenticated, got %d", resp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for unauthenticated, got %d", rec.Code)
 	}
 }
 
@@ -75,7 +86,7 @@ func TestTwoFactor_VerifyEnable2FA_ValidCode(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// First enable 2FA to get a code
 	enableReq := createTestRequest(t, "POST", "/2fa/enable", map[string]interface{}{
@@ -83,10 +94,14 @@ func TestTwoFactor_VerifyEnable2FA_ValidCode(t *testing.T) {
 	})
 	ctx := context.WithValue(enableReq.Context(), "user", user)
 	enableReq = enableReq.WithContext(ctx)
-	authService.Enable2FAHandler(enableReq)
+
+	rec := httptest.NewRecorder()
+	authService.Enable2FAHandler(rec, enableReq)
+	var enableResp Enable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&enableResp)
 
 	// Get the 2FA code from storage
-	codes, _ := mockStore.Get2FABackupCodes(user.ID)
+	codes, _ := mockStore.Get2FABackupCodes(context.Background(), user.ID)
 	if len(codes) == 0 {
 		// Try getting a regular 2FA code instead
 		t.Logf("No backup codes found yet, this is expected during enable flow")
@@ -101,7 +116,7 @@ func TestTwoFactor_VerifyEnable2FA_ValidCode(t *testing.T) {
 		ExpiresAt: time.Now().Add(5 * time.Minute),
 		CreatedAt: time.Now(),
 	}
-	mockStore.Create2FACode(twoFACode)
+	mockStore.Create2FACode(context.Background(), twoFACode)
 
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-enable", map[string]interface{}{
 		"code": testCode,
@@ -109,17 +124,20 @@ func TestTwoFactor_VerifyEnable2FA_ValidCode(t *testing.T) {
 	ctx = context.WithValue(verifyReq.Context(), "user", user)
 	verifyReq = verifyReq.WithContext(ctx)
 
-	resp := authService.VerifyEnable2FAHandler(verifyReq)
+	rec2 := httptest.NewRecorder()
+	authService.VerifyEnable2FAHandler(rec2, verifyReq)
+	var resp VerifyEnable2FAResponse
+	json.NewDecoder(rec2.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("VerifyEnable2FAHandler() status = %d, expected %d: %s", resp.StatusCode, http.StatusOK, resp.Error)
+	if rec2.Code != http.StatusOK {
+		t.Errorf("VerifyEnable2FAHandler() status = %d, expected %d: %s", rec2.Code, http.StatusOK, resp.Error)
 	}
 	if len(resp.BackupCodes) == 0 {
 		t.Error("Expected backup codes in response")
 	}
 
 	// Verify 2FA is enabled
-	security, _ := mockStore.GetUserSecurity(user.ID)
+	security, _ := mockStore.GetUserSecurity(context.Background(), user.ID)
 	if !security.TwoFactorEnabled {
 		t.Error("2FA should be enabled after verification")
 	}
@@ -132,7 +150,7 @@ func TestTwoFactor_VerifyEnable2FA_InvalidCode(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-enable", map[string]interface{}{
 		"code": "000000",
@@ -140,10 +158,13 @@ func TestTwoFactor_VerifyEnable2FA_InvalidCode(t *testing.T) {
 	ctx := context.WithValue(verifyReq.Context(), "user", user)
 	verifyReq = verifyReq.WithContext(ctx)
 
-	resp := authService.VerifyEnable2FAHandler(verifyReq)
+	rec := httptest.NewRecorder()
+	authService.VerifyEnable2FAHandler(rec, verifyReq)
+	var resp VerifyEnable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for invalid code, got %d", resp.StatusCode)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for invalid code, got %d", rec.Code)
 	}
 }
 
@@ -154,7 +175,7 @@ func TestTwoFactor_VerifyEnable2FA_ExpiredCode(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Create an expired 2FA code
 	expiredCode := &TwoFactorCode{
@@ -164,7 +185,7 @@ func TestTwoFactor_VerifyEnable2FA_ExpiredCode(t *testing.T) {
 		ExpiresAt: time.Now().Add(-1 * time.Minute), // Expired
 		CreatedAt: time.Now().Add(-2 * time.Minute),
 	}
-	mockStore.Create2FACode(expiredCode)
+	mockStore.Create2FACode(context.Background(), expiredCode)
 
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-enable", map[string]interface{}{
 		"code": "111111",
@@ -172,10 +193,13 @@ func TestTwoFactor_VerifyEnable2FA_ExpiredCode(t *testing.T) {
 	ctx := context.WithValue(verifyReq.Context(), "user", user)
 	verifyReq = verifyReq.WithContext(ctx)
 
-	resp := authService.VerifyEnable2FAHandler(verifyReq)
+	rec := httptest.NewRecorder()
+	authService.VerifyEnable2FAHandler(rec, verifyReq)
+	var resp VerifyEnable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for expired code, got %d", resp.StatusCode)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for expired code, got %d", rec.Code)
 	}
 }
 
@@ -186,12 +210,12 @@ func TestTwoFactor_Disable2FA_ValidFlow(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// First enable 2FA
-	security, _ := mockStore.GetUserSecurity(user.ID)
+	security, _ := mockStore.GetUserSecurity(context.Background(), user.ID)
 	security.TwoFactorEnabled = true
-	mockStore.UpdateUserSecurity(security)
+	mockStore.UpdateUserSecurity(context.Background(), security)
 
 	// Now disable it
 	disableReq := createTestRequest(t, "POST", "/2fa/disable", map[string]interface{}{
@@ -200,14 +224,17 @@ func TestTwoFactor_Disable2FA_ValidFlow(t *testing.T) {
 	ctx := context.WithValue(disableReq.Context(), "user", user)
 	disableReq = disableReq.WithContext(ctx)
 
-	resp := authService.Disable2FAHandler(disableReq)
+	rec := httptest.NewRecorder()
+	authService.Disable2FAHandler(rec, disableReq)
+	var resp Disable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Disable2FAHandler() status = %d, expected %d: %s", resp.StatusCode, http.StatusOK, resp.Error)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Disable2FAHandler() status = %d, expected %d: %s", rec.Code, http.StatusOK, resp.Error)
 	}
 
 	// Verify 2FA is disabled
-	updatedSecurity, _ := mockStore.GetUserSecurity(user.ID)
+	updatedSecurity, _ := mockStore.GetUserSecurity(context.Background(), user.ID)
 	if updatedSecurity.TwoFactorEnabled {
 		t.Error("2FA should be disabled after disablement request")
 	}
@@ -220,12 +247,12 @@ func TestTwoFactor_Disable2FA_InvalidPassword(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Enable 2FA first
-	security, _ := mockStore.GetUserSecurity(user.ID)
+	security, _ := mockStore.GetUserSecurity(context.Background(), user.ID)
 	security.TwoFactorEnabled = true
-	mockStore.UpdateUserSecurity(security)
+	mockStore.UpdateUserSecurity(context.Background(), security)
 
 	disableReq := createTestRequest(t, "POST", "/2fa/disable", map[string]interface{}{
 		"password": "WrongPassword!",
@@ -233,10 +260,13 @@ func TestTwoFactor_Disable2FA_InvalidPassword(t *testing.T) {
 	ctx := context.WithValue(disableReq.Context(), "user", user)
 	disableReq = disableReq.WithContext(ctx)
 
-	resp := authService.Disable2FAHandler(disableReq)
+	rec := httptest.NewRecorder()
+	authService.Disable2FAHandler(rec, disableReq)
+	var resp Disable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for invalid password, got %d", resp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for invalid password, got %d", rec.Code)
 	}
 }
 
@@ -247,7 +277,7 @@ func TestTwoFactor_VerifyLogin2FA_ValidCode(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Create a valid login 2FA code
 	loginCode := &TwoFactorCode{
@@ -257,16 +287,19 @@ func TestTwoFactor_VerifyLogin2FA_ValidCode(t *testing.T) {
 		ExpiresAt: time.Now().Add(5 * time.Minute),
 		CreatedAt: time.Now(),
 	}
-	mockStore.Create2FACode(loginCode)
+	mockStore.Create2FACode(context.Background(), loginCode)
 
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-login", map[string]interface{}{
 		"code": "222222",
 	})
 
-	resp := authService.VerifyLogin2FAHandler(verifyReq)
+	rec := httptest.NewRecorder()
+	authService.VerifyLogin2FAHandler(rec, verifyReq)
+	var resp VerifyLogin2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("VerifyLogin2FAHandler() status = %d, expected %d: %s", resp.StatusCode, http.StatusOK, resp.Error)
+	if rec.Code != http.StatusOK {
+		t.Errorf("VerifyLogin2FAHandler() status = %d, expected %d: %s", rec.Code, http.StatusOK, resp.Error)
 	}
 	if resp.Token == "" {
 		t.Error("Expected token in response after 2FA verification")
@@ -283,7 +316,7 @@ func TestTwoFactor_VerifyLogin2FA_BackupCode(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Create a backup code
 	backupCode := &TwoFactorBackupCode{
@@ -291,23 +324,26 @@ func TestTwoFactor_VerifyLogin2FA_BackupCode(t *testing.T) {
 		Code:      "backup-code-long-string-12345",
 		CreatedAt: time.Now(),
 	}
-	mockStore.Create2FABackupCode(backupCode)
+	mockStore.Create2FABackupCode(context.Background(), backupCode)
 
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-login", map[string]interface{}{
 		"code": "backup-code-long-string-12345",
 	})
 
-	resp := authService.VerifyLogin2FAHandler(verifyReq)
+	rec := httptest.NewRecorder()
+	authService.VerifyLogin2FAHandler(rec, verifyReq)
+	var resp VerifyLogin2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("VerifyLogin2FAHandler() with backup code status = %d, expected %d: %s", resp.StatusCode, http.StatusOK, resp.Error)
+	if rec.Code != http.StatusOK {
+		t.Errorf("VerifyLogin2FAHandler() with backup code status = %d, expected %d: %s", rec.Code, http.StatusOK, resp.Error)
 	}
 	if resp.Token == "" {
 		t.Error("Expected token after backup code verification")
 	}
 
 	// Verify backup code was marked as used
-	usedCode, _ := mockStore.GetBackupCodeByCode("backup-code-long-string-12345")
+	usedCode, _ := mockStore.GetBackupCodeByCode(context.Background(), "backup-code-long-string-12345")
 	if usedCode != nil && usedCode.UsedAt == nil {
 		t.Error("Backup code should be marked as used after verification")
 	}
@@ -322,10 +358,13 @@ func TestTwoFactor_VerifyLogin2FA_InvalidCode(t *testing.T) {
 		"code": "invalid-code",
 	})
 
-	resp := authService.VerifyLogin2FAHandler(verifyReq)
+	rec := httptest.NewRecorder()
+	authService.VerifyLogin2FAHandler(rec, verifyReq)
+	var resp VerifyLogin2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for invalid code, got %d", resp.StatusCode)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for invalid code, got %d", rec.Code)
 	}
 }
 
@@ -336,7 +375,7 @@ func TestTwoFactor_VerifyLogin2FA_ExpiredCode(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Create an expired login code
 	expiredLoginCode := &TwoFactorCode{
@@ -346,16 +385,19 @@ func TestTwoFactor_VerifyLogin2FA_ExpiredCode(t *testing.T) {
 		ExpiresAt: time.Now().Add(-5 * time.Minute), // Expired
 		CreatedAt: time.Now().Add(-10 * time.Minute),
 	}
-	mockStore.Create2FACode(expiredLoginCode)
+	mockStore.Create2FACode(context.Background(), expiredLoginCode)
 
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-login", map[string]interface{}{
 		"code": "333333",
 	})
 
-	resp := authService.VerifyLogin2FAHandler(verifyReq)
+	rec := httptest.NewRecorder()
+	authService.VerifyLogin2FAHandler(rec, verifyReq)
+	var resp VerifyLogin2FAResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for expired code, got %d", resp.StatusCode)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for expired code, got %d", rec.Code)
 	}
 }
 
@@ -366,7 +408,7 @@ func TestTwoFactor_GetBackupCodes_ValidFlow(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Create some backup codes
 	for i := 0; i < 5; i++ {
@@ -375,7 +417,7 @@ func TestTwoFactor_GetBackupCodes_ValidFlow(t *testing.T) {
 			Code:      fmt.Sprintf("backup-%d", i),
 			CreatedAt: time.Now(),
 		}
-		mockStore.Create2FABackupCode(code)
+		mockStore.Create2FABackupCode(context.Background(), code)
 	}
 
 	req := createTestRequest(t, "POST", "/2fa/backup-codes", map[string]interface{}{
@@ -384,10 +426,13 @@ func TestTwoFactor_GetBackupCodes_ValidFlow(t *testing.T) {
 	ctx := context.WithValue(req.Context(), "user", user)
 	req = req.WithContext(ctx)
 
-	resp := authService.GetBackupCodesHandler(req)
+	rec := httptest.NewRecorder()
+	authService.GetBackupCodesHandler(rec, req)
+	var resp GetBackupCodesResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GetBackupCodesHandler() status = %d, expected %d: %s", resp.StatusCode, http.StatusOK, resp.Error)
+	if rec.Code != http.StatusOK {
+		t.Errorf("GetBackupCodesHandler() status = %d, expected %d: %s", rec.Code, http.StatusOK, resp.Error)
 	}
 	if len(resp.Codes) < 5 {
 		t.Errorf("Expected at least 5 backup codes, got %d", len(resp.Codes))
@@ -403,10 +448,13 @@ func TestTwoFactor_GetBackupCodes_NotAuthenticated(t *testing.T) {
 		"password": "TestPassword123!",
 	})
 
-	resp := authService.GetBackupCodesHandler(req)
+	rec := httptest.NewRecorder()
+	authService.GetBackupCodesHandler(rec, req)
+	var resp GetBackupCodesResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("Expected 401 for unauthenticated, got %d", resp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for unauthenticated, got %d", rec.Code)
 	}
 }
 
@@ -417,7 +465,7 @@ func TestTwoFactor_RegenerateBackupCodes_ValidFlow(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Create initial backup codes
 	oldCodes := make([]string, 3)
@@ -427,7 +475,7 @@ func TestTwoFactor_RegenerateBackupCodes_ValidFlow(t *testing.T) {
 			Code:      fmt.Sprintf("old-backup-%d", i),
 			CreatedAt: time.Now().Add(-1 * time.Hour),
 		}
-		mockStore.Create2FABackupCode(code)
+		mockStore.Create2FABackupCode(context.Background(), code)
 		oldCodes[i] = code.Code
 	}
 
@@ -437,10 +485,13 @@ func TestTwoFactor_RegenerateBackupCodes_ValidFlow(t *testing.T) {
 	ctx := context.WithValue(regReq.Context(), "user", user)
 	regReq = regReq.WithContext(ctx)
 
-	resp := authService.RegenerateBackupCodesHandler(regReq)
+	rec := httptest.NewRecorder()
+	authService.RegenerateBackupCodesHandler(rec, regReq)
+	var resp RegenerateBackupCodesResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("RegenerateBackupCodesHandler() status = %d, expected %d: %s", resp.StatusCode, http.StatusOK, resp.Error)
+	if rec.Code != http.StatusOK {
+		t.Errorf("RegenerateBackupCodesHandler() status = %d, expected %d: %s", rec.Code, http.StatusOK, resp.Error)
 	}
 	if len(resp.Codes) == 0 {
 		t.Error("Expected new backup codes in response")
@@ -466,7 +517,7 @@ func TestTwoFactor_RegenerateBackupCodes_InvalidPassword(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	regReq := createTestRequest(t, "POST", "/2fa/regenerate-backup-codes", map[string]interface{}{
 		"password": "WrongPassword!",
@@ -474,10 +525,13 @@ func TestTwoFactor_RegenerateBackupCodes_InvalidPassword(t *testing.T) {
 	ctx := context.WithValue(regReq.Context(), "user", user)
 	regReq = regReq.WithContext(ctx)
 
-	resp := authService.RegenerateBackupCodesHandler(regReq)
+	rec := httptest.NewRecorder()
+	authService.RegenerateBackupCodesHandler(rec, regReq)
+	var resp RegenerateBackupCodesResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for invalid password, got %d", resp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for invalid password, got %d", rec.Code)
 	}
 }
 
@@ -488,7 +542,7 @@ func TestTwoFactor_CompleteFlow(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Step 1: Enable 2FA
 	enableReq := createTestRequest(t, "POST", "/2fa/enable", map[string]interface{}{
@@ -497,8 +551,11 @@ func TestTwoFactor_CompleteFlow(t *testing.T) {
 	ctx := context.WithValue(enableReq.Context(), "user", user)
 	enableReq = enableReq.WithContext(ctx)
 
-	enableResp := authService.Enable2FAHandler(enableReq)
-	if enableResp.StatusCode != http.StatusOK {
+	rec := httptest.NewRecorder()
+	authService.Enable2FAHandler(rec, enableReq)
+	var enableResp Enable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&enableResp)
+	if rec.Code != http.StatusOK {
 		t.Fatalf("Enable2FAHandler failed: %s", enableResp.Error)
 	}
 
@@ -510,7 +567,7 @@ func TestTwoFactor_CompleteFlow(t *testing.T) {
 		ExpiresAt: time.Now().Add(5 * time.Minute),
 		CreatedAt: time.Now(),
 	}
-	mockStore.Create2FACode(verifyCode)
+	mockStore.Create2FACode(context.Background(), verifyCode)
 
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-enable", map[string]interface{}{
 		"code": "444444",
@@ -518,13 +575,16 @@ func TestTwoFactor_CompleteFlow(t *testing.T) {
 	ctx = context.WithValue(verifyReq.Context(), "user", user)
 	verifyReq = verifyReq.WithContext(ctx)
 
-	verifyResp := authService.VerifyEnable2FAHandler(verifyReq)
-	if verifyResp.StatusCode != http.StatusOK {
+	rec = httptest.NewRecorder()
+	authService.VerifyEnable2FAHandler(rec, verifyReq)
+	var verifyResp VerifyEnable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&verifyResp)
+	if rec.Code != http.StatusOK {
 		t.Fatalf("VerifyEnable2FAHandler failed: %s", verifyResp.Error)
 	}
 
 	// Step 3: Verify 2FA is enabled
-	security, _ := mockStore.GetUserSecurity(user.ID)
+	security, _ := mockStore.GetUserSecurity(context.Background(), user.ID)
 	if !security.TwoFactorEnabled {
 		t.Error("2FA should be enabled after verification")
 	}
@@ -536,13 +596,16 @@ func TestTwoFactor_CompleteFlow(t *testing.T) {
 	ctx = context.WithValue(disableReq.Context(), "user", user)
 	disableReq = disableReq.WithContext(ctx)
 
-	disableResp := authService.Disable2FAHandler(disableReq)
-	if disableResp.StatusCode != http.StatusOK {
+	rec = httptest.NewRecorder()
+	authService.Disable2FAHandler(rec, disableReq)
+	var disableResp Disable2FAResponse
+	json.NewDecoder(rec.Body).Decode(&disableResp)
+	if rec.Code != http.StatusOK {
 		t.Fatalf("Disable2FAHandler failed: %s", disableResp.Error)
 	}
 
 	// Step 5: Verify 2FA is disabled
-	updatedSecurity, _ := mockStore.GetUserSecurity(user.ID)
+	updatedSecurity, _ := mockStore.GetUserSecurity(context.Background(), user.ID)
 	if updatedSecurity.TwoFactorEnabled {
 		t.Error("2FA should be disabled after disablement request")
 	}

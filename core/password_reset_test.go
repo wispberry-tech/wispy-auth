@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -17,36 +19,43 @@ func TestPasswordReset_ForgotPassword_ValidUser(t *testing.T) {
 	// Create a user
 	user, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	mockStore.UpdateUser(user) // Ensure user is in storage
+	mockStore.UpdateUser(context.Background(), user) // Ensure user is in storage
 
 	// Enable password reset
-	authService.securityConfig.AllowUserPasswordReset = true
+	authService.securityConfig.AllowUserPasswordReset = boolPtr(true)
 
 	req := createTestRequest(t, "POST", "/forgot-password", map[string]interface{}{
 		"email": user.Email,
 	})
 
-	resp := authService.ForgotPasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ForgotPasswordHandler(rec, req)
+	var resp ForgotPasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("ForgotPasswordHandler() status = %d, expected %d", resp.StatusCode, http.StatusOK)
+	if rec.Code != http.StatusOK {
+		t.Errorf("ForgotPasswordHandler() status = %d, expected %d", rec.Code, http.StatusOK)
 	}
 	if resp.Message == "" {
 		t.Error("Expected success message in response")
 	}
 
 	// Verify in debug mode token is returned
-	authService.securityConfig.DebugMode = true
+	authService.securityConfig.DebugMode = boolPtr(true)
 	req2 := createTestRequest(t, "POST", "/forgot-password", map[string]interface{}{
 		"email": user.Email,
 	})
-	resp2 := authService.ForgotPasswordHandler(req2)
+
+	rec2 := httptest.NewRecorder()
+	authService.ForgotPasswordHandler(rec2, req2)
+	var resp2 ForgotPasswordResponse
+	json.NewDecoder(rec2.Body).Decode(&resp2)
 	if resp2.Token == "" {
 		t.Error("Expected token in response when debug mode enabled")
 	}
 
 	// Verify reset token was created in storage
-	token, err := mockStore.GetPasswordResetToken(resp2.Token)
+	token, err := mockStore.GetPasswordResetToken(context.Background(), resp2.Token)
 	if err != nil {
 		t.Logf("Note: GetPasswordResetToken error: %v", err)
 	}
@@ -62,16 +71,19 @@ func TestPasswordReset_ForgotPassword_InvalidEmail(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.AllowUserPasswordReset = true
+	authService.securityConfig.AllowUserPasswordReset = boolPtr(true)
 
 	req := createTestRequest(t, "POST", "/forgot-password", map[string]interface{}{
 		"email": "invalid-email-format",
 	})
 
-	resp := authService.ForgotPasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ForgotPasswordHandler(rec, req)
+	var resp ForgotPasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for invalid email, got %d", resp.StatusCode)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for invalid email, got %d", rec.Code)
 	}
 	if resp.Error == "" {
 		t.Error("Expected error message for invalid email")
@@ -83,17 +95,20 @@ func TestPasswordReset_ForgotPassword_NonexistentUser(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.AllowUserPasswordReset = true
+	authService.securityConfig.AllowUserPasswordReset = boolPtr(true)
 
 	req := createTestRequest(t, "POST", "/forgot-password", map[string]interface{}{
 		"email": "nonexistent@example.com",
 	})
 
-	resp := authService.ForgotPasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ForgotPasswordHandler(rec, req)
+	var resp ForgotPasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
 	// Should return 200 OK (no enumeration)
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected 200 for nonexistent user (anti-enumeration), got %d", resp.StatusCode)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected 200 for nonexistent user (anti-enumeration), got %d", rec.Code)
 	}
 	if resp.Message == "" {
 		t.Error("Expected generic message for nonexistent user")
@@ -105,7 +120,7 @@ func TestPasswordReset_ForgotPassword_OAuthUser(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.AllowUserPasswordReset = true
+	authService.securityConfig.AllowUserPasswordReset = boolPtr(true)
 
 	// Create an OAuth user
 	oauthUser := &User{
@@ -115,17 +130,20 @@ func TestPasswordReset_ForgotPassword_OAuthUser(t *testing.T) {
 		IsActive:   true,
 	}
 	mockStore := authService.storage.(*mockStorage)
-	mockStore.CreateUser(oauthUser)
+	mockStore.CreateUser(context.Background(), oauthUser)
 
 	req := createTestRequest(t, "POST", "/forgot-password", map[string]interface{}{
 		"email": oauthUser.Email,
 	})
 
-	resp := authService.ForgotPasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ForgotPasswordHandler(rec, req)
+	var resp ForgotPasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
 	// Should return 200 OK (no enumeration - don't reveal OAuth provider)
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected 200 for OAuth user (anti-enumeration), got %d", resp.StatusCode)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected 200 for OAuth user (anti-enumeration), got %d", rec.Code)
 	}
 	if resp.Message == "" {
 		t.Error("Expected generic message for OAuth user")
@@ -140,16 +158,19 @@ func TestPasswordReset_ForgotPassword_FeatureDisabled(t *testing.T) {
 	user, _ := mustCreateTestUserWithToken(t, authService)
 
 	// Password reset disabled (default)
-	authService.securityConfig.AllowUserPasswordReset = false
+	authService.securityConfig.AllowUserPasswordReset = boolPtr(false)
 
 	req := createTestRequest(t, "POST", "/forgot-password", map[string]interface{}{
 		"email": user.Email,
 	})
 
-	resp := authService.ForgotPasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ForgotPasswordHandler(rec, req)
+	var resp ForgotPasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("Expected 403 when password reset disabled, got %d", resp.StatusCode)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 when password reset disabled, got %d", rec.Code)
 	}
 	if resp.Error == "" {
 		t.Error("Expected error message when password reset disabled")
@@ -171,7 +192,7 @@ func TestPasswordReset_ResetPassword_ValidToken(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 		CreatedAt: time.Now(),
 	}
-	mockStore.CreatePasswordResetToken(resetToken)
+	mockStore.CreatePasswordResetToken(context.Background(), resetToken)
 
 	newPassword := "NewPassword123!"
 
@@ -180,17 +201,20 @@ func TestPasswordReset_ResetPassword_ValidToken(t *testing.T) {
 		"password": newPassword,
 	})
 
-	resp := authService.ResetPasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ResetPasswordHandler(rec, req)
+	var resp ResetPasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("ResetPasswordHandler() status = %d, expected %d", resp.StatusCode, http.StatusOK)
+	if rec.Code != http.StatusOK {
+		t.Errorf("ResetPasswordHandler() status = %d, expected %d", rec.Code, http.StatusOK)
 	}
 	if resp.Message == "" {
 		t.Error("Expected success message in response")
 	}
 
 	// Verify password was updated
-	updatedUser, err := mockStore.GetUserByID(user.ID)
+	updatedUser, err := mockStore.GetUserByID(context.Background(), user.ID)
 	if err != nil || updatedUser == nil {
 		t.Errorf("Failed to get updated user: %v", err)
 	} else {
@@ -204,13 +228,13 @@ func TestPasswordReset_ResetPassword_ValidToken(t *testing.T) {
 	}
 
 	// Verify token was marked as used
-	token, _ := mockStore.GetPasswordResetToken(resetToken.Token)
+	token, _ := mockStore.GetPasswordResetToken(context.Background(), resetToken.Token)
 	if token != nil && token.UsedAt == nil {
 		t.Error("Reset token should be marked as used")
 	}
 
 	// Verify all sessions were deleted
-	sessions, _ := mockStore.GetUserSessions(user.ID)
+	sessions, _ := mockStore.GetUserSessions(context.Background(), user.ID)
 	if len(sessions) > 0 {
 		t.Error("All user sessions should be deleted after password reset")
 	}
@@ -231,17 +255,20 @@ func TestPasswordReset_ResetPassword_ExpiredToken(t *testing.T) {
 		ExpiresAt: time.Now().Add(-1 * time.Hour), // Expired
 		CreatedAt: time.Now().Add(-2 * time.Hour),
 	}
-	mockStore.CreatePasswordResetToken(expiredToken)
+	mockStore.CreatePasswordResetToken(context.Background(), expiredToken)
 
 	req := createTestRequest(t, "POST", "/reset-password", map[string]interface{}{
 		"token":    expiredToken.Token,
 		"password": "NewPassword123!",
 	})
 
-	resp := authService.ResetPasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ResetPasswordHandler(rec, req)
+	var resp ResetPasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for expired token, got %d", resp.StatusCode)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for expired token, got %d", rec.Code)
 	}
 	if resp.Error == "" {
 		t.Error("Expected error message for expired token")
@@ -258,10 +285,13 @@ func TestPasswordReset_ResetPassword_InvalidToken(t *testing.T) {
 		"password": "NewPassword123!",
 	})
 
-	resp := authService.ResetPasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ResetPasswordHandler(rec, req)
+	var resp ResetPasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for invalid token, got %d", resp.StatusCode)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for invalid token, got %d", rec.Code)
 	}
 	if resp.Error == "" {
 		t.Error("Expected error message for invalid token")
@@ -283,7 +313,7 @@ func TestPasswordReset_ResetPassword_PasswordStrength(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 		CreatedAt: time.Now(),
 	}
-	mockStore.CreatePasswordResetToken(resetToken)
+	mockStore.CreatePasswordResetToken(context.Background(), resetToken)
 
 	tests := []struct {
 		name         string
@@ -337,18 +367,21 @@ func TestPasswordReset_ResetPassword_PasswordStrength(t *testing.T) {
 				ExpiresAt: time.Now().Add(1 * time.Hour),
 				CreatedAt: time.Now(),
 			}
-			mockStore.CreatePasswordResetToken(resetTok)
+			mockStore.CreatePasswordResetToken(context.Background(), resetTok)
 
-			req := createTestRequest(t, "POST", "/reset-password", map[string]interface{}{
-				"token":    resetTok.Token,
-				"password": tt.password,
-			})
+		req := createTestRequest(t, "POST", "/reset-password", map[string]interface{}{
+			"token":    resetTok.Token,
+			"password": tt.password,
+		})
 
-			resp := authService.ResetPasswordHandler(req)
+			rec := httptest.NewRecorder()
+			authService.ResetPasswordHandler(rec, req)
+			var resp ResetPasswordResponse
+			json.NewDecoder(rec.Body).Decode(&resp)
 
 			if tt.expectError {
-				if resp.StatusCode != http.StatusBadRequest {
-					t.Errorf("Expected 400 for %s, got %d", tt.name, resp.StatusCode)
+				if rec.Code != http.StatusBadRequest {
+					t.Errorf("Expected 400 for %s, got %d", tt.name, rec.Code)
 				}
 				if resp.Error == "" {
 					t.Error("Expected error message")
@@ -357,8 +390,8 @@ func TestPasswordReset_ResetPassword_PasswordStrength(t *testing.T) {
 					t.Errorf("Expected error to contain %q, got %q", tt.errorContent, resp.Error)
 				}
 			} else {
-				if resp.StatusCode != http.StatusOK {
-					t.Errorf("Expected 200, got %d: %s", resp.StatusCode, resp.Error)
+				if rec.Code != http.StatusOK {
+					t.Errorf("Expected 200, got %d: %s", rec.Code, resp.Error)
 				}
 			}
 		})
@@ -374,7 +407,7 @@ func TestPasswordReset_ChangePassword_ValidFlow(t *testing.T) {
 	mockStore := authService.storage.(*mockStorage)
 
 	// Get full user from storage (with password hash)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Create request with proper body
 	req := createTestRequest(t, "POST", "/change-password", map[string]interface{}{
@@ -382,21 +415,34 @@ func TestPasswordReset_ChangePassword_ValidFlow(t *testing.T) {
 		"new_password":     "NewPassword456!",
 	})
 
-	// Set user in context (simulating AuthMiddleware)
+	// Look up the session
+	sessions, _ := mockStore.GetUserSessions(context.Background(), user.ID)
+	var currentSession *Session
+	if len(sessions) > 0 {
+		currentSession = sessions[0]
+	}
+
+	// Set user and session in context (simulating AuthMiddleware)
 	ctx := context.WithValue(req.Context(), "user", user)
+	if currentSession != nil {
+		ctx = context.WithValue(ctx, "session", currentSession)
+	}
 	req = req.WithContext(ctx)
 
-	resp := authService.ChangePasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ChangePasswordHandler(rec, req)
+	var resp ChangePasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("ChangePasswordHandler() status = %d, expected %d: %s", resp.StatusCode, http.StatusOK, resp.Error)
+	if rec.Code != http.StatusOK {
+		t.Errorf("ChangePasswordHandler() status = %d, expected %d: %s", rec.Code, http.StatusOK, resp.Error)
 	}
 	if resp.Message == "" {
 		t.Error("Expected success message in response")
 	}
 
 	// Verify password was updated
-	updatedUser, _ := mockStore.GetUserByID(user.ID)
+	updatedUser, _ := mockStore.GetUserByID(context.Background(), user.ID)
 	if !checkPasswordHash("NewPassword456!", updatedUser.PasswordHash) {
 		t.Error("Password was not updated correctly")
 	}
@@ -420,10 +466,13 @@ func TestPasswordReset_ChangePassword_InvalidCurrentPassword(t *testing.T) {
 	ctx := context.WithValue(req.Context(), "user", user)
 	req = req.WithContext(ctx)
 
-	resp := authService.ChangePasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ChangePasswordHandler(rec, req)
+	var resp ChangePasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for wrong current password, got %d", resp.StatusCode)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for wrong current password, got %d", rec.Code)
 	}
 	if resp.Error == "" {
 		t.Error("Expected error message for wrong current password")
@@ -441,10 +490,13 @@ func TestPasswordReset_ChangePassword_NotAuthenticated(t *testing.T) {
 	})
 	// No user in context
 
-	resp := authService.ChangePasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ChangePasswordHandler(rec, req)
+	var resp ChangePasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("Expected 401 for unauthenticated, got %d", resp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for unauthenticated, got %d", rec.Code)
 	}
 }
 
@@ -457,7 +509,7 @@ func TestPasswordReset_ChangePassword_SessionsPreserved(t *testing.T) {
 	mockStore := authService.storage.(*mockStorage)
 
 	// Get full user from storage (with password hash)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	// Create additional session
 	extraSession := &Session{
@@ -465,10 +517,10 @@ func TestPasswordReset_ChangePassword_SessionsPreserved(t *testing.T) {
 		UserID:    user.ID,
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
-	mockStore.CreateSession(extraSession)
+	mockStore.CreateSession(context.Background(), extraSession)
 
 	// Verify we have 2 sessions
-	sessionsBefore, _ := mockStore.GetUserSessions(user.ID)
+	sessionsBefore, _ := mockStore.GetUserSessions(context.Background(), user.ID)
 	if len(sessionsBefore) < 2 {
 		t.Fatalf("Expected at least 2 sessions before change, got %d", len(sessionsBefore))
 	}
@@ -478,19 +530,22 @@ func TestPasswordReset_ChangePassword_SessionsPreserved(t *testing.T) {
 		"new_password":     "NewPassword456!",
 	})
 
-	currentSession, _ := mockStore.GetSession(currentToken)
+	currentSession, _ := mockStore.GetSession(context.Background(), currentToken)
 	ctx := context.WithValue(req.Context(), "user", user)
 	ctx = context.WithValue(ctx, "session", currentSession)
 	req = req.WithContext(ctx)
 
-	resp := authService.ChangePasswordHandler(req)
+	rec := httptest.NewRecorder()
+	authService.ChangePasswordHandler(rec, req)
+	var resp ChangePasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusOK {
+	if rec.Code != http.StatusOK {
 		t.Errorf("ChangePasswordHandler failed: %s", resp.Error)
 	}
 
 	// Verify password was updated
-	updatedUser, _ := mockStore.GetUserByID(user.ID)
+	updatedUser, _ := mockStore.GetUserByID(context.Background(), user.ID)
 	if !checkPasswordHash("NewPassword456!", updatedUser.PasswordHash) {
 		t.Error("Password was not updated correctly")
 	}
@@ -504,8 +559,8 @@ func TestPasswordReset_IntegrationFlow(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.AllowUserPasswordReset = true
-	authService.securityConfig.DebugMode = true
+	authService.securityConfig.AllowUserPasswordReset = boolPtr(true)
+	authService.securityConfig.DebugMode = boolPtr(true)
 
 	user, _ := mustCreateTestUserWithToken(t, authService)
 	originalPassword := "TestPassword123!"
@@ -515,9 +570,12 @@ func TestPasswordReset_IntegrationFlow(t *testing.T) {
 	forgotReq := createTestRequest(t, "POST", "/forgot-password", map[string]interface{}{
 		"email": user.Email,
 	})
-	forgotResp := authService.ForgotPasswordHandler(forgotReq)
+	rec1 := httptest.NewRecorder()
+	authService.ForgotPasswordHandler(rec1, forgotReq)
+	var forgotResp ForgotPasswordResponse
+	json.NewDecoder(rec1.Body).Decode(&forgotResp)
 
-	if forgotResp.StatusCode != http.StatusOK {
+	if rec1.Code != http.StatusOK {
 		t.Fatalf("ForgotPasswordHandler failed: %s", forgotResp.Error)
 	}
 	if forgotResp.Token == "" {
@@ -531,9 +589,12 @@ func TestPasswordReset_IntegrationFlow(t *testing.T) {
 		"token":    resetToken,
 		"password": newPassword,
 	})
-	resetResp := authService.ResetPasswordHandler(resetReq)
+	rec2 := httptest.NewRecorder()
+	authService.ResetPasswordHandler(rec2, resetReq)
+	var resetResp ResetPasswordResponse
+	json.NewDecoder(rec2.Body).Decode(&resetResp)
 
-	if resetResp.StatusCode != http.StatusOK {
+	if rec2.Code != http.StatusOK {
 		t.Fatalf("ResetPasswordHandler failed: %s", resetResp.Error)
 	}
 
@@ -542,9 +603,12 @@ func TestPasswordReset_IntegrationFlow(t *testing.T) {
 		"email":    user.Email,
 		"password": originalPassword,
 	})
-	oldLoginResp := authService.SignInHandler(oldLoginReq)
+	rec3 := httptest.NewRecorder()
+	authService.SignInHandler(rec3, oldLoginReq)
+	var oldLoginResp SignInResponse
+	json.NewDecoder(rec3.Body).Decode(&oldLoginResp)
 
-	if oldLoginResp.StatusCode == http.StatusOK {
+	if rec3.Code == http.StatusOK {
 		t.Error("Old password should not work after reset")
 	}
 
@@ -553,9 +617,12 @@ func TestPasswordReset_IntegrationFlow(t *testing.T) {
 		"email":    user.Email,
 		"password": newPassword,
 	})
-	newLoginResp := authService.SignInHandler(newLoginReq)
+	rec4 := httptest.NewRecorder()
+	authService.SignInHandler(rec4, newLoginReq)
+	var newLoginResp SignInResponse
+	json.NewDecoder(rec4.Body).Decode(&newLoginResp)
 
-	if newLoginResp.StatusCode != http.StatusOK {
+	if rec4.Code != http.StatusOK {
 		t.Errorf("Login with new password failed: %s", newLoginResp.Error)
 	}
 	if newLoginResp.Token == "" {

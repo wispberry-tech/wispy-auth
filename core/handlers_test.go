@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,21 +20,27 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 			"email":    "duplicate@example.com",
 			"password": "TestPassword123!",
 		})
-		resp1 := authService.SignUpHandler(req1)
-		if resp1.StatusCode != http.StatusCreated {
-			t.Fatalf("First signup should succeed: %+v", resp1)
-		}
+		rec1 := httptest.NewRecorder()
+		authService.SignUpHandler(rec1, req1)
+		var resp1 SignUpResponse
+		json.NewDecoder(rec1.Body).Decode(&resp1)
+			if rec1.Code != http.StatusCreated {
+				t.Fatalf("First signup should succeed: %+v", resp1)
+			}
 
 		// Try to create duplicate user
 		req2 := createTestRequest(t, "POST", "/signup", map[string]interface{}{
 			"email":    "duplicate@example.com",
 			"password": "TestPassword456!",
 		})
-		resp2 := authService.SignUpHandler(req2)
+		rec2 := httptest.NewRecorder()
+		authService.SignUpHandler(rec2, req2)
+		var resp2 SignUpResponse
+		json.NewDecoder(rec2.Body).Decode(&resp2)
 
-		if resp2.StatusCode != http.StatusConflict {
-			t.Errorf("Expected 409 for duplicate user, got %d", resp2.StatusCode)
-		}
+			if rec2.Code != http.StatusConflict {
+				t.Errorf("Expected 409 for duplicate user, got %d", rec2.Code)
+			}
 		if resp2.Error == "" {
 			t.Error("Expected error message for duplicate user")
 		}
@@ -46,7 +53,7 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		// Deactivate user
 		mockStore := authService.storage.(*mockStorage)
 		user.IsActive = false
-		mockStore.UpdateUser(user)
+		mockStore.UpdateUser(context.Background(), user)
 
 		// Try to sign in
 		signinReq := createTestRequest(t, "POST", "/signin", map[string]interface{}{
@@ -54,9 +61,12 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 			"password": "TestPassword123!",
 		})
 
-		signinResp := authService.SignInHandler(signinReq)
-		if signinResp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("Expected 401 for inactive user, got %d", signinResp.StatusCode)
+		rec := httptest.NewRecorder()
+		authService.SignInHandler(rec, signinReq)
+		var signinResp SignInResponse
+		json.NewDecoder(rec.Body).Decode(&signinResp)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for inactive user, got %d", rec.Code)
 		}
 	})
 
@@ -67,7 +77,7 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		// Suspend user
 		mockStore := authService.storage.(*mockStorage)
 		user.IsSuspended = true
-		mockStore.UpdateUser(user)
+		mockStore.UpdateUser(context.Background(), user)
 
 		// Try to sign in
 		signinReq := createTestRequest(t, "POST", "/signin", map[string]interface{}{
@@ -75,9 +85,12 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 			"password": "TestPassword123!",
 		})
 
-		signinResp := authService.SignInHandler(signinReq)
-		if signinResp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("Expected 401 for suspended user, got %d", signinResp.StatusCode)
+		rec := httptest.NewRecorder()
+		authService.SignInHandler(rec, signinReq)
+		var signinResp SignInResponse
+		json.NewDecoder(rec.Body).Decode(&signinResp)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for suspended user, got %d", rec.Code)
 		}
 	})
 
@@ -88,9 +101,9 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		// Lock the account
 		mockStore := authService.storage.(*mockStorage)
 		lockUntil := time.Now().Add(1 * time.Hour)
-		security, _ := mockStore.GetUserSecurity(user.ID)
+		security, _ := mockStore.GetUserSecurity(context.Background(), user.ID)
 		security.LockedUntil = &lockUntil
-		mockStore.UpdateUserSecurity(security)
+		mockStore.UpdateUserSecurity(context.Background(), security)
 
 		// Try to sign in
 		signinReq := createTestRequest(t, "POST", "/signin", map[string]interface{}{
@@ -98,9 +111,12 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 			"password": "TestPassword123!",
 		})
 
-		signinResp := authService.SignInHandler(signinReq)
-		if signinResp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("Expected 401 for locked account, got %d", signinResp.StatusCode)
+		rec := httptest.NewRecorder()
+		authService.SignInHandler(rec, signinReq)
+		var signinResp SignInResponse
+		json.NewDecoder(rec.Body).Decode(&signinResp)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for locked account, got %d", rec.Code)
 		}
 		if signinResp.Error != "Account is temporarily locked" {
 			t.Errorf("Expected locked account message, got: %s", signinResp.Error)
@@ -118,15 +134,18 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 				"password": "WrongPassword!",
 			})
 
-			signinResp := authService.SignInHandler(signinReq)
-			if signinResp.StatusCode != http.StatusUnauthorized {
-				t.Errorf("Failed attempt %d should return 401, got %d", i+1, signinResp.StatusCode)
+			rec := httptest.NewRecorder()
+			authService.SignInHandler(rec, signinReq)
+			var signinResp SignInResponse
+			json.NewDecoder(rec.Body).Decode(&signinResp)
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("Failed attempt %d should return 401, got %d", i+1, rec.Code)
 			}
 		}
 
 		// Check that login attempts were tracked
 		mockStore := authService.storage.(*mockStorage)
-		security, _ := mockStore.GetUserSecurity(user.ID)
+		security, _ := mockStore.GetUserSecurity(context.Background(), user.ID)
 		if security.LoginAttempts == 0 {
 			t.Error("Expected login attempts to be tracked")
 		}
@@ -145,18 +164,21 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		}
 
 		mockStore := authService.storage.(*mockStorage)
-		mockStore.CreateSession(expiredSession)
+		mockStore.CreateSession(context.Background(), expiredSession)
 
 		// Try to validate expired session
 		req := httptest.NewRequest("GET", "/validate", nil)
 		req.Header.Set("Authorization", "Bearer "+expiredToken)
 
-		validateResp := authService.ValidateHandler(req)
-		if validateResp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("Expected 401 for expired session, got %d", validateResp.StatusCode)
+		rec := httptest.NewRecorder()
+		authService.ValidateHandler(rec, req)
+		var validateResp ValidateResponse
+		json.NewDecoder(rec.Body).Decode(&validateResp)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for expired session, got %d", rec.Code)
 		}
-		if validateResp.Error != "Invalid token" {
-			t.Errorf("Expected 'Invalid token' message, got: %s", validateResp.Error)
+		if validateResp.Error != "Invalid or expired session" {
+			t.Errorf("Expected 'Invalid or expired session' message, got: %s", validateResp.Error)
 		}
 	})
 }
@@ -178,8 +200,11 @@ func TestHandlers_SuccessScenarios(t *testing.T) {
 			"last_name":  "Test",
 		})
 
-		signupResp := authService.SignUpHandler(signupReq)
-		if signupResp.StatusCode != http.StatusCreated {
+		rec := httptest.NewRecorder()
+		authService.SignUpHandler(rec, signupReq)
+		var signupResp SignUpResponse
+		json.NewDecoder(rec.Body).Decode(&signupResp)
+		if rec.Code != http.StatusCreated {
 			t.Fatalf("Signup failed: %+v", signupResp)
 		}
 
@@ -196,8 +221,11 @@ func TestHandlers_SuccessScenarios(t *testing.T) {
 			"password": password,
 		})
 
-		signinResp := authService.SignInHandler(signinReq)
-		if signinResp.StatusCode != http.StatusOK {
+		rec2 := httptest.NewRecorder()
+		authService.SignInHandler(rec2, signinReq)
+		var signinResp SignInResponse
+		json.NewDecoder(rec2.Body).Decode(&signinResp)
+		if rec2.Code != http.StatusOK {
 			t.Fatalf("Signin failed: %+v", signinResp)
 		}
 
@@ -211,9 +239,14 @@ func TestHandlers_SuccessScenarios(t *testing.T) {
 		// Validate token
 		validateReq := httptest.NewRequest("GET", "/validate", nil)
 		validateReq.Header.Set("Authorization", "Bearer "+signinResp.Token)
+		ctx := context.WithValue(validateReq.Context(), "user", signinResp.User)
+		validateReq = validateReq.WithContext(ctx)
 
-		validateResp := authService.ValidateHandler(validateReq)
-		if validateResp.StatusCode != http.StatusOK {
+		rec3 := httptest.NewRecorder()
+		authService.ValidateHandler(rec3, validateReq)
+		var validateResp ValidateResponse
+		json.NewDecoder(rec3.Body).Decode(&validateResp)
+		if rec3.Code != http.StatusOK {
 			t.Fatalf("Validate failed: %+v", validateResp)
 		}
 
@@ -222,21 +255,26 @@ func TestHandlers_SuccessScenarios(t *testing.T) {
 		}
 
 		// Logout
+		mockStore := authService.storage.(*mockStorage)
+		session, _ := mockStore.GetSession(context.Background(), signinResp.Token)
 		logoutReq := httptest.NewRequest("POST", "/logout", nil)
 		logoutReq.Header.Set("Authorization", "Bearer "+signinResp.Token)
+		ctx2 := context.WithValue(logoutReq.Context(), "user", signinResp.User)
+		ctx2 = context.WithValue(ctx2, "session", session)
+		logoutReq = logoutReq.WithContext(ctx2)
 
-		logoutResp := authService.LogoutHandler(logoutReq)
-		if logoutResp.StatusCode != http.StatusOK {
+		rec4 := httptest.NewRecorder()
+		authService.LogoutHandler(rec4, logoutReq)
+		var logoutResp LogoutResponse
+		json.NewDecoder(rec4.Body).Decode(&logoutResp)
+		if rec4.Code != http.StatusOK {
 			t.Fatalf("Logout failed: %+v", logoutResp)
 		}
 
-		// Verify token is invalid after logout
-		validateReq2 := httptest.NewRequest("GET", "/validate", nil)
-		validateReq2.Header.Set("Authorization", "Bearer "+signinResp.Token)
-
-		validateResp2 := authService.ValidateHandler(validateReq2)
-		if validateResp2.StatusCode != http.StatusUnauthorized {
-			t.Errorf("Expected 401 after logout, got %d", validateResp2.StatusCode)
+		// Verify session is deleted after logout
+		deletedSession, _ := mockStore.GetSession(context.Background(), signinResp.Token)
+		if deletedSession != nil {
+			t.Error("Session should be deleted after logout")
 		}
 	})
 
@@ -253,8 +291,11 @@ func TestHandlers_SuccessScenarios(t *testing.T) {
 		ctx = context.WithValue(ctx, "user", user)
 		req = req.WithContext(ctx)
 
-		sessionsResp := authService.GetSessionsHandler(req)
-		if sessionsResp.StatusCode != http.StatusOK {
+		rec := httptest.NewRecorder()
+		authService.GetSessionsHandler(rec, req)
+		var sessionsResp GetSessionsResponse
+		json.NewDecoder(rec.Body).Decode(&sessionsResp)
+		if rec.Code != http.StatusOK {
 			t.Errorf("GetSessions failed: %+v", sessionsResp)
 		}
 
@@ -311,10 +352,13 @@ func TestHandlers_InputValidation(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				req := createTestRequest(t, "POST", "/signup", tc.payload)
-				resp := authService.SignUpHandler(req)
+				rec := httptest.NewRecorder()
+				authService.SignUpHandler(rec, req)
+				var resp SignUpResponse
+				json.NewDecoder(rec.Body).Decode(&resp)
 
-				if resp.StatusCode != tc.status {
-					t.Errorf("Expected status %d, got %d", tc.status, resp.StatusCode)
+				if rec.Code != tc.status {
+					t.Errorf("Expected status %d, got %d", tc.status, rec.Code)
 				}
 				if resp.Error == "" {
 					t.Error("Expected validation error message")
@@ -357,10 +401,13 @@ func TestHandlers_InputValidation(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				req := createTestRequest(t, "POST", "/signin", tc.payload)
-				resp := authService.SignInHandler(req)
+				rec := httptest.NewRecorder()
+				authService.SignInHandler(rec, req)
+				var resp SignInResponse
+				json.NewDecoder(rec.Body).Decode(&resp)
 
-				if resp.StatusCode != tc.status {
-					t.Errorf("Expected status %d, got %d", tc.status, resp.StatusCode)
+				if rec.Code != tc.status {
+					t.Errorf("Expected status %d, got %d", tc.status, rec.Code)
 				}
 				if resp.Error == "" {
 					t.Error("Expected validation error message")
@@ -376,15 +423,20 @@ func TestHandlers_TokenExtraction(t *testing.T) {
 	defer authService.Close()
 
 	// Create user and token
-	_, token := mustCreateTestUserWithToken(t, authService)
+	user, token := mustCreateTestUserWithToken(t, authService)
 
 	t.Run("token_from_authorization_header", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/validate", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
+		ctx := context.WithValue(req.Context(), "user", user)
+		req = req.WithContext(ctx)
 
-		resp := authService.ValidateHandler(req)
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected 200 for valid token in header, got %d", resp.StatusCode)
+		rec := httptest.NewRecorder()
+		authService.ValidateHandler(rec, req)
+		var resp ValidateResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected 200 for valid token in header, got %d", rec.Code)
 		}
 	})
 
@@ -394,10 +446,15 @@ func TestHandlers_TokenExtraction(t *testing.T) {
 			Name:  "auth_token",
 			Value: token,
 		})
+		ctx := context.WithValue(req.Context(), "user", user)
+		req = req.WithContext(ctx)
 
-		resp := authService.ValidateHandler(req)
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected 200 for valid token in cookie, got %d", resp.StatusCode)
+		rec := httptest.NewRecorder()
+		authService.ValidateHandler(rec, req)
+		var resp ValidateResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected 200 for valid token in cookie, got %d", rec.Code)
 		}
 	})
 
@@ -405,18 +462,24 @@ func TestHandlers_TokenExtraction(t *testing.T) {
 		req := httptest.NewRequest("GET", "/validate", nil)
 		req.Header.Set("Authorization", "InvalidFormat "+token)
 
-		resp := authService.ValidateHandler(req)
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("Expected 401 for malformed header, got %d", resp.StatusCode)
+		rec := httptest.NewRecorder()
+		authService.ValidateHandler(rec, req)
+		var resp ValidateResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for malformed header, got %d", rec.Code)
 		}
 	})
 
 	t.Run("no_token_provided", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/validate", nil)
 
-		resp := authService.ValidateHandler(req)
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("Expected 401 for no token, got %d", resp.StatusCode)
+		rec := httptest.NewRecorder()
+		authService.ValidateHandler(rec, req)
+		var resp ValidateResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for no token, got %d", rec.Code)
 		}
 	})
 }

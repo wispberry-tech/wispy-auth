@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -23,21 +25,24 @@ func TestRefreshToken_ValidRefreshFlow(t *testing.T) {
 		ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
 		CreatedAt: time.Now(),
 	}
-	mockStore.CreateRefreshToken(refreshToken)
+	mockStore.CreateRefreshToken(context.Background(), refreshToken)
 
 	req := createTestRequest(t, "POST", "/refresh", map[string]interface{}{
 		"refresh_token": "refresh-token-123",
 	})
 
-	resp := authService.RefreshTokenHandler(req)
+	rec := httptest.NewRecorder()
+	authService.RefreshTokenHandler(rec, req)
+	var resp RefreshTokenResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
 	// Test may return different status depending on implementation
 	// The handler should either succeed or return a clear error
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusUnauthorized {
-		t.Logf("RefreshTokenHandler returned status %d: %s", resp.StatusCode, resp.Error)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusUnauthorized {
+		t.Logf("RefreshTokenHandler returned status %d: %s", rec.Code, resp.Error)
 	}
 
-	if resp.StatusCode == http.StatusOK {
+	if rec.Code == http.StatusOK {
 		if resp.AccessToken == "" {
 			t.Error("Expected new access token in response")
 		}
@@ -59,16 +64,19 @@ func TestRefreshToken_ExpiredToken(t *testing.T) {
 		CreatedAt: time.Now().Add(-25 * time.Hour),
 	}
 	mockStore := authService.storage.(*mockStorage)
-	mockStore.CreateRefreshToken(expiredRefreshToken)
+	mockStore.CreateRefreshToken(context.Background(), expiredRefreshToken)
 
 	req := createTestRequest(t, "POST", "/refresh", map[string]interface{}{
 		"refresh_token": "expired-refresh-token",
 	})
 
-	resp := authService.RefreshTokenHandler(req)
+	rec := httptest.NewRecorder()
+	authService.RefreshTokenHandler(rec, req)
+	var resp RefreshTokenResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("Expected 401 for expired refresh token, got %d", resp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for expired refresh token, got %d", rec.Code)
 	}
 }
 
@@ -81,10 +89,13 @@ func TestRefreshToken_InvalidToken(t *testing.T) {
 		"refresh_token": "nonexistent-refresh-token",
 	})
 
-	resp := authService.RefreshTokenHandler(req)
+	rec := httptest.NewRecorder()
+	authService.RefreshTokenHandler(rec, req)
+	var resp RefreshTokenResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("Expected 401 for invalid refresh token, got %d", resp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for invalid refresh token, got %d", rec.Code)
 	}
 }
 
@@ -104,8 +115,11 @@ func TestAuthFlow_SignupToLogout_Complete(t *testing.T) {
 		"last_name":  "Test",
 	})
 
-	signupResp := authService.SignUpHandler(signupReq)
-	if signupResp.StatusCode != http.StatusCreated {
+	rec := httptest.NewRecorder()
+	authService.SignUpHandler(rec, signupReq)
+	var signupResp SignUpResponse
+	json.NewDecoder(rec.Body).Decode(&signupResp)
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("Signup failed: %s", signupResp.Error)
 	}
 	if signupResp.Token == "" {
@@ -117,28 +131,38 @@ func TestAuthFlow_SignupToLogout_Complete(t *testing.T) {
 	// Step 2: Validate token immediately after signup
 	validateReq := createTestRequest(t, "GET", "/validate", nil)
 	validateReq.Header.Set("Authorization", "Bearer "+signupToken)
-	validateResp := authService.ValidateHandler(validateReq)
+	ctx := context.WithValue(validateReq.Context(), "user", signupResp.User)
+	validateReq = validateReq.WithContext(ctx)
+	rec = httptest.NewRecorder()
+	authService.ValidateHandler(rec, validateReq)
+	var validateResp ValidateResponse
+	json.NewDecoder(rec.Body).Decode(&validateResp)
 
-	if validateResp.StatusCode != http.StatusOK {
+	if rec.Code != http.StatusOK {
 		t.Errorf("Validate after signup failed: %s", validateResp.Error)
 	}
 
 	// Step 3: Logout
+	mockStore := authService.storage.(*mockStorage)
+	session, _ := mockStore.GetSession(context.Background(), signupToken)
 	logoutReq := createTestRequest(t, "POST", "/logout", nil)
 	logoutReq.Header.Set("Authorization", "Bearer "+signupToken)
-	logoutResp := authService.LogoutHandler(logoutReq)
+	ctx2 := context.WithValue(logoutReq.Context(), "user", signupResp.User)
+	ctx2 = context.WithValue(ctx2, "session", session)
+	logoutReq = logoutReq.WithContext(ctx2)
+	rec = httptest.NewRecorder()
+	authService.LogoutHandler(rec, logoutReq)
+	var logoutResp LogoutResponse
+	json.NewDecoder(rec.Body).Decode(&logoutResp)
 
-	if logoutResp.StatusCode != http.StatusOK {
+	if rec.Code != http.StatusOK {
 		t.Errorf("Logout failed: %s", logoutResp.Error)
 	}
 
-	// Step 4: Verify token is invalid after logout
-	validateReq2 := createTestRequest(t, "GET", "/validate", nil)
-	validateReq2.Header.Set("Authorization", "Bearer "+signupToken)
-	validateResp2 := authService.ValidateHandler(validateReq2)
-
-	if validateResp2.StatusCode != http.StatusUnauthorized {
-		t.Error("Token should be invalid after logout")
+	// Step 4: Verify session is deleted after logout
+	deletedSession, _ := mockStore.GetSession(context.Background(), signupToken)
+	if deletedSession != nil {
+		t.Error("Session should be deleted after logout")
 	}
 
 	// Step 5: Sign in with email/password
@@ -147,8 +171,11 @@ func TestAuthFlow_SignupToLogout_Complete(t *testing.T) {
 		"password": password,
 	})
 
-	signinResp := authService.SignInHandler(signinReq)
-	if signinResp.StatusCode != http.StatusOK {
+	rec = httptest.NewRecorder()
+	authService.SignInHandler(rec, signinReq)
+	var signinResp SignInResponse
+	json.NewDecoder(rec.Body).Decode(&signinResp)
+	if rec.Code != http.StatusOK {
 		t.Errorf("Signin failed: %s", signinResp.Error)
 	}
 	if signinResp.Token == "" {
@@ -171,8 +198,11 @@ func TestSecurityEvents_AllEventsLogged(t *testing.T) {
 		"email":    email,
 		"password": password,
 	})
-	signupResp := authService.SignUpHandler(signupReq)
-	if signupResp.StatusCode != http.StatusCreated {
+	rec := httptest.NewRecorder()
+	authService.SignUpHandler(rec, signupReq)
+	var signupResp SignUpResponse
+	json.NewDecoder(rec.Body).Decode(&signupResp)
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("Signup failed: %s", signupResp.Error)
 	}
 
@@ -207,7 +237,7 @@ func TestConcurrency_MultipleLoginAttempts(t *testing.T) {
 	mockStore := authService.storage.(*mockStorage)
 
 	// Update user to full user from storage
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	const numLoginAttempts = 5
 	var wg sync.WaitGroup
@@ -223,8 +253,11 @@ func TestConcurrency_MultipleLoginAttempts(t *testing.T) {
 				"password": "TestPassword123!",
 			})
 
-			signinResp := authService.SignInHandler(signinReq)
-			results[idx] = signinResp.StatusCode == http.StatusOK
+			rec := httptest.NewRecorder()
+			authService.SignInHandler(rec, signinReq)
+			var signinResp SignInResponse
+			json.NewDecoder(rec.Body).Decode(&signinResp)
+			results[idx] = rec.Code == http.StatusOK
 		}(i)
 	}
 
@@ -238,7 +271,7 @@ func TestConcurrency_MultipleLoginAttempts(t *testing.T) {
 	}
 
 	// Verify we have multiple sessions
-	sessions, _ := mockStore.GetUserSessions(user.ID)
+	sessions, _ := mockStore.GetUserSessions(context.Background(), user.ID)
 	if len(sessions) < numLoginAttempts {
 		t.Logf("Expected at least %d sessions, got %d (some may have been deduplicated)", numLoginAttempts, len(sessions))
 	}
@@ -249,7 +282,7 @@ func TestConcurrency_PasswordResetRaceCondition(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.AllowUserPasswordReset = true
+	authService.securityConfig.AllowUserPasswordReset = boolPtr(true)
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
@@ -261,7 +294,7 @@ func TestConcurrency_PasswordResetRaceCondition(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 		CreatedAt: time.Now(),
 	}
-	mockStore.CreatePasswordResetToken(resetToken)
+	mockStore.CreatePasswordResetToken(context.Background(), resetToken)
 
 	const numResetAttempts = 2
 	var wg sync.WaitGroup
@@ -277,8 +310,11 @@ func TestConcurrency_PasswordResetRaceCondition(t *testing.T) {
 				"password": "NewPassword123!",
 			})
 
-			resetResp := authService.ResetPasswordHandler(resetReq)
-			results[idx] = resetResp.StatusCode
+			rec := httptest.NewRecorder()
+			authService.ResetPasswordHandler(rec, resetReq)
+			var resetResp ResetPasswordResponse
+			json.NewDecoder(rec.Body).Decode(&resetResp)
+			results[idx] = rec.Code
 		}(i)
 	}
 
@@ -319,14 +355,17 @@ func TestInputValidation_VeryLongEmail(t *testing.T) {
 		"password": "TestPassword123!",
 	})
 
-	resp := authService.SignUpHandler(req)
+	rec := httptest.NewRecorder()
+	authService.SignUpHandler(rec, req)
+	var resp SignUpResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
 
 	// Should reject or handle gracefully
-	if resp.StatusCode == http.StatusOK {
+	if rec.Code == http.StatusOK {
 		t.Error("Very long email should be rejected or limited")
 	}
 	// Should not panic or crash
-	t.Logf("Handler gracefully handled very long email with status %d", resp.StatusCode)
+	t.Logf("Handler gracefully handled very long email with status %d", rec.Code)
 }
 
 // TestInputValidation_SQLInjectionAttempt tests SQL injection protection
@@ -347,10 +386,13 @@ func TestInputValidation_SQLInjectionAttempt(t *testing.T) {
 			"password": "anything",
 		})
 
-		resp := authService.SignInHandler(req)
+		rec := httptest.NewRecorder()
+		authService.SignInHandler(rec, req)
+		var resp SignInResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
 
 		// Should not succeed and should not panic
-		if resp.StatusCode == http.StatusOK {
+		if rec.Code == http.StatusOK {
 			t.Errorf("SQL injection payload %q should not succeed", payload)
 		}
 	}
@@ -377,11 +419,14 @@ func TestInputValidation_XSSPayloads(t *testing.T) {
 			"first_name": payload,
 		})
 
-		resp := authService.SignUpHandler(req)
+		rec := httptest.NewRecorder()
+		authService.SignUpHandler(rec, req)
+		var resp SignUpResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
 
 		// Should not panic and should reject or sanitize
 		// (exact behavior depends on validation rules)
-		if resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusCreated {
+		if rec.Code != http.StatusBadRequest && rec.Code != http.StatusCreated {
 			// Any non-success status is fine, as long as it doesn't crash
 		}
 	}
@@ -424,10 +469,13 @@ func TestInputValidation_EmptyFields(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := createTestRequest(t, "POST", "/signup", tc.payload)
-			resp := authService.SignUpHandler(req)
+			rec := httptest.NewRecorder()
+			authService.SignUpHandler(rec, req)
+			var resp SignUpResponse
+			json.NewDecoder(rec.Body).Decode(&resp)
 
 			// Should reject empty fields
-			if resp.StatusCode == http.StatusCreated {
+			if rec.Code == http.StatusCreated {
 				t.Errorf("Should reject %s", tc.name)
 			}
 		})
@@ -445,8 +493,11 @@ func TestErrorMessages_NoInfoLeakage(t *testing.T) {
 		"email":    knownEmail,
 		"password": "TestPassword123!",
 	})
-	signupResp := authService.SignUpHandler(signupReq)
-	if signupResp.StatusCode != http.StatusCreated {
+	rec := httptest.NewRecorder()
+	authService.SignUpHandler(rec, signupReq)
+	var signupResp SignUpResponse
+	json.NewDecoder(rec.Body).Decode(&signupResp)
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("Failed to create test user")
 	}
 
@@ -455,21 +506,27 @@ func TestErrorMessages_NoInfoLeakage(t *testing.T) {
 		"email":    knownEmail,
 		"password": "WrongPassword!",
 	})
-	wrongPasswordResp := authService.SignInHandler(wrongPasswordReq)
+	rec = httptest.NewRecorder()
+	authService.SignInHandler(rec, wrongPasswordReq)
+	var wrongPasswordResp SignInResponse
+	json.NewDecoder(rec.Body).Decode(&wrongPasswordResp)
 
 	// Try to login with nonexistent user
 	nonexistentReq := createTestRequest(t, "POST", "/signin", map[string]interface{}{
 		"email":    "nonexistent@example.com",
 		"password": "TestPassword123!",
 	})
-	nonexistentResp := authService.SignInHandler(nonexistentReq)
+	rec = httptest.NewRecorder()
+	authService.SignInHandler(rec, nonexistentReq)
+	var nonexistentResp SignInResponse
+	json.NewDecoder(rec.Body).Decode(&nonexistentResp)
 
 	// Both should return same or similar error (no enumeration)
-	if wrongPasswordResp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("Wrong password should return 401, got %d", wrongPasswordResp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Wrong password should return 401, got %d", rec.Code)
 	}
-	if nonexistentResp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("Nonexistent user should return 401, got %d", nonexistentResp.StatusCode)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Nonexistent user should return 401, got %d", rec.Code)
 	}
 
 	// Error messages should be vague (not revealing whether user exists)
@@ -485,13 +542,13 @@ func TestPasswordReset_WithActiveSession(t *testing.T) {
 	authService := mustCreateTestAuthService(t)
 	defer authService.Close()
 
-	authService.securityConfig.AllowUserPasswordReset = true
+	authService.securityConfig.AllowUserPasswordReset = boolPtr(true)
 
 	signupUser, token := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
 
 	// Verify session exists
-	session, _ := mockStore.GetSession(token)
+	session, _ := mockStore.GetSession(context.Background(), token)
 	if session == nil {
 		t.Fatal("Session should exist before reset")
 	}
@@ -503,21 +560,24 @@ func TestPasswordReset_WithActiveSession(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 		CreatedAt: time.Now(),
 	}
-	mockStore.CreatePasswordResetToken(resetToken)
+	mockStore.CreatePasswordResetToken(context.Background(), resetToken)
 
 	// Reset password
 	resetReq := createTestRequest(t, "POST", "/reset-password", map[string]interface{}{
 		"token":    "session-test-reset",
 		"password": "NewPassword456!",
 	})
-	resetResp := authService.ResetPasswordHandler(resetReq)
+	rec := httptest.NewRecorder()
+	authService.ResetPasswordHandler(rec, resetReq)
+	var resetResp ResetPasswordResponse
+	json.NewDecoder(rec.Body).Decode(&resetResp)
 
-	if resetResp.StatusCode != http.StatusOK {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("Password reset failed: %s", resetResp.Error)
 	}
 
 	// Verify old session is invalid
-	oldSession, _ := mockStore.GetSession(token)
+	oldSession, _ := mockStore.GetSession(context.Background(), token)
 	if oldSession != nil {
 		t.Error("Session should be invalidated after password reset")
 	}
@@ -532,9 +592,9 @@ func TestTwoFactor_LoginWithoutCode_Fails(t *testing.T) {
 	mockStore := authService.storage.(*mockStorage)
 
 	// Enable 2FA for user
-	security, _ := mockStore.GetUserSecurity(signupUser.ID)
+	security, _ := mockStore.GetUserSecurity(context.Background(), signupUser.ID)
 	security.TwoFactorEnabled = true
-	mockStore.UpdateUserSecurity(security)
+	mockStore.UpdateUserSecurity(context.Background(), security)
 
 	// Try to login - should fail because 2FA is enabled
 	signinReq := createTestRequest(t, "POST", "/signin", map[string]interface{}{
@@ -542,17 +602,20 @@ func TestTwoFactor_LoginWithoutCode_Fails(t *testing.T) {
 		"password": "TestPassword123!",
 	})
 
-	signinResp := authService.SignInHandler(signinReq)
+	rec := httptest.NewRecorder()
+	authService.SignInHandler(rec, signinReq)
+	var signinResp SignInResponse
+	json.NewDecoder(rec.Body).Decode(&signinResp)
 
 	// When 2FA is enabled, login should either:
 	// 1. Return a partial response indicating 2FA required, or
 	// 2. Fail with appropriate error
-	if signinResp.StatusCode == http.StatusOK {
+	if rec.Code == http.StatusOK {
 		// If succeeded, verify 2FA was actually checked
 		// (implementation may vary)
 		t.Logf("Note: Handler returned 200 with 2FA enabled - implementation may handle this differently")
 	} else {
-		t.Logf("Handler correctly blocked/modified signin with 2FA enabled: status %d", signinResp.StatusCode)
+		t.Logf("Handler correctly blocked/modified signin with 2FA enabled: status %d", rec.Code)
 	}
 }
 
@@ -563,7 +626,7 @@ func TestRaceCondition_ConcurrentPasswordChange(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(signupUser.ID)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	const numConcurrentChanges = 3
 	var wg sync.WaitGroup
@@ -579,11 +642,24 @@ func TestRaceCondition_ConcurrentPasswordChange(t *testing.T) {
 				"new_password":     "ConcurrentPassword123!",
 			})
 
+			// Get the session for this user
+			sessions, _ := mockStore.GetUserSessions(context.Background(), user.ID)
+			var currentSession *Session
+			if len(sessions) > 0 {
+				currentSession = sessions[0]
+			}
+
 			ctx := context.WithValue(changeReq.Context(), "user", user)
+			if currentSession != nil {
+				ctx = context.WithValue(ctx, "session", currentSession)
+			}
 			changeReq = changeReq.WithContext(ctx)
 
-			changeResp := authService.ChangePasswordHandler(changeReq)
-			results[idx] = changeResp.StatusCode
+			rec := httptest.NewRecorder()
+			authService.ChangePasswordHandler(rec, changeReq)
+			var changeResp ChangePasswordResponse
+			json.NewDecoder(rec.Body).Decode(&changeResp)
+			results[idx] = rec.Code
 		}(i)
 	}
 

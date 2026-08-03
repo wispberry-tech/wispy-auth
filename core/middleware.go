@@ -18,7 +18,7 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Validate session
-		session, err := a.storage.GetSession(token)
+		session, err := a.storage.GetSession(r.Context(), token)
 		if err != nil {
 			slog.Error("Failed to get session", "error", err)
 			http.Error(w, "Session validation failed", http.StatusInternalServerError)
@@ -35,7 +35,7 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 		if time.Now().After(session.ExpiresAt) {
 			slog.Debug("Session expired", "session_id", session.ID)
 			// Clean up expired session
-			if err := a.storage.DeleteSession(token); err != nil {
+			if err := a.storage.DeleteSession(r.Context(), token); err != nil {
 				slog.Error("Failed to delete expired session", "error", err)
 			}
 			http.Error(w, "Session expired", http.StatusUnauthorized)
@@ -43,7 +43,7 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Get user
-		user, err := a.storage.GetUserByID(session.UserID)
+		user, err := a.storage.GetUserByID(r.Context(), session.UserID)
 		if err != nil {
 			slog.Error("Failed to get user", "error", err)
 			http.Error(w, "User retrieval failed", http.StatusInternalServerError)
@@ -65,7 +65,7 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 
 		// Update session last accessed time
 		session.LastAccessedAt = time.Now()
-		if err := a.storage.UpdateSession(session); err != nil {
+		if err := a.storage.UpdateSession(r.Context(), session); err != nil {
 			slog.Error("Failed to update session last accessed time", "error", err)
 			// Don't fail the request for this error
 		}
@@ -93,7 +93,7 @@ func (a *AuthService) OptionalAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Try to validate session
-		session, err := a.storage.GetSession(token)
+		session, err := a.storage.GetSession(r.Context(), token)
 		if err != nil {
 			slog.Error("Failed to get session in optional auth", "error", err)
 			// Continue without authentication on error
@@ -105,7 +105,7 @@ func (a *AuthService) OptionalAuthMiddleware(next http.Handler) http.Handler {
 			// Invalid or expired session, continue without authentication
 			if session != nil && time.Now().After(session.ExpiresAt) {
 				// Clean up expired session
-				if err := a.storage.DeleteSession(token); err != nil {
+				if err := a.storage.DeleteSession(r.Context(), token); err != nil {
 					slog.Error("Failed to delete expired session in optional auth", "error", err)
 				}
 			}
@@ -114,7 +114,7 @@ func (a *AuthService) OptionalAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Get user
-		user, err := a.storage.GetUserByID(session.UserID)
+		user, err := a.storage.GetUserByID(r.Context(), session.UserID)
 		if err != nil {
 			slog.Error("Failed to get user in optional auth", "error", err)
 			next.ServeHTTP(w, r)
@@ -129,7 +129,7 @@ func (a *AuthService) OptionalAuthMiddleware(next http.Handler) http.Handler {
 
 		// Update session last accessed time
 		session.LastAccessedAt = time.Now()
-		if err := a.storage.UpdateSession(session); err != nil {
+		if err := a.storage.UpdateSession(r.Context(), session); err != nil {
 			slog.Error("Failed to update session last accessed time in optional auth", "error", err)
 		}
 
@@ -155,7 +155,7 @@ func GetSessionFromContext(r *http.Request) *Session {
 func (a *AuthService) RateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip rate limiting if disabled
-		if !a.securityConfig.EnableRateLimiting || a.rateLimiter == nil {
+		if !*a.securityConfig.EnableRateLimiting || a.rateLimiter == nil {
 			next.ServeHTTP(w, r)
 			return
 		}

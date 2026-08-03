@@ -121,6 +121,9 @@ func extractTokenFromRequest(r *http.Request) string {
 
 // extractIP extracts client IP from HTTP request
 func extractIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
 	return extractIPFromRequest(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), r.Header.Get("X-Real-IP"))
 }
 

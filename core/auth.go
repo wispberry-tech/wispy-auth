@@ -38,6 +38,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -93,13 +94,16 @@ type SecurityConfig struct {
 	PasswordRequireLower   bool
 	PasswordRequireNumber  bool
 	PasswordRequireSpecial bool
-	AllowUserPasswordReset bool // Whether users can reset their own passwords
+	AllowUserPasswordReset *bool  // Whether users can reset their own passwords
 
 	// Login security
 	MaxLoginAttempts int           // Maximum failed login attempts before lockout
 	LockoutDuration  time.Duration // How long accounts remain locked
 	SessionLifetime  time.Duration // How long sessions remain valid
-	RequireTwoFactor bool          // Whether 2FA is required for all users
+	RequireTwoFactor *bool         // Whether 2FA is required for all users
+
+	// Token Management
+	RefreshTokenLifetime time.Duration // How long refresh tokens remain valid (default: 30 days)
 
 	// 2FA Security Settings
 	TwoFactorCodeExpiry      time.Duration // How long 2FA codes remain valid (default: 5 minutes)
@@ -107,7 +111,7 @@ type SecurityConfig struct {
 	TwoFactorLockoutDuration time.Duration // How long to lock 2FA after max failures (default: 15 minutes)
 
 	// Rate Limiting
-	EnableRateLimiting bool          // Whether to enable rate limiting
+	EnableRateLimiting *bool        // Whether to enable rate limiting
 	RateLimitRequests  int           // Maximum requests per window
 	RateLimitWindow    time.Duration // Time window for rate limiting
 
@@ -120,7 +124,7 @@ type SecurityConfig struct {
 
 	// Cleanup Configuration
 	CleanupInterval time.Duration // How often to run cleanup jobs (default: 1 hour)
-	DebugMode       bool          // Enable debug features (returns tokens in response)
+	DebugMode       *bool          // Enable debug features (returns tokens in response)
 }
 
 // DefaultSecurityConfig returns a secure default configuration suitable for most applications.
@@ -150,21 +154,26 @@ type SecurityConfig struct {
 //		SecurityConfig: core.DefaultSecurityConfig(),
 //	}
 func DefaultSecurityConfig() SecurityConfig {
+	allowReset := false
+	require2FA := false
+	enableRateLimit := true
+	debugMode := false
 	return SecurityConfig{
 		PasswordMinLength:        8,
 		PasswordRequireUpper:     true,
 		PasswordRequireLower:     true,
 		PasswordRequireNumber:    true,
 		PasswordRequireSpecial:   true,
-		AllowUserPasswordReset:   false,
+		AllowUserPasswordReset:   &allowReset,
 		MaxLoginAttempts:         5,
+		RefreshTokenLifetime:     30 * 24 * time.Hour,
 		LockoutDuration:          15 * time.Minute,
 		SessionLifetime:          24 * time.Hour,
-		RequireTwoFactor:         false,
+		RequireTwoFactor:         &require2FA,
 		TwoFactorCodeExpiry:      5 * time.Minute,
 		Max2FAAttempts:           3,
 		TwoFactorLockoutDuration: 15 * time.Minute,
-		EnableRateLimiting:       true,
+		EnableRateLimiting:       &enableRateLimit,
 		RateLimitRequests:        10,
 		RateLimitWindow:          1 * time.Minute,
 		OAuthStateExpiry:         15 * time.Minute,
@@ -173,7 +182,7 @@ func DefaultSecurityConfig() SecurityConfig {
 		TokenLength:              32,
 		BackupCodeCount:          10,
 		CleanupInterval:          1 * time.Hour,
-		DebugMode:                false,
+		DebugMode:                &debugMode,
 	}
 }
 
@@ -470,6 +479,76 @@ func validateSecurityConfig(cfg SecurityConfig) error {
 //	}
 //
 //	authService, err := core.NewAuthService(config)
+
+// mergeConfig merges user-provided config into defaults. Non-zero values from
+// override replace base values. *bool fields are replaced when non-nil.
+func mergeConfig(base, override SecurityConfig) SecurityConfig {
+	// *bool fields — replace when non-nil
+	if override.AllowUserPasswordReset != nil {
+		base.AllowUserPasswordReset = override.AllowUserPasswordReset
+	}
+	if override.RequireTwoFactor != nil {
+		base.RequireTwoFactor = override.RequireTwoFactor
+	}
+	if override.EnableRateLimiting != nil {
+		base.EnableRateLimiting = override.EnableRateLimiting
+	}
+	if override.DebugMode != nil {
+		base.DebugMode = override.DebugMode
+	}
+	// int fields — replace when non-zero
+	if override.PasswordMinLength != 0 {
+		base.PasswordMinLength = override.PasswordMinLength
+	}
+	if override.MaxLoginAttempts != 0 {
+		base.MaxLoginAttempts = override.MaxLoginAttempts
+	}
+	if override.RefreshTokenLifetime != 0 {
+		base.RefreshTokenLifetime = override.RefreshTokenLifetime
+	}
+	if override.Max2FAAttempts != 0 {
+		base.Max2FAAttempts = override.Max2FAAttempts
+	}
+	if override.RateLimitRequests != 0 {
+		base.RateLimitRequests = override.RateLimitRequests
+	}
+	if override.TokenLength != 0 {
+		base.TokenLength = override.TokenLength
+	}
+	if override.BackupCodeCount != 0 {
+		base.BackupCodeCount = override.BackupCodeCount
+	}
+	// time.Duration fields — replace when non-zero
+	if override.LockoutDuration != 0 {
+		base.LockoutDuration = override.LockoutDuration
+	}
+	if override.SessionLifetime != 0 {
+		base.SessionLifetime = override.SessionLifetime
+	}
+	if override.TwoFactorCodeExpiry != 0 {
+		base.TwoFactorCodeExpiry = override.TwoFactorCodeExpiry
+	}
+	if override.TwoFactorLockoutDuration != 0 {
+		base.TwoFactorLockoutDuration = override.TwoFactorLockoutDuration
+	}
+	if override.RateLimitWindow != 0 {
+		base.RateLimitWindow = override.RateLimitWindow
+	}
+	if override.OAuthStateExpiry != 0 {
+		base.OAuthStateExpiry = override.OAuthStateExpiry
+	}
+	if override.PasswordResetExpiry != 0 {
+		base.PasswordResetExpiry = override.PasswordResetExpiry
+	}
+	if override.DeviceFingerprintWindow != 0 {
+		base.DeviceFingerprintWindow = override.DeviceFingerprintWindow
+	}
+	if override.CleanupInterval != 0 {
+		base.CleanupInterval = override.CleanupInterval
+	}
+	return base
+}
+
 //	if err != nil {
 //		log.Fatal("Failed to create auth service:", err)
 //	}
@@ -485,70 +564,7 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 	}
 
 	// Apply default security config and merge with user-provided config
-	securityConfig := DefaultSecurityConfig()
-	if cfg.SecurityConfig.PasswordMinLength != 0 {
-		securityConfig.PasswordMinLength = cfg.SecurityConfig.PasswordMinLength
-	}
-	if cfg.SecurityConfig.PasswordRequireUpper {
-		securityConfig.PasswordRequireUpper = cfg.SecurityConfig.PasswordRequireUpper
-	}
-	if cfg.SecurityConfig.PasswordRequireLower {
-		securityConfig.PasswordRequireLower = cfg.SecurityConfig.PasswordRequireLower
-	}
-	if cfg.SecurityConfig.PasswordRequireNumber {
-		securityConfig.PasswordRequireNumber = cfg.SecurityConfig.PasswordRequireNumber
-	}
-	if cfg.SecurityConfig.PasswordRequireSpecial {
-		securityConfig.PasswordRequireSpecial = cfg.SecurityConfig.PasswordRequireSpecial
-	}
-	if cfg.SecurityConfig.AllowUserPasswordReset {
-		securityConfig.AllowUserPasswordReset = cfg.SecurityConfig.AllowUserPasswordReset
-	}
-	if cfg.SecurityConfig.MaxLoginAttempts != 0 {
-		securityConfig.MaxLoginAttempts = cfg.SecurityConfig.MaxLoginAttempts
-	}
-	if cfg.SecurityConfig.LockoutDuration != 0 {
-		securityConfig.LockoutDuration = cfg.SecurityConfig.LockoutDuration
-	}
-	if cfg.SecurityConfig.SessionLifetime != 0 {
-		securityConfig.SessionLifetime = cfg.SecurityConfig.SessionLifetime
-	}
-	securityConfig.RequireTwoFactor = cfg.SecurityConfig.RequireTwoFactor
-	if cfg.SecurityConfig.TwoFactorCodeExpiry != 0 {
-		securityConfig.TwoFactorCodeExpiry = cfg.SecurityConfig.TwoFactorCodeExpiry
-	}
-	if cfg.SecurityConfig.Max2FAAttempts != 0 {
-		securityConfig.Max2FAAttempts = cfg.SecurityConfig.Max2FAAttempts
-	}
-	if cfg.SecurityConfig.TwoFactorLockoutDuration != 0 {
-		securityConfig.TwoFactorLockoutDuration = cfg.SecurityConfig.TwoFactorLockoutDuration
-	}
-	securityConfig.EnableRateLimiting = cfg.SecurityConfig.EnableRateLimiting
-	if cfg.SecurityConfig.RateLimitRequests != 0 {
-		securityConfig.RateLimitRequests = cfg.SecurityConfig.RateLimitRequests
-	}
-	if cfg.SecurityConfig.RateLimitWindow != 0 {
-		securityConfig.RateLimitWindow = cfg.SecurityConfig.RateLimitWindow
-	}
-	if cfg.SecurityConfig.OAuthStateExpiry != 0 {
-		securityConfig.OAuthStateExpiry = cfg.SecurityConfig.OAuthStateExpiry
-	}
-	if cfg.SecurityConfig.PasswordResetExpiry != 0 {
-		securityConfig.PasswordResetExpiry = cfg.SecurityConfig.PasswordResetExpiry
-	}
-	if cfg.SecurityConfig.DeviceFingerprintWindow != 0 {
-		securityConfig.DeviceFingerprintWindow = cfg.SecurityConfig.DeviceFingerprintWindow
-	}
-	if cfg.SecurityConfig.TokenLength != 0 {
-		securityConfig.TokenLength = cfg.SecurityConfig.TokenLength
-	}
-	if cfg.SecurityConfig.BackupCodeCount != 0 {
-		securityConfig.BackupCodeCount = cfg.SecurityConfig.BackupCodeCount
-	}
-	if cfg.SecurityConfig.CleanupInterval != 0 {
-		securityConfig.CleanupInterval = cfg.SecurityConfig.CleanupInterval
-	}
-	securityConfig.DebugMode = cfg.SecurityConfig.DebugMode
+	securityConfig := mergeConfig(DefaultSecurityConfig(), cfg.SecurityConfig)
 
 	// Validate security configuration after applying defaults
 	if err := validateSecurityConfig(securityConfig); err != nil {
@@ -583,7 +599,7 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 	}
 
 	// Initialize rate limiter if enabled
-	if securityConfig.EnableRateLimiting {
+	if *securityConfig.EnableRateLimiting {
 		service.rateLimiter = NewRateLimiter(securityConfig.RateLimitRequests, securityConfig.RateLimitWindow)
 	}
 
@@ -687,7 +703,7 @@ func (a *AuthService) logSecurityEvent(userID *uint, eventType, description, ipA
 		event.Severity = "warning"
 	}
 
-	if err := a.storage.CreateSecurityEvent(event); err != nil {
+	if err := a.storage.CreateSecurityEvent(context.Background(), event); err != nil {
 		slog.Error("Failed to log security event",
 			"event_type", eventType,
 			"user_id", userID,
@@ -756,7 +772,7 @@ func (a *AuthService) GetStorage() Storage {
 //	// Communicate tempPassword to the user securely
 func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string, error) {
 	// Get target user
-	targetUser, err := a.storage.GetUserByID(targetUserID)
+	targetUser, err := a.storage.GetUserByID(context.Background(), targetUserID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get target user: %w", err)
 	}
@@ -779,12 +795,12 @@ func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string
 	// Update user password
 	targetUser.PasswordHash = hashedPassword
 	targetUser.UpdatedAt = time.Now()
-	if err := a.storage.UpdateUser(targetUser); err != nil {
+	if err := a.storage.UpdateUser(context.Background(), targetUser); err != nil {
 		return "", fmt.Errorf("failed to update user password: %w", err)
 	}
 
 	// Update user security info to force password change
-	security, err := a.storage.GetUserSecurity(targetUserID)
+	security, err := a.storage.GetUserSecurity(context.Background(), targetUserID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get user security: %w", err)
 	}
@@ -792,12 +808,12 @@ func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string
 	now := time.Now()
 	security.PasswordChangedAt = &now
 	security.ForcePasswordChange = true
-	if err := a.storage.UpdateUserSecurity(security); err != nil {
+	if err := a.storage.UpdateUserSecurity(context.Background(), security); err != nil {
 		return "", fmt.Errorf("failed to update user security: %w", err)
 	}
 
 	// Delete all user sessions for security
-	if err := a.storage.DeleteUserSessions(targetUserID); err != nil {
+	if err := a.storage.DeleteUserSessions(context.Background(), targetUserID); err != nil {
 		slog.Error("Failed to delete user sessions during admin reset", "error", err, "user_id", targetUserID)
 		// Don't fail the operation for this
 	}
@@ -840,19 +856,19 @@ func (a *AuthService) startCleanup() {
 func (a *AuthService) cleanupExpiredData() {
 	slog.Debug("Running cleanup job")
 
-	if err := a.storage.CleanupExpiredSessions(); err != nil {
+	if err := a.storage.CleanupExpiredSessions(context.Background()); err != nil {
 		slog.Error("Failed to cleanup expired sessions", "error", err)
 	}
-	if err := a.storage.CleanupExpiredPasswordResetTokens(); err != nil {
+	if err := a.storage.CleanupExpiredPasswordResetTokens(context.Background()); err != nil {
 		slog.Error("Failed to cleanup expired password reset tokens", "error", err)
 	}
-	if err := a.storage.CleanupExpiredOAuthStates(); err != nil {
+	if err := a.storage.CleanupExpiredOAuthStates(context.Background()); err != nil {
 		slog.Error("Failed to cleanup expired OAuth states", "error", err)
 	}
-	if err := a.storage.CleanupExpired2FACodes(); err != nil {
+	if err := a.storage.CleanupExpired2FACodes(context.Background()); err != nil {
 		slog.Error("Failed to cleanup expired 2FA codes", "error", err)
 	}
-	if err := a.storage.CleanupExpiredRefreshTokens(); err != nil {
+	if err := a.storage.CleanupExpiredRefreshTokens(context.Background()); err != nil {
 		slog.Error("Failed to cleanup expired refresh tokens", "error", err)
 	}
 }

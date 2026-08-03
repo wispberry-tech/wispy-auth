@@ -19,15 +19,15 @@ func main() {
 	})))
 
 	// Create in-memory SQLite storage for demo
-	storage, err := storage.NewInMemorySQLiteStorage()
+	store, err := storage.NewInMemorySQLiteStorage()
 	if err != nil {
 		log.Fatal("Failed to create storage:", err)
 	}
-	defer storage.Close()
+	defer store.Close()
 
 	// Configure authentication service
 	config := core.Config{
-		Storage:        storage,
+		Storage:        store,
 		SecurityConfig: core.DefaultSecurityConfig(),
 		OAuthProviders: map[string]core.OAuthProviderConfig{
 			"google": core.NewGoogleOAuthProvider(
@@ -53,24 +53,30 @@ func main() {
 	// Create HTTP mux
 	mux := http.NewServeMux()
 
-	// Authentication endpoints
-	mux.HandleFunc("POST /signup", handleSignUp(authService))
-	mux.HandleFunc("POST /signin", handleSignIn(authService))
-	mux.HandleFunc("POST /logout", handleLogout(authService))
-	mux.HandleFunc("GET /validate", handleValidate(authService))
+	// Authentication endpoints — handlers are now http.HandlerFunc directly
+	mux.HandleFunc("POST /signup", authService.SignUpHandler)
+	mux.HandleFunc("POST /signin", authService.SignInHandler)
+	mux.HandleFunc("POST /logout", authService.LogoutHandler)
+	mux.HandleFunc("GET /validate", authService.ValidateHandler)
 
 	// Password reset endpoints
-	mux.HandleFunc("POST /forgot-password", handleForgotPassword(authService))
-	mux.HandleFunc("POST /reset-password", handleResetPassword(authService))
-	mux.Handle("POST /change-password", authService.AuthMiddleware(http.HandlerFunc(handleChangePassword(authService))))
+	mux.HandleFunc("POST /forgot-password", authService.ForgotPasswordHandler)
+	mux.HandleFunc("POST /reset-password", authService.ResetPasswordHandler)
+	mux.Handle("POST /change-password", authService.AuthMiddleware(http.HandlerFunc(authService.ChangePasswordHandler)))
 
-	// OAuth endpoints
-	mux.HandleFunc("GET /auth/{provider}", handleOAuthInit(authService))
-	mux.HandleFunc("GET /auth/{provider}/callback", handleOAuthCallback(authService))
+	// OAuth endpoints — wrap inline for the extra provider parameter
+	mux.HandleFunc("GET /auth/{provider}", func(w http.ResponseWriter, r *http.Request) {
+		provider := r.PathValue("provider")
+		authService.OAuthInitHandler(w, r, provider)
+	})
+	mux.HandleFunc("GET /auth/{provider}/callback", func(w http.ResponseWriter, r *http.Request) {
+		provider := r.PathValue("provider")
+		authService.OAuthCallbackHandler(w, r, provider)
+	})
 
 	// Protected endpoints
 	mux.Handle("GET /profile", authService.AuthMiddleware(http.HandlerFunc(handleProfile)))
-	mux.Handle("GET /sessions", authService.AuthMiddleware(http.HandlerFunc(handleSessions(authService))))
+	mux.Handle("GET /sessions", authService.AuthMiddleware(http.HandlerFunc(authService.GetSessionsHandler)))
 
 	// Public endpoints
 	mux.HandleFunc("GET /", handleHome)
@@ -110,80 +116,6 @@ func main() {
 	}
 }
 
-// handleSignUp handles user registration
-func handleSignUp(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		result := authService.SignUpHandler(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode signup response", "error", err)
-		}
-	}
-}
-
-// handleSignIn handles user authentication
-func handleSignIn(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		result := authService.SignInHandler(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode signin response", "error", err)
-		}
-	}
-}
-
-// handleLogout handles user logout
-func handleLogout(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		result := authService.LogoutHandler(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode logout response", "error", err)
-		}
-	}
-}
-
-// handleValidate handles token validation
-func handleValidate(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		result := authService.ValidateHandler(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode validate response", "error", err)
-		}
-	}
-}
-
-// handleOAuthInit handles OAuth initialization
-func handleOAuthInit(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		provider := r.PathValue("provider")
-		result := authService.OAuthInitHandler(r, provider)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode OAuth init response", "error", err)
-		}
-	}
-}
-
-// handleOAuthCallback handles OAuth callbacks
-func handleOAuthCallback(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		provider := r.PathValue("provider")
-		result := authService.OAuthCallbackHandler(r, provider)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode OAuth callback response", "error", err)
-		}
-	}
-}
-
 // handleProfile handles protected profile endpoint
 func handleProfile(w http.ResponseWriter, r *http.Request) {
 	user := core.GetUserFromContext(r)
@@ -196,18 +128,6 @@ func handleProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		slog.Error("Failed to encode profile response", "error", err)
-	}
-}
-
-// handleSessions handles user session listing
-func handleSessions(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		result := authService.GetSessionsHandler(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode sessions response", "error", err)
-		}
 	}
 }
 
@@ -251,42 +171,6 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		slog.Error("Failed to encode home response", "error", err)
-	}
-}
-
-// handleForgotPassword handles password reset requests
-func handleForgotPassword(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		result := authService.ForgotPasswordHandler(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode forgot password response", "error", err)
-		}
-	}
-}
-
-// handleResetPassword handles password reset confirmations
-func handleResetPassword(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		result := authService.ResetPasswordHandler(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode reset password response", "error", err)
-		}
-	}
-}
-
-// handleChangePassword handles password change requests
-func handleChangePassword(authService *core.AuthService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		result := authService.ChangePasswordHandler(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(result.StatusCode)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			slog.Error("Failed to encode change password response", "error", err)
-		}
 	}
 }
 

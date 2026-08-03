@@ -1,13 +1,25 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// writeJSON writes a JSON response with the given status code and body
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+// writeError writes a JSON error response
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
 
 // Request and Response Types
 
@@ -38,7 +50,7 @@ type SignInRequest struct {
 type SignInResponse struct {
 	Token            string    `json:"token"`
 	User             *User     `json:"user"`
-	SessionID        string    `json:"session_id"`
+	SessionID        uint      `json:"session_id"`
 	SessionExpiresAt time.Time `json:"session_expires_at"`
 	RefreshToken     string    `json:"refresh_token"`
 	Requires2FA      bool      `json:"requires_2fa"`
@@ -214,22 +226,18 @@ type RefreshTokenResponse struct {
 // Handler Functions
 
 // SignUpHandler processes user registration requests
-func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
+func (a *AuthService) SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	var req SignUpRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		slog.Debug("Failed to decode signup request", "error", err)
-		return SignUpResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, SignUpResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
 		slog.Debug("Signup validation failed", "error", err)
-		return SignUpResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, SignUpResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
 	}
 
 	ip := extractIP(r)
@@ -238,20 +246,16 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 	// Validate password strength
 	if err := validatePasswordStrength(req.Password, a.securityConfig); err != nil {
 		slog.Debug("Password validation failed", "error", err)
-		return SignUpResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      err.Error(),
-		}
+		writeJSON(w, http.StatusBadRequest, SignUpResponse{StatusCode: http.StatusBadRequest, Error: err.Error()})
+		return
 	}
 
 	// Hash password
 	hashedPassword, err := hashPassword(req.Password)
 	if err != nil {
 		slog.Error("Failed to hash password", "error", err)
-		return SignUpResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Password hashing failed",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignUpResponse{StatusCode: http.StatusInternalServerError, Error: "Password hashing failed"})
+		return
 	}
 
 	// Create user
@@ -282,29 +286,23 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 	}
 
 	// Create user and security record atomically in a transaction
-	if err := a.storage.CreateUserWithSecurity(user, userSecurity); err != nil {
+	if err := a.storage.CreateUserWithSecurity(r.Context(), user, userSecurity); err != nil {
 		slog.Error("Failed to create user with security", "error", err)
 		// Check if it's a duplicate user error
 		if strings.Contains(err.Error(), "user already exists") || strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return SignUpResponse{
-				StatusCode: http.StatusConflict,
-				Error:      "User already exists",
-			}
+			writeJSON(w, http.StatusConflict, SignUpResponse{StatusCode: http.StatusConflict, Error: "User already exists"})
+			return
 		}
-		return SignUpResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to create user",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignUpResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to create user"})
+		return
 	}
 
 	// Create session
 	sessionToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate session token", "error", err)
-		return SignUpResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Session token generation failed",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignUpResponse{StatusCode: http.StatusInternalServerError, Error: "Session token generation failed"})
+		return
 	}
 
 	deviceFingerprint := generateDeviceFingerprint(userAgent, ip)
@@ -322,12 +320,10 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 		CreatedAt:         time.Now(),
 	}
 
-	if err := a.storage.CreateSession(session); err != nil {
+	if err := a.storage.CreateSession(r.Context(), session); err != nil {
 		slog.Error("Failed to create session", "error", err)
-		return SignUpResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Session creation failed",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignUpResponse{StatusCode: http.StatusInternalServerError, Error: "Session creation failed"})
+		return
 	}
 
 	a.logSecurityEvent(&user.ID, "user_signup", "User successfully registered", ip, userAgent, true)
@@ -335,82 +331,66 @@ func (a *AuthService) SignUpHandler(r *http.Request) SignUpResponse {
 
 	user.PasswordHash = ""
 
-	return SignUpResponse{
-		StatusCode: http.StatusCreated,
-		Token:      sessionToken,
-		User:       user,
-	}
+	writeJSON(w, http.StatusCreated, SignUpResponse{StatusCode: http.StatusCreated, Token: sessionToken,
+		User: user})
+	return
 }
 
 // SignInHandler processes user authentication requests
-func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
+func (a *AuthService) SignInHandler(w http.ResponseWriter, r *http.Request) {
 	var req SignInRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		slog.Debug("Failed to decode signin request", "error", err)
-		return SignInResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, SignInResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
 		slog.Debug("Signin validation failed", "error", err)
-		return SignInResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, SignInResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
 	}
 
 	ip := extractIP(r)
 	userAgent := r.UserAgent()
 
-	user, err := a.storage.GetUserByEmail(req.Email, "email")
+	user, err := a.storage.GetUserByEmail(r.Context(), req.Email, "email")
 	if err != nil {
 		slog.Error("Failed to get user", "error", err)
-		return SignInResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Database error while retrieving user",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignInResponse{StatusCode: http.StatusInternalServerError, Error: "Database error while retrieving user"})
+		return
 	}
 
 	if user == nil {
 		a.logSecurityEvent(nil, "login_failed", "Login attempt for non-existent user", ip, userAgent, false)
-		return SignInResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Invalid credentials",
-		}
+		writeJSON(w, http.StatusUnauthorized, SignInResponse{StatusCode: http.StatusUnauthorized, Error: "Invalid credentials"})
+		return
 	}
 
 	if !user.IsActive || user.IsSuspended {
 		a.logSecurityEvent(&user.ID, "login_failed", "Login attempt on inactive/suspended account", ip, userAgent, false)
-		return SignInResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Account is not active",
-		}
+		writeJSON(w, http.StatusUnauthorized, SignInResponse{StatusCode: http.StatusUnauthorized, Error: "Account is not active"})
+		return
 	}
 
-	security, err := a.storage.GetUserSecurity(user.ID)
+	security, err := a.storage.GetUserSecurity(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("Failed to get user security", "error", err)
-		return SignInResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Database error while retrieving user security",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignInResponse{StatusCode: http.StatusInternalServerError, Error: "Database error while retrieving user security"})
+		return
 	}
 
 	// Check if account is locked
 	if security != nil && security.LockedUntil != nil && time.Now().Before(*security.LockedUntil) {
 		a.logSecurityEvent(&user.ID, "login_failed", "Login attempt on locked account", ip, userAgent, false)
-		return SignInResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Account is temporarily locked",
-		}
+		writeJSON(w, http.StatusUnauthorized, SignInResponse{StatusCode: http.StatusUnauthorized, Error: "Account is temporarily locked"})
+		return
 	}
 
 	// Verify password
 	if !checkPasswordHash(req.Password, user.PasswordHash) {
 		// Handle failed login (increment attempts and potentially lock account atomically)
-		wasLocked, err := a.storage.HandleFailedLogin(user.ID, a.securityConfig.MaxLoginAttempts, a.securityConfig.LockoutDuration)
+		wasLocked, err := a.storage.HandleFailedLogin(r.Context(), user.ID, a.securityConfig.MaxLoginAttempts, a.securityConfig.LockoutDuration)
 		if err != nil {
 			slog.Error("Failed to handle failed login", "error", err)
 		} else if wasLocked {
@@ -418,53 +398,45 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 		}
 
 		a.logSecurityEvent(&user.ID, "login_failed", "Invalid password provided", ip, userAgent, false)
-		return SignInResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Invalid credentials",
-		}
+		writeJSON(w, http.StatusUnauthorized, SignInResponse{StatusCode: http.StatusUnauthorized, Error: "Invalid credentials"})
+		return
 	}
 
 	// Reset login attempts on successful authentication
-	if err := a.storage.ResetLoginAttempts(user.ID); err != nil {
+	if err := a.storage.ResetLoginAttempts(r.Context(), user.ID); err != nil {
 		slog.Error("Failed to reset login attempts", "error", err)
 	}
 
 	// Update last login
-	if err := a.storage.UpdateLastLogin(user.ID, &ip); err != nil {
+	if err := a.storage.UpdateLastLogin(r.Context(), user.ID, &ip); err != nil {
 		slog.Error("Failed to update last login", "error", err)
 	}
 
 	// Check if 2FA is required
 	requires2FA := false
 	if security != nil {
-		requires2FA = security.TwoFactorEnabled || a.securityConfig.RequireTwoFactor
+		requires2FA = security.TwoFactorEnabled || *a.securityConfig.RequireTwoFactor
 	}
 
 	// Send 2FA code if required
 	if requires2FA {
 		if err := a.SendLogin2FACode(user.ID); err != nil {
 			slog.Error("Failed to send 2FA code", "error", err)
-			return SignInResponse{
-				StatusCode: http.StatusInternalServerError,
-				Error:      "Failed to send 2FA code",
-			}
+			writeJSON(w, http.StatusInternalServerError, SignInResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to send 2FA code"})
+			return
 		}
 
-		return SignInResponse{
-			StatusCode:  http.StatusOK,
-			Requires2FA: true,
-			User:        user,
-		}
+		writeJSON(w, http.StatusOK, SignInResponse{StatusCode: http.StatusOK, Requires2FA: true,
+			User: user})
+		return
 	}
 
 	// Create session
 	sessionToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate session token", "error", err)
-		return SignInResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Session token generation failed",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignInResponse{StatusCode: http.StatusInternalServerError, Error: "Session token generation failed"})
+		return
 	}
 
 	deviceFingerprint := generateDeviceFingerprint(userAgent, ip)
@@ -482,12 +454,10 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 		CreatedAt:         time.Now(),
 	}
 
-	if err := a.storage.CreateSession(session); err != nil {
+	if err := a.storage.CreateSession(r.Context(), session); err != nil {
 		slog.Error("Failed to create session", "error", err)
-		return SignInResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Session creation failed",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignInResponse{StatusCode: http.StatusInternalServerError, Error: "Session creation failed"})
+		return
 	}
 
 	// Log successful login
@@ -501,220 +471,139 @@ func (a *AuthService) SignInHandler(r *http.Request) SignInResponse {
 	refreshToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate refresh token", "error", err)
-		return SignInResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Refresh token generation failed",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignInResponse{StatusCode: http.StatusInternalServerError, Error: "Refresh token generation failed"})
+		return
 	}
 
 	refresh := &RefreshToken{
 		Token:     refreshToken,
 		UserID:    user.ID,
 		SessionID: session.ID,
-		ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
+		ExpiresAt: time.Now().Add(a.securityConfig.RefreshTokenLifetime),
 		CreatedAt: time.Now(),
 	}
 
-	if err := a.storage.CreateRefreshToken(refresh); err != nil {
+	if err := a.storage.CreateRefreshToken(r.Context(), refresh); err != nil {
 		slog.Error("Failed to create refresh token", "error", err)
-		return SignInResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Refresh token creation failed",
-		}
+		writeJSON(w, http.StatusInternalServerError, SignInResponse{StatusCode: http.StatusInternalServerError, Error: "Refresh token creation failed"})
+		return
 	}
 
-	return SignInResponse{
-		StatusCode:       http.StatusOK,
-		Token:            sessionToken,
+	writeJSON(w, http.StatusOK, SignInResponse{StatusCode: http.StatusOK, Token: sessionToken,
 		User:             user,
-		SessionID:        fmt.Sprintf("%d", session.ID),
+		SessionID:        session.ID,
 		SessionExpiresAt: expiresAt,
-		RefreshToken:     refreshToken,
-	}
+		RefreshToken:     refreshToken})
+	return
 }
 
 // ValidateHandler validates a session token and returns user information
-func (a *AuthService) ValidateHandler(r *http.Request) ValidateResponse {
-	token := extractTokenFromRequest(r)
-	if token == "" {
-		return ValidateResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "No token provided",
-		}
-	}
-
-	session, err := a.storage.GetSession(token)
-	if err != nil {
-		slog.Error("Failed to get session", "error", err)
-		return ValidateResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Database error while retrieving session",
-		}
-	}
-
-	if session == nil {
-		return ValidateResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Invalid token",
-		}
-	}
-
-	if time.Now().After(session.ExpiresAt) {
-		if err := a.storage.DeleteSession(token); err != nil {
-			slog.Error("Failed to delete expired session", "error", err)
-		}
-		return ValidateResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Token expired",
-		}
-	}
-
-	// Get user
-	user, err := a.storage.GetUserByID(session.UserID)
-	if err != nil {
-		slog.Error("Failed to get user", "error", err)
-		return ValidateResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Database error while retrieving user",
-		}
-	}
-
+func (a *AuthService) ValidateHandler(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r)
 	if user == nil {
-		return ValidateResponse{
+		writeJSON(w, http.StatusUnauthorized, ValidateResponse{
 			StatusCode: http.StatusUnauthorized,
-			Error:      "User not found",
-		}
+			Error:      "Invalid or expired session",
+		})
+		return
 	}
 
-	if !user.IsActive || user.IsSuspended {
-		return ValidateResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Account is not active",
-		}
-	}
-
-	// Update session last accessed time
-	session.LastAccessedAt = time.Now()
-	if err := a.storage.UpdateSession(session); err != nil {
-		slog.Error("Failed to update session", "error", err)
-		slog.Error("Failed to update session last accessed time", "error", err)
-	}
-
-	user.PasswordHash = ""
-
-	return ValidateResponse{
+	writeJSON(w, http.StatusOK, ValidateResponse{
 		StatusCode: http.StatusOK,
 		User:       user,
-	}
+	})
 }
 
 // LogoutHandler processes user logout requests
-func (a *AuthService) LogoutHandler(r *http.Request) LogoutResponse {
-	token := extractTokenFromRequest(r)
-	if token == "" {
-		return LogoutResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "No token provided",
-		}
+func (a *AuthService) LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r)
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, LogoutResponse{
+			StatusCode: http.StatusUnauthorized,
+			Error:      "Invalid or expired session",
+		})
+		return
 	}
 
-	if err := a.storage.DeleteSession(token); err != nil {
+	session := GetSessionFromContext(r)
+	if err := a.storage.DeleteSession(r.Context(), session.Token); err != nil {
 		slog.Error("Failed to delete session", "error", err)
-		return LogoutResponse{
+		writeJSON(w, http.StatusInternalServerError, LogoutResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Database error while deleting session",
-		}
+		})
+		return
 	}
 
 	a.logSecurityEvent(nil, "session_terminated", "User logged out", "", "", false)
 
-	return LogoutResponse{
+	writeJSON(w, http.StatusOK, LogoutResponse{
 		StatusCode: http.StatusOK,
 		Message:    "Successfully logged out",
-	}
+	})
 }
 
 // GetSessionsHandler returns all active sessions for a user
-func (a *AuthService) GetSessionsHandler(r *http.Request) GetSessionsResponse {
+func (a *AuthService) GetSessionsHandler(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r)
 	if user == nil {
-		return GetSessionsResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "User not authenticated",
-		}
+		writeJSON(w, http.StatusUnauthorized, GetSessionsResponse{StatusCode: http.StatusUnauthorized, Error: "User not authenticated"})
+		return
 	}
 
-	sessions, err := a.storage.GetUserSessions(user.ID)
+	sessions, err := a.storage.GetUserSessions(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("Failed to get user sessions", "error", err)
-		return GetSessionsResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Database error while retrieving user sessions",
-		}
+		writeJSON(w, http.StatusInternalServerError, GetSessionsResponse{StatusCode: http.StatusInternalServerError, Error: "Database error while retrieving user sessions"})
+		return
 	}
 
-	return GetSessionsResponse{
-		StatusCode: http.StatusOK,
-		Sessions:   sessions,
-	}
+	writeJSON(w, http.StatusOK, GetSessionsResponse{StatusCode: http.StatusOK, Sessions: sessions})
+	return
 }
 
 // ForgotPasswordHandler processes password reset requests
-func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordResponse {
+func (a *AuthService) ForgotPasswordHandler(w http.ResponseWriter, r *http.Request) {
 	var req ForgotPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return ForgotPasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, ForgotPasswordResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
-		return ForgotPasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, ForgotPasswordResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
 	}
 
-	if !a.securityConfig.AllowUserPasswordReset {
-		return ForgotPasswordResponse{
-			StatusCode: http.StatusForbidden,
-			Error:      "Password reset is not enabled",
-		}
+	if !*a.securityConfig.AllowUserPasswordReset {
+		writeJSON(w, http.StatusForbidden, ForgotPasswordResponse{StatusCode: http.StatusForbidden, Error: "Password reset is not enabled"})
+		return
 	}
 
-	user, err := a.storage.GetUserByEmailAnyProvider(req.Email)
+	user, err := a.storage.GetUserByEmailAnyProvider(r.Context(), req.Email)
 	if err != nil {
 		slog.Error("Failed to get user", "error", err)
-		return ForgotPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Database error while retrieving user",
-		}
+		writeJSON(w, http.StatusInternalServerError, ForgotPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Database error while retrieving user"})
+		return
 	}
 
 	if user == nil {
 		slog.Info("Password reset requested for unknown email", "email", req.Email)
-		return ForgotPasswordResponse{
-			StatusCode: http.StatusOK,
-			Message:    "If an account with this email exists, a password reset link has been sent.",
-		}
+		writeJSON(w, http.StatusOK, ForgotPasswordResponse{StatusCode: http.StatusOK, Message: "If an account with this email exists, a password reset link has been sent."})
+		return
 	}
 
 	if user.Provider != "email" {
 		slog.Info("Password reset attempted for OAuth user", "email", req.Email, "provider", user.Provider)
-		return ForgotPasswordResponse{
-			StatusCode: http.StatusOK,
-			Message:    "If an account with this email exists, a password reset link has been sent.",
-		}
+		writeJSON(w, http.StatusOK, ForgotPasswordResponse{StatusCode: http.StatusOK, Message: "If an account with this email exists, a password reset link has been sent."})
+		return
 	}
 
 	token, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate password reset token", "error", err)
-		return ForgotPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to generate reset token",
-		}
+		writeJSON(w, http.StatusInternalServerError, ForgotPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to generate reset token"})
+		return
 	}
 
 	resetToken := &PasswordResetToken{
@@ -724,12 +613,10 @@ func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordRespo
 		CreatedAt: time.Now(),
 	}
 
-	if err := a.storage.CreatePasswordResetToken(resetToken); err != nil {
+	if err := a.storage.CreatePasswordResetToken(r.Context(), resetToken); err != nil {
 		slog.Error("Failed to create password reset token", "error", err)
-		return ForgotPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to create reset token",
-		}
+		writeJSON(w, http.StatusInternalServerError, ForgotPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to create reset token"})
+		return
 	}
 
 	a.logSecurityEvent(&user.ID, "password_reset", "Password reset requested",
@@ -741,235 +628,185 @@ func (a *AuthService) ForgotPasswordHandler(r *http.Request) ForgotPasswordRespo
 		Token:      "",
 	}
 
-	if a.securityConfig.DebugMode {
+	if *a.securityConfig.DebugMode {
 		response.Token = token
 		slog.Warn("Password reset token returned in response (debug mode)", "email", req.Email)
 	}
 
-	return response
+	writeJSON(w, response.StatusCode, response)
+	return
 }
 
 // ResetPasswordHandler processes password reset confirmations
-func (a *AuthService) ResetPasswordHandler(r *http.Request) ResetPasswordResponse {
+func (a *AuthService) ResetPasswordHandler(w http.ResponseWriter, r *http.Request) {
 	var req ResetPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return ResetPasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, ResetPasswordResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
-		return ResetPasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, ResetPasswordResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
 	}
 
 	// Validate password strength
 	if err := validatePasswordStrength(req.Password, a.securityConfig); err != nil {
-		return ResetPasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      err.Error(),
-		}
+		writeJSON(w, http.StatusBadRequest, ResetPasswordResponse{StatusCode: http.StatusBadRequest, Error: err.Error()})
+		return
 	}
 
 	// Get and validate reset token
-	resetToken, err := a.storage.GetPasswordResetToken(req.Token)
+	resetToken, err := a.storage.GetPasswordResetToken(r.Context(), req.Token)
 	if err != nil || resetToken == nil {
 		slog.Warn("Invalid or expired password reset token")
-		return ResetPasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid or expired reset token",
-		}
+		writeJSON(w, http.StatusBadRequest, ResetPasswordResponse{StatusCode: http.StatusBadRequest, Error: "Invalid or expired reset token"})
+		return
 	}
 
 	// Check if token is expired
 	if time.Now().After(resetToken.ExpiresAt) {
-		return ResetPasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Reset token expired",
-		}
+		writeJSON(w, http.StatusBadRequest, ResetPasswordResponse{StatusCode: http.StatusBadRequest, Error: "Reset token expired"})
+		return
 	}
 
 	// Get user
-	user, err := a.storage.GetUserByID(resetToken.UserID)
+	user, err := a.storage.GetUserByID(r.Context(), resetToken.UserID)
 	if err != nil || user == nil {
 		slog.Error("Failed to get user", "error", err)
-		return ResetPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to retrieve user",
-		}
+		writeJSON(w, http.StatusInternalServerError, ResetPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to retrieve user"})
+		return
 	}
 
 	// Hash new password
 	hashedPassword, err := hashPassword(req.Password)
 	if err != nil {
 		slog.Error("Failed to hash new password", "error", err)
-		return ResetPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to process password",
-		}
+		writeJSON(w, http.StatusInternalServerError, ResetPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to process password"})
+		return
 	}
 
 	// Update user password
 	user.PasswordHash = hashedPassword
 	user.UpdatedAt = time.Now()
-	if err := a.storage.UpdateUser(user); err != nil {
+	if err := a.storage.UpdateUser(r.Context(), user); err != nil {
 		slog.Error("Failed to update user password", "error", err)
-		return ResetPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to update user password",
-		}
+		writeJSON(w, http.StatusInternalServerError, ResetPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to update user password"})
+		return
 	}
 
 	// Update user security info
-	security, err := a.storage.GetUserSecurity(user.ID)
+	security, err := a.storage.GetUserSecurity(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("Failed to get user security", "error", err)
-		return ResetPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to update user security",
-		}
+		writeJSON(w, http.StatusInternalServerError, ResetPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to update user security"})
+		return
 	}
 
 	now := time.Now()
 	security.PasswordChangedAt = &now
 	security.ForcePasswordChange = false
-	if err := a.storage.UpdateUserSecurity(security); err != nil {
+	if err := a.storage.UpdateUserSecurity(r.Context(), security); err != nil {
 		slog.Error("Failed to update user security", "error", err)
-		return ResetPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to update user security",
-		}
+		writeJSON(w, http.StatusInternalServerError, ResetPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to update user security"})
+		return
 	}
 
 	// Mark token as used
-	if err := a.storage.UsePasswordResetToken(req.Token); err != nil {
+	if err := a.storage.UsePasswordResetToken(r.Context(), req.Token); err != nil {
 		slog.Error("Failed to mark password reset token as used", "error", err)
-		return ResetPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to mark reset token as used",
-		}
+		writeJSON(w, http.StatusInternalServerError, ResetPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to mark reset token as used"})
+		return
 	}
 
 	// Delete all user sessions
-	if err := a.storage.DeleteUserSessions(user.ID); err != nil {
+	if err := a.storage.DeleteUserSessions(r.Context(), user.ID); err != nil {
 		slog.Error("Failed to delete user sessions", "error", err)
-		return ResetPasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to delete user sessions",
-		}
+		writeJSON(w, http.StatusInternalServerError, ResetPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to delete user sessions"})
+		return
 	}
 
 	// Log security event
 	a.logSecurityEvent(&user.ID, "password_changed", "Password reset completed",
 		extractIP(r), r.Header.Get("User-Agent"), true)
 
-	return ResetPasswordResponse{
-		StatusCode: http.StatusOK,
-		Message:    "Password has been successfully reset",
-	}
+	writeJSON(w, http.StatusOK, ResetPasswordResponse{StatusCode: http.StatusOK, Message: "Password has been successfully reset"})
+	return
 }
 
 // ChangePasswordHandler processes password change requests for authenticated users
-func (a *AuthService) ChangePasswordHandler(r *http.Request) ChangePasswordResponse {
+func (a *AuthService) ChangePasswordHandler(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r)
 	if user == nil {
-		return ChangePasswordResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "User not authenticated",
-		}
+		writeJSON(w, http.StatusUnauthorized, ChangePasswordResponse{StatusCode: http.StatusUnauthorized, Error: "User not authenticated"})
+		return
 	}
 
 	var req ChangePasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return ChangePasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, ChangePasswordResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
-		return ChangePasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
-	}
-
-	if err := a.validator.Struct(req); err != nil {
-		return ChangePasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, ChangePasswordResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
 	}
 
 	// Verify current password
 	if !checkPasswordHash(req.CurrentPassword, user.PasswordHash) {
 		a.logSecurityEvent(&user.ID, EventPasswordChanged, "Password change failed - incorrect current password provided",
 			extractIP(r), r.Header.Get("User-Agent"), false)
-		return ChangePasswordResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Incorrect current password",
-		}
+		writeJSON(w, http.StatusBadRequest, ChangePasswordResponse{StatusCode: http.StatusBadRequest, Error: "Incorrect current password"})
+		return
 	}
 
 	// Hash new password
 	hashedPassword, err := hashPassword(req.NewPassword)
 	if err != nil {
 		slog.Error("Failed to hash new password", "error", err)
-		return ChangePasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to process password",
-		}
+		writeJSON(w, http.StatusInternalServerError, ChangePasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to process password"})
+		return
 	}
 
 	// Update user password
 	user.PasswordHash = hashedPassword
 	user.UpdatedAt = time.Now()
-	if err := a.storage.UpdateUser(user); err != nil {
+	if err := a.storage.UpdateUser(r.Context(), user); err != nil {
 		slog.Error("Failed to update user password", "error", err)
-		return ChangePasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to update user password",
-		}
+		writeJSON(w, http.StatusInternalServerError, ChangePasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to update user password"})
+		return
 	}
 
 	// Update user security info
-	security, err := a.storage.GetUserSecurity(user.ID)
+	security, err := a.storage.GetUserSecurity(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("Failed to get user security", "error", err)
-		return ChangePasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to update user security",
-		}
+		writeJSON(w, http.StatusInternalServerError, ChangePasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to update user security"})
+		return
 	}
 
 	now := time.Now()
 	security.PasswordChangedAt = &now
 	security.ForcePasswordChange = false
-	if err := a.storage.UpdateUserSecurity(security); err != nil {
+	if err := a.storage.UpdateUserSecurity(r.Context(), security); err != nil {
 		slog.Error("Failed to update user security", "error", err)
-		return ChangePasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to update user security",
-		}
+		writeJSON(w, http.StatusInternalServerError, ChangePasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to update user security"})
+		return
 	}
 
 	// Delete all other user sessions (keep current session)
-	currentToken := extractTokenFromRequest(r)
-	sessions, err := a.storage.GetUserSessions(user.ID)
+	currentSession := GetSessionFromContext(r)
+	sessions, err := a.storage.GetUserSessions(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("Failed to get user sessions", "error", err)
-		return ChangePasswordResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to get user sessions",
-		}
+		writeJSON(w, http.StatusInternalServerError, ChangePasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to get user sessions"})
+		return
 	}
 
 	for _, session := range sessions {
-		if session.Token != currentToken {
-			if err := a.storage.DeleteSession(session.Token); err != nil {
+		if session.Token != currentSession.Token {
+			if err := a.storage.DeleteSession(r.Context(), session.Token); err != nil {
 				slog.Error("Failed to delete other user sessions", "error", err)
 			}
 		}
@@ -979,123 +816,106 @@ func (a *AuthService) ChangePasswordHandler(r *http.Request) ChangePasswordRespo
 	a.logSecurityEvent(&user.ID, EventPasswordChanged, "Password changed successfully",
 		extractIP(r), r.Header.Get("User-Agent"), true)
 
-	return ChangePasswordResponse{
-		StatusCode: http.StatusOK,
-		Message:    "Password has been successfully changed",
-	}
+	writeJSON(w, http.StatusOK, ChangePasswordResponse{StatusCode: http.StatusOK, Message: "Password has been successfully changed"})
+	return
 }
 
 // 2FA Handlers
 
 // Enable2FAHandler initiates 2FA enablement
-func (a *AuthService) Enable2FAHandler(r *http.Request) Enable2FAResponse {
+func (a *AuthService) Enable2FAHandler(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r)
 	if user == nil {
-		return Enable2FAResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "User not authenticated",
-		}
+		writeJSON(w, http.StatusUnauthorized, Enable2FAResponse{StatusCode: http.StatusUnauthorized, Error: "User not authenticated"})
+		return
 	}
 
 	var req Enable2FARequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return Enable2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, Enable2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
-		return Enable2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, Enable2FAResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
+	}
+
+	if a.emailService == nil {
+		writeJSON(w, http.StatusInternalServerError, Enable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Email service not configured"})
+		return
 	}
 
 	// Verify password
 	if !checkPasswordHash(req.Password, user.PasswordHash) {
-		return Enable2FAResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Invalid password",
-		}
+		writeJSON(w, http.StatusUnauthorized, Enable2FAResponse{StatusCode: http.StatusUnauthorized, Error: "Invalid password"})
+		return
 	}
 
 	// Generate and send 2FA verification code
-	if err := a.Enable2FA(user.ID); err != nil {
-		return Enable2FAResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to enable 2FA",
-		}
+	if err := a.Enable2FA(user.ID, extractIP(r)); err != nil {
+		writeJSON(w, http.StatusInternalServerError, Enable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to enable 2FA"})
+		return
 	}
 
-	return Enable2FAResponse{
-		StatusCode: http.StatusOK,
-		Message:    "2FA verification code sent to your email",
-	}
+	writeJSON(w, http.StatusOK, Enable2FAResponse{StatusCode: http.StatusOK, Message: "2FA verification code sent to your email"})
+	return
 }
 
 // VerifyEnable2FAHandler verifies 2FA enablement code and enables 2FA
-func (a *AuthService) VerifyEnable2FAHandler(r *http.Request) VerifyEnable2FAResponse {
+func (a *AuthService) VerifyEnable2FAHandler(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r)
 	if user == nil {
-		return VerifyEnable2FAResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "User not authenticated",
-		}
+		writeJSON(w, http.StatusUnauthorized, VerifyEnable2FAResponse{StatusCode: http.StatusUnauthorized, Error: "User not authenticated"})
+		return
 	}
 
 	var req VerifyEnable2FARequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return VerifyEnable2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyEnable2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
-		return VerifyEnable2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyEnable2FAResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
 	}
 
-	twoFactorCode, err := a.storage.Get2FACode(user.ID, req.Code)
+	twoFactorCode, err := a.storage.Get2FACode(r.Context(), user.ID, req.Code, "enable")
 	if err != nil || twoFactorCode == nil {
-		return VerifyEnable2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid or expired code",
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyEnable2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid or expired code"})
+		return
 	}
 
 	if twoFactorCode.CodeType != "enable" {
-		return VerifyEnable2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid code type",
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyEnable2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid code type"})
+		return
 	}
 
 	if time.Now().After(twoFactorCode.ExpiresAt) {
-		return VerifyEnable2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Code expired",
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyEnable2FAResponse{StatusCode: http.StatusBadRequest, Error: "Code expired"})
+		return
 	}
 
 	// Enable 2FA and generate backup codes
-	security, err := a.storage.GetUserSecurity(user.ID)
+	security, err := a.storage.GetUserSecurity(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("Failed to get user security", "error", err)
-		return VerifyEnable2FAResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to get user security",
-		}
+		writeJSON(w, http.StatusInternalServerError, VerifyEnable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to get user security"})
+		return
 	}
 
 	security.TwoFactorEnabled = true
 	now := time.Now()
 	security.TwoFactorVerifiedAt = &now
 
-	if err := a.storage.Use2FACode(user.ID, req.Code); err != nil {
+	if err := a.storage.UpdateUserSecurity(r.Context(), security); err != nil {
+		slog.Error("Failed to update user security", "error", err)
+		writeJSON(w, http.StatusInternalServerError, VerifyEnable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to update user security"})
+		return
+	}
+
+	if err := a.storage.Use2FACode(r.Context(), user.ID, req.Code); err != nil {
 		slog.Error("Failed to mark 2FA code as used", "error", err)
 	}
 
@@ -1103,10 +923,8 @@ func (a *AuthService) VerifyEnable2FAHandler(r *http.Request) VerifyEnable2FARes
 	backupCodes, err := a.generateBackupCodes(user.ID)
 	if err != nil {
 		slog.Error("Failed to generate backup codes", "error", err)
-		return VerifyEnable2FAResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to generate backup codes",
-		}
+		writeJSON(w, http.StatusInternalServerError, VerifyEnable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to generate backup codes"})
+		return
 	}
 
 	codeStrs := make([]string, len(backupCodes))
@@ -1117,54 +935,42 @@ func (a *AuthService) VerifyEnable2FAHandler(r *http.Request) VerifyEnable2FARes
 	a.logSecurityEvent(&user.ID, "2fa_enabled", "2FA enabled successfully",
 		extractIP(r), r.Header.Get("User-Agent"), true)
 
-	return VerifyEnable2FAResponse{
-		StatusCode:  http.StatusOK,
-		BackupCodes: codeStrs,
-		Message:     "2FA enabled successfully. Save these backup codes securely.",
-	}
+	writeJSON(w, http.StatusOK, VerifyEnable2FAResponse{StatusCode: http.StatusOK, BackupCodes: codeStrs,
+		Message: "2FA enabled successfully. Save these backup codes securely."})
+	return
 }
 
 // Disable2FAHandler disables 2FA
-func (a *AuthService) Disable2FAHandler(r *http.Request) Disable2FAResponse {
+func (a *AuthService) Disable2FAHandler(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r)
 	if user == nil {
-		return Disable2FAResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "User not authenticated",
-		}
+		writeJSON(w, http.StatusUnauthorized, Disable2FAResponse{StatusCode: http.StatusUnauthorized, Error: "User not authenticated"})
+		return
 	}
 
 	var req Disable2FARequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return Disable2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, Disable2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
-		return Disable2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, Disable2FAResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
 	}
 
 	// Verify password
 	if !checkPasswordHash(req.Password, user.PasswordHash) {
-		return Disable2FAResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Invalid password",
-		}
+		writeJSON(w, http.StatusUnauthorized, Disable2FAResponse{StatusCode: http.StatusUnauthorized, Error: "Invalid password"})
+		return
 	}
 
 	// Disable 2FA
-	security, err := a.storage.GetUserSecurity(user.ID)
+	security, err := a.storage.GetUserSecurity(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("Failed to get user security", "error", err)
-		return Disable2FAResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to get user security",
-		}
+		writeJSON(w, http.StatusInternalServerError, Disable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to get user security"})
+		return
 	}
 
 	security.TwoFactorEnabled = false
@@ -1172,38 +978,35 @@ func (a *AuthService) Disable2FAHandler(r *http.Request) Disable2FAResponse {
 	security.TwoFactorBackupCodes = ""
 	security.TwoFactorVerifiedAt = nil
 
-	if err := a.storage.UpdateUserSecurity(security); err != nil {
+	if err := a.storage.UpdateUserSecurity(r.Context(), security); err != nil {
 		slog.Error("Failed to update user security", "error", err)
-		return Disable2FAResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to update user security",
-		}
+		writeJSON(w, http.StatusInternalServerError, Disable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to update user security"})
+		return
 	}
 
 	a.logSecurityEvent(&user.ID, "2fa_disabled", "2FA disabled",
 		extractIP(r), r.Header.Get("User-Agent"), true)
 
-	return Disable2FAResponse{
-		StatusCode: http.StatusOK,
-		Message:    "2FA disabled successfully",
-	}
+	writeJSON(w, http.StatusOK, Disable2FAResponse{StatusCode: http.StatusOK, Message: "2FA disabled successfully"})
+	return
 }
 
 // VerifyLogin2FAHandler verifies 2FA during login
-func (a *AuthService) VerifyLogin2FAHandler(r *http.Request) VerifyLogin2FAResponse {
+func (a *AuthService) VerifyLogin2FAHandler(w http.ResponseWriter, r *http.Request) {
 	var req VerifyLogin2FARequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return VerifyLogin2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyLogin2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
-		return VerifyLogin2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyLogin2FAResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
+	}
+
+	if a.emailService == nil {
+		writeJSON(w, http.StatusInternalServerError, VerifyLogin2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Email service not configured"})
+		return
 	}
 
 	code := req.Code
@@ -1213,86 +1016,74 @@ func (a *AuthService) VerifyLogin2FAHandler(r *http.Request) VerifyLogin2FARespo
 	// Check if it's a backup code
 	if len(code) > 10 {
 		// For backup codes, we need the user ID from the code
-		backupCode, err := a.storage.GetBackupCodeByCode(code)
+		backupCode, err := a.storage.GetBackupCodeByCode(r.Context(), code)
 		if err != nil || backupCode == nil {
-			return VerifyLogin2FAResponse{
-				StatusCode: http.StatusBadRequest,
-				Error:      "Invalid backup code",
-			}
+			writeJSON(w, http.StatusBadRequest, VerifyLogin2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid backup code"})
+			return
 		}
 
-		if err := a.storage.Use2FABackupCode(backupCode.UserID, code); err != nil {
-			return VerifyLogin2FAResponse{
-				StatusCode: http.StatusBadRequest,
-				Error:      "Invalid backup code",
-			}
+		if err := a.storage.Use2FABackupCode(r.Context(), backupCode.UserID, code); err != nil {
+			writeJSON(w, http.StatusBadRequest, VerifyLogin2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid backup code"})
+			return
 		}
 
-		user, err := a.storage.GetUserByID(backupCode.UserID)
+		user, err := a.storage.GetUserByID(r.Context(), backupCode.UserID)
 		if err != nil || user == nil {
-			return VerifyLogin2FAResponse{
-				StatusCode: http.StatusInternalServerError,
-				Error:      "User not found",
-			}
+			writeJSON(w, http.StatusInternalServerError, VerifyLogin2FAResponse{StatusCode: http.StatusInternalServerError, Error: "User not found"})
+			return
 		}
 
 		a.logSecurityEvent(&user.ID, "2fa_backup_code_used", "Backup code used for login", ip, userAgent, true)
 
-		return a.createSessionAndResponse(user, ip, userAgent)
+		resp := a.createSessionAndResponse(r.Context(), user, ip, userAgent)
+		writeJSON(w, resp.StatusCode, resp)
+		return
 	}
 
 	// For regular 2FA codes, we need to find the user
 	// This requires either storing the user ID with the code or using a temporary session
 	// For now, let's assume the code is stored with the user ID
-	twoFactorCode, err := a.storage.GetLatestPending2FACode(code)
+	twoFactorCode, err := a.storage.GetLatestPending2FACode(r.Context(), code, "login")
 	if err != nil || twoFactorCode == nil {
-		return VerifyLogin2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid or expired 2FA code",
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyLogin2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid or expired 2FA code"})
+		return
 	}
 
 	if twoFactorCode.CodeType != "login" {
-		return VerifyLogin2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid code type",
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyLogin2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid code type"})
+		return
 	}
 
 	if time.Now().After(twoFactorCode.ExpiresAt) {
-		return VerifyLogin2FAResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Code expired",
-		}
+		writeJSON(w, http.StatusBadRequest, VerifyLogin2FAResponse{StatusCode: http.StatusBadRequest, Error: "Code expired"})
+		return
 	}
 
 	// Mark code as used
-	if err := a.storage.Use2FACode(twoFactorCode.UserID, code); err != nil {
+	if err := a.storage.Use2FACode(r.Context(), twoFactorCode.UserID, code); err != nil {
 		slog.Error("Failed to mark 2FA code as used", "error", err)
 	}
 
-	user, err := a.storage.GetUserByID(twoFactorCode.UserID)
+	user, err := a.storage.GetUserByID(r.Context(), twoFactorCode.UserID)
 	if err != nil || user == nil {
-		return VerifyLogin2FAResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "User not found",
-		}
+		writeJSON(w, http.StatusInternalServerError, VerifyLogin2FAResponse{StatusCode: http.StatusInternalServerError, Error: "User not found"})
+		return
 	}
 
 	if !user.IsActive || user.IsSuspended {
-		return VerifyLogin2FAResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Account is not active",
-		}
+		writeJSON(w, http.StatusUnauthorized, VerifyLogin2FAResponse{StatusCode: http.StatusUnauthorized, Error: "Account is not active"})
+		return
 	}
 
 	a.logSecurityEvent(&user.ID, "2fa_verified", "2FA verified successfully", ip, userAgent, true)
 
-	return a.createSessionAndResponse(user, ip, userAgent)
+	resp := a.createSessionAndResponse(r.Context(), user, ip, userAgent)
+	writeJSON(w, resp.StatusCode, resp)
+	return
 }
 
 // createSessionAndResponse is a helper to create a session and return response
-func (a *AuthService) createSessionAndResponse(user *User, ip, userAgent string) VerifyLogin2FAResponse {
+func (a *AuthService) createSessionAndResponse(ctx context.Context, user *User, ip, userAgent string) VerifyLogin2FAResponse {
 	sessionToken, err := GenerateSecureToken(32)
 	if err != nil {
 		return VerifyLogin2FAResponse{
@@ -1316,7 +1107,7 @@ func (a *AuthService) createSessionAndResponse(user *User, ip, userAgent string)
 		CreatedAt:         time.Now(),
 	}
 
-	if err := a.storage.CreateSession(session); err != nil {
+	if err := a.storage.CreateSession(ctx, session); err != nil {
 		return VerifyLogin2FAResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Session creation failed",
@@ -1333,22 +1124,18 @@ func (a *AuthService) createSessionAndResponse(user *User, ip, userAgent string)
 }
 
 // GetBackupCodesHandler returns all backup codes for a user
-func (a *AuthService) GetBackupCodesHandler(r *http.Request) GetBackupCodesResponse {
+func (a *AuthService) GetBackupCodesHandler(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r)
 	if user == nil {
-		return GetBackupCodesResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "User not authenticated",
-		}
+		writeJSON(w, http.StatusUnauthorized, GetBackupCodesResponse{StatusCode: http.StatusUnauthorized, Error: "User not authenticated"})
+		return
 	}
 
 	backupCodes, err := a.GetBackupCodes(user.ID)
 	if err != nil {
 		slog.Error("Failed to get backup codes", "error", err)
-		return GetBackupCodesResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to get backup codes",
-		}
+		writeJSON(w, http.StatusInternalServerError, GetBackupCodesResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to get backup codes"})
+		return
 	}
 
 	codeStrs := make([]string, len(backupCodes))
@@ -1356,53 +1143,41 @@ func (a *AuthService) GetBackupCodesHandler(r *http.Request) GetBackupCodesRespo
 		codeStrs[i] = code.Code
 	}
 
-	return GetBackupCodesResponse{
-		StatusCode: http.StatusOK,
-		Codes:      codeStrs,
-	}
+	writeJSON(w, http.StatusOK, GetBackupCodesResponse{StatusCode: http.StatusOK, Codes: codeStrs})
+	return
 }
 
 // RegenerateBackupCodesHandler generates new backup codes and invalidates old ones
-func (a *AuthService) RegenerateBackupCodesHandler(r *http.Request) RegenerateBackupCodesResponse {
+func (a *AuthService) RegenerateBackupCodesHandler(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r)
 	if user == nil {
-		return RegenerateBackupCodesResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "User not authenticated",
-		}
+		writeJSON(w, http.StatusUnauthorized, RegenerateBackupCodesResponse{StatusCode: http.StatusUnauthorized, Error: "User not authenticated"})
+		return
 	}
 
 	// Verify password first
 	var req RegenerateBackupCodesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return RegenerateBackupCodesResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, RegenerateBackupCodesResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
-		return RegenerateBackupCodesResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, RegenerateBackupCodesResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
 	}
 
 	// Verify password
 	if !checkPasswordHash(req.Password, user.PasswordHash) {
-		return RegenerateBackupCodesResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Invalid password",
-		}
+		writeJSON(w, http.StatusUnauthorized, RegenerateBackupCodesResponse{StatusCode: http.StatusUnauthorized, Error: "Invalid password"})
+		return
 	}
 
 	// Regenerate backup codes
 	backupCodes, err := a.RegenerateBackupCodes(user.ID)
 	if err != nil {
-		return RegenerateBackupCodesResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to regenerate backup codes",
-		}
+		writeJSON(w, http.StatusInternalServerError, RegenerateBackupCodesResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to regenerate backup codes"})
+		return
 	}
 
 	codeStrs := make([]string, len(backupCodes))
@@ -1410,75 +1185,57 @@ func (a *AuthService) RegenerateBackupCodesHandler(r *http.Request) RegenerateBa
 		codeStrs[i] = code.Code
 	}
 
-	return RegenerateBackupCodesResponse{
-		StatusCode: http.StatusOK,
-		Codes:      codeStrs,
-		Message:    "Backup codes regenerated. Save them securely.",
-	}
+	writeJSON(w, http.StatusOK, RegenerateBackupCodesResponse{StatusCode: http.StatusOK, Codes: codeStrs,
+		Message: "Backup codes regenerated. Save them securely."})
+	return
 }
 
 // RefreshTokenHandler exchanges refresh token for new session token
-func (a *AuthService) RefreshTokenHandler(r *http.Request) RefreshTokenResponse {
+func (a *AuthService) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 	var req RefreshTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return RefreshTokenResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      "Invalid request format",
-		}
+		writeJSON(w, http.StatusBadRequest, RefreshTokenResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
 	}
 
 	if err := a.validator.Struct(req); err != nil {
-		return RefreshTokenResponse{
-			StatusCode: http.StatusBadRequest,
-			Error:      formatValidationErrors(err),
-		}
+		writeJSON(w, http.StatusBadRequest, RefreshTokenResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
 	}
 
-	refreshToken, err := a.storage.GetRefreshToken(req.RefreshToken)
+	refreshToken, err := a.storage.GetRefreshToken(r.Context(), req.RefreshToken)
 	if err != nil || refreshToken == nil {
-		return RefreshTokenResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Invalid refresh token",
-		}
+		writeJSON(w, http.StatusUnauthorized, RefreshTokenResponse{StatusCode: http.StatusUnauthorized, Error: "Invalid refresh token"})
+		return
 	}
 
 	if time.Now().After(refreshToken.ExpiresAt) {
-		return RefreshTokenResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Refresh token expired",
-		}
+		writeJSON(w, http.StatusUnauthorized, RefreshTokenResponse{StatusCode: http.StatusUnauthorized, Error: "Refresh token expired"})
+		return
 	}
 
-	user, err := a.storage.GetUserByID(refreshToken.UserID)
+	user, err := a.storage.GetUserByID(r.Context(), refreshToken.UserID)
 	if err != nil || user == nil {
-		return RefreshTokenResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "User not found",
-		}
+		writeJSON(w, http.StatusUnauthorized, RefreshTokenResponse{StatusCode: http.StatusUnauthorized, Error: "User not found"})
+		return
 	}
 
 	if !user.IsActive || user.IsSuspended {
-		return RefreshTokenResponse{
-			StatusCode: http.StatusUnauthorized,
-			Error:      "Account is not active",
-		}
+		writeJSON(w, http.StatusUnauthorized, RefreshTokenResponse{StatusCode: http.StatusUnauthorized, Error: "Account is not active"})
+		return
 	}
 
 	sessionToken, err := GenerateSecureToken(32)
 	if err != nil {
-		return RefreshTokenResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to generate session token",
-		}
+		writeJSON(w, http.StatusInternalServerError, RefreshTokenResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to generate session token"})
+		return
 	}
 
 	// Create new session
 	sessionToken, err = GenerateSecureToken(32)
 	if err != nil {
-		return RefreshTokenResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Failed to generate session token",
-		}
+		writeJSON(w, http.StatusInternalServerError, RefreshTokenResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to generate session token"})
+		return
 	}
 
 	ip := extractIP(r)
@@ -1498,26 +1255,22 @@ func (a *AuthService) RefreshTokenHandler(r *http.Request) RefreshTokenResponse 
 		CreatedAt:         time.Now(),
 	}
 
-	if err := a.storage.CreateSession(session); err != nil {
-		return RefreshTokenResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "Session creation failed",
-		}
+	if err := a.storage.CreateSession(r.Context(), session); err != nil {
+		writeJSON(w, http.StatusInternalServerError, RefreshTokenResponse{StatusCode: http.StatusInternalServerError, Error: "Session creation failed"})
+		return
 	}
 
 	// Update refresh token with new session ID
 	refreshToken.SessionID = session.ID
 	now := time.Now()
 	refreshToken.LastUsedAt = &now
-	if err := a.storage.UpdateRefreshToken(refreshToken); err != nil {
+	if err := a.storage.UpdateRefreshToken(r.Context(), refreshToken); err != nil {
 		slog.Error("Failed to update refresh token", "error", err)
 	}
 
 	user.PasswordHash = ""
 
-	return RefreshTokenResponse{
-		StatusCode:  http.StatusOK,
-		AccessToken: sessionToken,
-		User:        user,
-	}
+	writeJSON(w, http.StatusOK, RefreshTokenResponse{StatusCode: http.StatusOK, AccessToken: sessionToken,
+		User: user})
+	return
 }

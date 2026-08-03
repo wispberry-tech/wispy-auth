@@ -22,34 +22,37 @@ type OAuthUser struct {
 }
 
 // OAuthInitHandler initiates OAuth flow for a given provider
-func (a *AuthService) OAuthInitHandler(r *http.Request, provider string) OAuthResponse {
+func (a *AuthService) OAuthInitHandler(w http.ResponseWriter, r *http.Request, provider string) {
 	// Check if provider is supported
 	oauthConfig, exists := a.oauthConfigs[provider]
 	if !exists {
 		slog.Debug("Unsupported OAuth provider", "provider", provider)
-		return OAuthResponse{
+		writeJSON(w, http.StatusBadRequest, OAuthResponse{
 			StatusCode: http.StatusBadRequest,
 			Error:      "Unsupported OAuth provider",
-		}
+		})
+		return
 	}
 
 	// Generate state and CSRF tokens for security
 	stateToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate state token", "error", err)
-		return OAuthResponse{
+		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "State token generation failed",
-		}
+		})
+		return
 	}
 
 	csrfToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate CSRF token", "error", err)
-		return OAuthResponse{
+		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "CSRF token generation failed",
-		}
+		})
+		return
 	}
 
 	// Store OAuth state in database
@@ -58,15 +61,16 @@ func (a *AuthService) OAuthInitHandler(r *http.Request, provider string) OAuthRe
 		CSRF:        csrfToken,
 		Provider:    provider,
 		RedirectURL: r.URL.Query().Get("redirect_url"),
-		ExpiresAt:   time.Now().Add(15 * time.Minute), // 15 minute expiry
+		ExpiresAt:   time.Now().Add(a.securityConfig.OAuthStateExpiry),
 	}
 
-	if err := a.storage.StoreOAuthState(oauthState); err != nil {
+	if err := a.storage.StoreOAuthState(r.Context(), oauthState); err != nil {
 		slog.Error("Failed to store OAuth state", "error", err)
-		return OAuthResponse{
+		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "OAuth state storage failed",
-		}
+		})
+		return
 	}
 
 	// Generate OAuth URL
@@ -74,22 +78,23 @@ func (a *AuthService) OAuthInitHandler(r *http.Request, provider string) OAuthRe
 
 	slog.Debug("OAuth flow initiated", "provider", provider)
 
-	return OAuthResponse{
+	writeJSON(w, http.StatusOK, OAuthResponse{
 		StatusCode: http.StatusOK,
 		URL:        url,
-	}
+	})
 }
 
 // OAuthCallbackHandler handles OAuth callbacks from providers
-func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAuthResponse {
+func (a *AuthService) OAuthCallbackHandler(w http.ResponseWriter, r *http.Request, provider string) {
 	// Get OAuth configuration
 	oauthConfig, exists := a.oauthConfigs[provider]
 	if !exists {
 		slog.Debug("Unsupported OAuth provider", "provider", provider)
-		return OAuthResponse{
+		writeJSON(w, http.StatusBadRequest, OAuthResponse{
 			StatusCode: http.StatusBadRequest,
 			Error:      "Unsupported OAuth provider",
-		}
+		})
+		return
 	}
 
 	// Get state and code from query parameters
@@ -98,41 +103,45 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 
 	if state == "" || code == "" {
 		slog.Debug("Missing state or code in OAuth callback")
-		return OAuthResponse{
+		writeJSON(w, http.StatusBadRequest, OAuthResponse{
 			StatusCode: http.StatusBadRequest,
 			Error:      "Missing state or code parameter",
-		}
+		})
+		return
 	}
 
 	// Verify state token
-	storedState, err := a.storage.GetOAuthState(state)
+	storedState, err := a.storage.GetOAuthState(r.Context(), state)
 	if err != nil {
 		slog.Error("Failed to get OAuth state", "error", err)
-		return OAuthResponse{
+		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "OAuth state retrieval failed",
-		}
+		})
+		return
 	}
 
 	if storedState == nil {
 		slog.Debug("Invalid OAuth state", "state", state)
-		return OAuthResponse{
+		writeJSON(w, http.StatusBadRequest, OAuthResponse{
 			StatusCode: http.StatusBadRequest,
 			Error:      "Invalid state parameter",
-		}
+		})
+		return
 	}
 
 	// Check if state is expired
 	if time.Now().After(storedState.ExpiresAt) {
 		slog.Debug("Expired OAuth state", "state", state)
-		return OAuthResponse{
+		writeJSON(w, http.StatusBadRequest, OAuthResponse{
 			StatusCode: http.StatusBadRequest,
 			Error:      "State parameter expired",
-		}
+		})
+		return
 	}
 
 	// Clean up OAuth state
-	if err := a.storage.DeleteOAuthState(state); err != nil {
+	if err := a.storage.DeleteOAuthState(r.Context(), state); err != nil {
 		slog.Error("Failed to delete OAuth state", "error", err)
 	}
 
@@ -141,41 +150,45 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 	token, err := oauthConfig.Exchange(ctx, code)
 	if err != nil {
 		slog.Error("Failed to exchange OAuth code", "error", err)
-		return OAuthResponse{
+		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Failed to exchange authorization code",
-		}
+		})
+		return
 	}
 
 	// Get user info from provider
 	oauthUser, err := a.fetchOAuthUserInfo(ctx, provider, token.AccessToken)
 	if err != nil {
 		slog.Error("Failed to fetch OAuth user info", "error", err)
-		return OAuthResponse{
+		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Failed to fetch user information",
-		}
+		})
+		return
 	}
 
 	if oauthUser.Email == "" {
 		slog.Debug("OAuth user has no email", "provider", provider, "user_id", oauthUser.ID)
-		return OAuthResponse{
+		writeJSON(w, http.StatusBadRequest, OAuthResponse{
 			StatusCode: http.StatusBadRequest,
 			Error:      "Email is required from OAuth provider",
-		}
+		})
+		return
 	}
 
 	ip := extractIP(r)
 	userAgent := r.UserAgent()
 
 	// Check if user exists
-	existingUser, err := a.storage.GetUserByProviderID(provider, oauthUser.ID)
+	existingUser, err := a.storage.GetUserByProviderID(r.Context(), provider, oauthUser.ID)
 	if err != nil {
 		slog.Error("Failed to get user by provider ID", "error", err)
-		return OAuthResponse{
+		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Database error while checking OAuth user",
-		}
+		})
+		return
 	}
 
 	var user *User
@@ -183,13 +196,14 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 
 	if existingUser == nil {
 		// Check if user exists with same email but different provider
-		existingEmailUser, err := a.storage.GetUserByEmailAnyProvider(oauthUser.Email)
+		existingEmailUser, err := a.storage.GetUserByEmailAnyProvider(r.Context(), oauthUser.Email)
 		if err != nil {
 			slog.Error("Failed to check existing email", "error", err)
-			return OAuthResponse{
+			writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 				StatusCode: http.StatusInternalServerError,
 				Error:      "Database error while checking existing email",
-			}
+			})
+			return
 		}
 
 		if existingEmailUser != nil {
@@ -199,12 +213,13 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 			existingEmailUser.AvatarURL = oauthUser.AvatarURL
 			existingEmailUser.EmailVerified = true // OAuth emails are typically verified
 
-			if err := a.storage.UpdateUser(existingEmailUser); err != nil {
+			if err := a.storage.UpdateUser(r.Context(), existingEmailUser); err != nil {
 				slog.Error("Failed to update user with OAuth info", "error", err)
-				return OAuthResponse{
+				writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 					StatusCode: http.StatusInternalServerError,
 					Error:      "Failed to link account",
-				}
+				})
+				return
 			}
 
 			user = existingEmailUser
@@ -236,12 +251,13 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 			}
 
 			// Create user and security record atomically in a transaction
-			if err := a.storage.CreateUserWithSecurity(user, userSecurity); err != nil {
+			if err := a.storage.CreateUserWithSecurity(r.Context(), user, userSecurity); err != nil {
 				slog.Error("Failed to create OAuth user with security", "error", err)
-				return OAuthResponse{
+				writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 					StatusCode: http.StatusInternalServerError,
 					Error:      "Failed to create user account",
-				}
+				})
+				return
 			}
 
 			isNewUser = true
@@ -252,12 +268,13 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 		user = existingUser
 		user.AvatarURL = oauthUser.AvatarURL // Update avatar URL
 
-		if err := a.storage.UpdateUser(user); err != nil {
+		if err := a.storage.UpdateUser(r.Context(), user); err != nil {
 			slog.Error("Failed to update OAuth user", "error", err)
-			return OAuthResponse{
+			writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 				StatusCode: http.StatusInternalServerError,
 				Error:      "Failed to update user account",
-			}
+			})
+			return
 		}
 	}
 
@@ -265,14 +282,15 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 	if !user.IsActive || user.IsSuspended {
 		slog.Debug("OAuth user account is inactive", "user_id", user.ID)
 		a.logSecurityEvent(&user.ID, "oauth_login_failed", "OAuth login attempt on inactive account", ip, userAgent, false)
-		return OAuthResponse{
+		writeJSON(w, http.StatusUnauthorized, OAuthResponse{
 			StatusCode: http.StatusUnauthorized,
 			Error:      "Account is not active",
-		}
+		})
+		return
 	}
 
 	// Update last login
-	if err := a.storage.UpdateLastLogin(user.ID, &ip); err != nil {
+	if err := a.storage.UpdateLastLogin(r.Context(), user.ID, &ip); err != nil {
 		slog.Error("Failed to update last login", "error", err)
 	}
 
@@ -280,10 +298,11 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 	sessionToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate session token", "error", err)
-		return OAuthResponse{
+		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Session token generation failed",
-		}
+		})
+		return
 	}
 
 	deviceFingerprint := generateDeviceFingerprint(userAgent, ip)
@@ -298,12 +317,13 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 		LastAccessedAt:    time.Now(),
 	}
 
-	if err := a.storage.CreateSession(session); err != nil {
+	if err := a.storage.CreateSession(r.Context(), session); err != nil {
 		slog.Error("Failed to create session", "error", err)
-		return OAuthResponse{
+		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Session creation failed",
-		}
+		})
+		return
 	}
 
 	// Log successful OAuth login
@@ -318,12 +338,12 @@ func (a *AuthService) OAuthCallbackHandler(r *http.Request, provider string) OAu
 	// Clear password hash from response
 	user.PasswordHash = ""
 
-	return OAuthResponse{
+	writeJSON(w, http.StatusOK, OAuthResponse{
 		StatusCode: http.StatusOK,
 		Token:      sessionToken,
 		User:       user,
 		IsNewUser:  isNewUser,
-	}
+	})
 }
 
 // fetchOAuthUserInfo fetches user information from OAuth providers
