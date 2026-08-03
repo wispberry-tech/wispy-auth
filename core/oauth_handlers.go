@@ -21,6 +21,21 @@ type OAuthUser struct {
 	Username  string `json:"username,omitempty"`
 }
 
+// OAuthUserParser parses a provider's user-info response into an OAuthUser.
+type OAuthUserParser func(ctx context.Context, resp *http.Response, accessToken string) (*OAuthUser, error)
+
+// defaultOAuthUserParsers maps provider names to their built-in parsers.
+var defaultOAuthUserParsers = map[string]OAuthUserParser{
+	"google":  parseGoogleUser,
+	"github":  parseGitHubUser,
+	"discord": parseDiscordUser,
+}
+
+// RegisterOAuthUserParser registers a custom parser for an OAuth provider.
+func (a *AuthService) RegisterOAuthUserParser(provider string, parser OAuthUserParser) {
+	a.oauthUserParsers[provider] = parser
+}
+
 // OAuthInitHandler initiates OAuth flow for a given provider
 func (a *AuthService) OAuthInitHandler(w http.ResponseWriter, r *http.Request, provider string) {
 	// Check if provider is supported
@@ -381,20 +396,15 @@ func (a *AuthService) fetchOAuthUserInfo(ctx context.Context, provider, accessTo
 	}
 
 	// Parse response based on provider
-	switch provider {
-	case "google":
-		return a.parseGoogleUser(resp)
-	case "github":
-		return a.parseGitHubUser(ctx, resp, accessToken)
-	case "discord":
-		return a.parseDiscordUser(resp)
-	default:
+	parser, ok := a.oauthUserParsers[provider]
+	if !ok {
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
+	return parser(ctx, resp, accessToken)
 }
 
 // parseGoogleUser parses Google OAuth user information
-func (a *AuthService) parseGoogleUser(resp *http.Response) (*OAuthUser, error) {
+func parseGoogleUser(_ context.Context, resp *http.Response, _ string) (*OAuthUser, error) {
 	var googleUser struct {
 		ID        string `json:"id"`
 		Email     string `json:"email"`
@@ -419,7 +429,7 @@ func (a *AuthService) parseGoogleUser(resp *http.Response) (*OAuthUser, error) {
 }
 
 // parseGitHubUser parses GitHub OAuth user information
-func (a *AuthService) parseGitHubUser(ctx context.Context, resp *http.Response, accessToken string) (*OAuthUser, error) {
+func parseGitHubUser(ctx context.Context, resp *http.Response, accessToken string) (*OAuthUser, error) {
 	var githubUser struct {
 		ID        int64  `json:"id"`
 		Login     string `json:"login"`
@@ -434,7 +444,7 @@ func (a *AuthService) parseGitHubUser(ctx context.Context, resp *http.Response, 
 
 	// GitHub might not return email in the user endpoint, fetch from emails endpoint
 	if githubUser.Email == "" {
-		email, err := a.fetchGitHubUserEmail(ctx, accessToken)
+		email, err := fetchGitHubUserEmail(ctx, accessToken)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch GitHub user email: %w", err)
 		}
@@ -451,7 +461,7 @@ func (a *AuthService) parseGitHubUser(ctx context.Context, resp *http.Response, 
 }
 
 // parseDiscordUser parses Discord OAuth user information
-func (a *AuthService) parseDiscordUser(resp *http.Response) (*OAuthUser, error) {
+func parseDiscordUser(_ context.Context, resp *http.Response, _ string) (*OAuthUser, error) {
 	var discordUser struct {
 		ID       string `json:"id"`
 		Username string `json:"username"`
@@ -479,7 +489,7 @@ func (a *AuthService) parseDiscordUser(resp *http.Response) (*OAuthUser, error) 
 }
 
 // fetchGitHubUserEmail fetches primary email from GitHub emails endpoint
-func (a *AuthService) fetchGitHubUserEmail(ctx context.Context, accessToken string) (string, error) {
+func fetchGitHubUserEmail(ctx context.Context, accessToken string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user/emails", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)

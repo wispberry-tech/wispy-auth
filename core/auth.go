@@ -42,6 +42,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"time"
 
@@ -392,6 +393,7 @@ type AuthService struct {
 	emailService    EmailService
 	cleanupInterval time.Duration
 	cleanupDone     chan struct{}
+	oauthUserParsers map[string]OAuthUserParser
 }
 
 // validateSecurityConfig validates that the security configuration is sensible
@@ -596,6 +598,7 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 		emailService:    cfg.EmailService,
 		cleanupInterval: securityConfig.CleanupInterval,
 		cleanupDone:     make(chan struct{}),
+		oauthUserParsers: maps.Clone(defaultOAuthUserParsers),
 	}
 
 	// Initialize rate limiter if enabled
