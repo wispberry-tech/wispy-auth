@@ -32,6 +32,11 @@ func NewSQLiteStorageFromDB(db *sql.DB) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
+	// Apply schema (idempotent)
+	if _, err := db.Exec(SQLiteSchemaSQL()); err != nil {
+		return nil, fmt.Errorf("failed to apply schema: %w", err)
+	}
+
 	s := &SQLiteStorage{db: db}
 
 	return s, nil
@@ -325,21 +330,21 @@ func (s *SQLiteStorage) GetUserSecurity(ctx context.Context, userID uint) (*User
 	query := `SELECT user_id, login_attempts, locked_until, last_login_at, last_login_ip,
 			  last_failed_login_at, last_failed_login_ip, password_changed_at,
 			  force_password_change, two_factor_enabled, two_factor_secret,
-			  two_factor_backup_codes, two_factor_verified_at, concurrent_sessions,
+			  two_factor_verified_at, concurrent_sessions,
 			  last_session_token, device_fingerprint, known_devices,
 			  security_version, risk_score, suspicious_activity_count,
 			  created_at, updated_at
 			  FROM user_security WHERE user_id = ?`
 
 	// Use sql.NullString for nullable string fields
-	var lastLoginIP, lastFailedLoginIP, twoFactorSecret, twoFactorBackupCodes sql.NullString
+	var lastLoginIP, lastFailedLoginIP, twoFactorSecret sql.NullString
 	var lastSessionToken, deviceFingerprint, knownDevices sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, userID).Scan(
 		&security.UserID, &security.LoginAttempts, &security.LockedUntil,
 		&security.LastLoginAt, &lastLoginIP, &security.LastFailedLoginAt,
 		&lastFailedLoginIP, &security.PasswordChangedAt, &security.ForcePasswordChange,
-		&security.TwoFactorEnabled, &twoFactorSecret, &twoFactorBackupCodes,
+		&security.TwoFactorEnabled, &twoFactorSecret,
 		&security.TwoFactorVerifiedAt, &security.ConcurrentSessions, &lastSessionToken,
 		&deviceFingerprint, &knownDevices, &security.SecurityVersion,
 		&security.RiskScore, &security.SuspiciousActivityCount, &security.CreatedAt, &security.UpdatedAt)
@@ -361,9 +366,6 @@ func (s *SQLiteStorage) GetUserSecurity(ctx context.Context, userID uint) (*User
 	if twoFactorSecret.Valid {
 		security.TwoFactorSecret = twoFactorSecret.String
 	}
-	if twoFactorBackupCodes.Valid {
-		security.TwoFactorBackupCodes = twoFactorBackupCodes.String
-	}
 	if lastSessionToken.Valid {
 		security.LastSessionToken = lastSessionToken.String
 	}
@@ -381,7 +383,7 @@ func (s *SQLiteStorage) UpdateUserSecurity(ctx context.Context, security *UserSe
 	query := `UPDATE user_security SET login_attempts = ?, locked_until = ?,
 			  last_login_at = ?, last_login_ip = ?, last_failed_login_at = ?,
 			  last_failed_login_ip = ?, password_changed_at = ?, force_password_change = ?,
-			  two_factor_enabled = ?, two_factor_secret = ?, two_factor_backup_codes = ?,
+			  two_factor_enabled = ?, two_factor_secret = ?,
 			  two_factor_verified_at = ?, concurrent_sessions = ?, last_session_token = ?,
 			  device_fingerprint = ?, known_devices = ?, security_version = ?,
 			  risk_score = ?, suspicious_activity_count = ?, updated_at = ?
@@ -402,7 +404,7 @@ func (s *SQLiteStorage) UpdateUserSecurity(ctx context.Context, security *UserSe
 		security.LoginAttempts, security.LockedUntil, security.LastLoginAt,
 		lastLoginIP, security.LastFailedLoginAt, lastFailedLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
-		security.TwoFactorSecret, security.TwoFactorBackupCodes, security.TwoFactorVerifiedAt,
+		security.TwoFactorSecret, security.TwoFactorVerifiedAt,
 		security.ConcurrentSessions, security.LastSessionToken, security.DeviceFingerprint,
 		security.KnownDevices, security.SecurityVersion, security.RiskScore,
 		security.SuspiciousActivityCount, time.Now(), security.UserID)

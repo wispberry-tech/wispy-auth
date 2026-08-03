@@ -43,7 +43,6 @@ CREATE TABLE IF NOT EXISTS user_security (
     -- 2FA Settings
     two_factor_enabled BOOLEAN DEFAULT FALSE,
     two_factor_secret VARCHAR(255),
-    two_factor_backup_codes TEXT,
     two_factor_verified_at TIMESTAMP WITH TIME ZONE,
 
     -- Session Security
@@ -68,7 +67,7 @@ CREATE TABLE IF NOT EXISTS user_security (
 -- Sessions table - Session management with device tracking
 CREATE TABLE IF NOT EXISTS sessions (
     id SERIAL PRIMARY KEY,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(64) UNIQUE NOT NULL,
     user_id INTEGER NOT NULL,
 
     -- Session Data
@@ -115,8 +114,8 @@ CREATE TABLE IF NOT EXISTS security_events (
 -- OAuth States table - OAuth CSRF protection
 CREATE TABLE IF NOT EXISTS oauth_states (
     id SERIAL PRIMARY KEY,
-    state VARCHAR(255) UNIQUE NOT NULL,
-    csrf VARCHAR(255) NOT NULL,
+    state VARCHAR(64) UNIQUE NOT NULL,
+    csrf VARCHAR(64) NOT NULL,
     provider VARCHAR(50) NOT NULL,
     redirect_url TEXT,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -127,7 +126,7 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(64) UNIQUE NOT NULL,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     used_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -162,7 +161,7 @@ CREATE TABLE IF NOT EXISTS two_factor_backup_codes (
 -- Refresh Tokens table - Session renewal
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id SERIAL PRIMARY KEY,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(64) UNIQUE NOT NULL,
     user_id INTEGER NOT NULL,
     session_id INTEGER,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,

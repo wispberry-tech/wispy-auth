@@ -175,7 +175,6 @@ CREATE TABLE IF NOT EXISTS user_security (
     -- 2FA Settings
     two_factor_enabled BOOLEAN DEFAULT FALSE,
     two_factor_secret VARCHAR(255),
-    two_factor_backup_codes TEXT,
     two_factor_verified_at DATETIME,
 
     -- Session Security
@@ -198,7 +197,7 @@ CREATE TABLE IF NOT EXISTS user_security (
 -- Sessions table
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(64) UNIQUE NOT NULL,
     user_id INTEGER NOT NULL,
     expires_at DATETIME NOT NULL,
     last_accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -216,8 +215,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_expires ON sessions(user_id, expire
 -- OAuth States table
 CREATE TABLE IF NOT EXISTS oauth_states (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    state VARCHAR(255) UNIQUE NOT NULL,
-    csrf VARCHAR(255) NOT NULL,
+    state VARCHAR(64) UNIQUE NOT NULL,
+    csrf VARCHAR(64) NOT NULL,
     provider VARCHAR(50) NOT NULL,
     redirect_url TEXT,
     expires_at DATETIME NOT NULL,
@@ -258,7 +257,7 @@ CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(create
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(64) UNIQUE NOT NULL,
     expires_at DATETIME NOT NULL,
     used_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -298,7 +297,7 @@ CREATE INDEX IF NOT EXISTS idx_two_factor_backup_codes_user_code ON two_factor_b
 -- Refresh Tokens table
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(64) UNIQUE NOT NULL,
     user_id INTEGER NOT NULL,
     session_id INTEGER,
     expires_at DATETIME NOT NULL,
@@ -351,7 +350,6 @@ CREATE TABLE IF NOT EXISTS user_security (
     force_password_change BOOLEAN DEFAULT FALSE,
     two_factor_enabled BOOLEAN DEFAULT FALSE,
     two_factor_secret VARCHAR(255),
-    two_factor_backup_codes TEXT,
     two_factor_verified_at TIMESTAMP,
     concurrent_sessions INTEGER DEFAULT 0,
     security_version INTEGER DEFAULT 1,
@@ -364,7 +362,7 @@ CREATE TABLE IF NOT EXISTS user_security (
 -- Sessions table
 CREATE TABLE IF NOT EXISTS sessions (
     id SERIAL PRIMARY KEY,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(64) UNIQUE NOT NULL,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at TIMESTAMP NOT NULL,
     device_fingerprint VARCHAR(255),
@@ -381,8 +379,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_expires ON sessions(user_id, expire
 -- OAuth States table
 CREATE TABLE IF NOT EXISTS oauth_states (
     id SERIAL PRIMARY KEY,
-    state VARCHAR(255) UNIQUE NOT NULL,
-    csrf VARCHAR(255) NOT NULL,
+    state VARCHAR(64) UNIQUE NOT NULL,
+    csrf VARCHAR(64) NOT NULL,
     provider VARCHAR(50) NOT NULL,
     redirect_url TEXT,
     expires_at TIMESTAMP NOT NULL,
@@ -414,7 +412,7 @@ CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(create
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(64) UNIQUE NOT NULL,
     expires_at TIMESTAMP NOT NULL,
     used_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -451,7 +449,7 @@ CREATE INDEX IF NOT EXISTS idx_two_factor_backup_codes_user_code ON two_factor_b
 -- Refresh Tokens table
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id SERIAL PRIMARY KEY,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(64) UNIQUE NOT NULL,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
     expires_at TIMESTAMP NOT NULL,

@@ -39,6 +39,12 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
+	// Apply schema (idempotent)
+	if _, err := db.Exec(PostgresSchemaSQL()); err != nil {
+		db.Close() // #nosec G104 - Close error can be ignored in error path
+		return nil, fmt.Errorf("failed to apply schema: %w", err)
+	}
+
 	storage := &PostgresStorage{
 		db: db,
 	}
@@ -335,21 +341,21 @@ func (p *PostgresStorage) GetUserSecurity(ctx context.Context, userID uint) (*Us
 	query := `SELECT user_id, login_attempts, locked_until, last_login_at, last_login_ip,
 			  last_failed_login_at, last_failed_login_ip, password_changed_at,
 			  force_password_change, two_factor_enabled, two_factor_secret,
-			  two_factor_backup_codes, two_factor_verified_at, concurrent_sessions,
+			  two_factor_verified_at, concurrent_sessions,
 			  last_session_token, device_fingerprint, known_devices,
 			  security_version, risk_score, suspicious_activity_count,
 			  created_at, updated_at
 			  FROM user_security WHERE user_id = $1`
 
 	// Use sql.NullString for nullable string fields to handle NULL values
-	var lastLoginIP, lastFailedLoginIP, twoFactorSecret, twoFactorBackupCodes sql.NullString
+	var lastLoginIP, lastFailedLoginIP, twoFactorSecret sql.NullString
 	var lastSessionToken, deviceFingerprint, knownDevices sql.NullString
 
 	err := p.db.QueryRowContext(ctx, query, userID).Scan(
 		&security.UserID, &security.LoginAttempts, &security.LockedUntil,
 		&security.LastLoginAt, &lastLoginIP, &security.LastFailedLoginAt,
 		&lastFailedLoginIP, &security.PasswordChangedAt, &security.ForcePasswordChange,
-		&security.TwoFactorEnabled, &twoFactorSecret, &twoFactorBackupCodes,
+		&security.TwoFactorEnabled, &twoFactorSecret,
 		&security.TwoFactorVerifiedAt, &security.ConcurrentSessions, &lastSessionToken,
 		&deviceFingerprint, &knownDevices, &security.SecurityVersion,
 		&security.RiskScore, &security.SuspiciousActivityCount, &security.CreatedAt, &security.UpdatedAt)
@@ -371,9 +377,6 @@ func (p *PostgresStorage) GetUserSecurity(ctx context.Context, userID uint) (*Us
 	if twoFactorSecret.Valid {
 		security.TwoFactorSecret = twoFactorSecret.String
 	}
-	if twoFactorBackupCodes.Valid {
-		security.TwoFactorBackupCodes = twoFactorBackupCodes.String
-	}
 	if lastSessionToken.Valid {
 		security.LastSessionToken = lastSessionToken.String
 	}
@@ -390,11 +393,11 @@ func (p *PostgresStorage) GetUserSecurity(ctx context.Context, userID uint) (*Us
 func (p *PostgresStorage) UpdateUserSecurity(ctx context.Context, security *UserSecurity) error { query := `UPDATE user_security SET login_attempts = $1, locked_until = $2,
 			  last_login_at = $3, last_login_ip = $4, last_failed_login_at = $5,
 			  last_failed_login_ip = $6, password_changed_at = $7, force_password_change = $8,
-			  two_factor_enabled = $9, two_factor_secret = $10, two_factor_backup_codes = $11,
-			  two_factor_verified_at = $12, concurrent_sessions = $13, last_session_token = $14,
-			  device_fingerprint = $15, known_devices = $16, security_version = $17,
-			  risk_score = $18, suspicious_activity_count = $19, updated_at = $20
-			  WHERE user_id = $21`
+			  two_factor_enabled = $9, two_factor_secret = $10,
+			  two_factor_verified_at = $11, concurrent_sessions = $12, last_session_token = $13,
+			  device_fingerprint = $14, known_devices = $15, security_version = $16,
+			  risk_score = $17, suspicious_activity_count = $18, updated_at = $19
+			  WHERE user_id = $20`
 
 	// Convert string IP pointers to sql.NullString to handle NULL properly
 	var lastLoginIP, lastFailedLoginIP sql.NullString
@@ -411,7 +414,7 @@ func (p *PostgresStorage) UpdateUserSecurity(ctx context.Context, security *User
 		security.LoginAttempts, security.LockedUntil, security.LastLoginAt,
 		lastLoginIP, security.LastFailedLoginAt, lastFailedLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
-		security.TwoFactorSecret, security.TwoFactorBackupCodes, security.TwoFactorVerifiedAt,
+		security.TwoFactorSecret, security.TwoFactorVerifiedAt,
 		security.ConcurrentSessions, security.LastSessionToken, security.DeviceFingerprint,
 		security.KnownDevices, security.SecurityVersion, security.RiskScore,
 		security.SuspiciousActivityCount, time.Now(), security.UserID)

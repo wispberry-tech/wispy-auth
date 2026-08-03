@@ -975,7 +975,6 @@ func (a *AuthService) Disable2FAHandler(w http.ResponseWriter, r *http.Request) 
 
 	security.TwoFactorEnabled = false
 	security.TwoFactorSecret = ""
-	security.TwoFactorBackupCodes = ""
 	security.TwoFactorVerifiedAt = nil
 
 	if err := a.storage.UpdateUserSecurity(r.Context(), security); err != nil {
