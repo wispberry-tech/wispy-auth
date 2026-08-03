@@ -9,6 +9,7 @@
 - **Security Tracking** - Login attempts, account lockout, security events
 - **SQLite & PostgreSQL** - Multiple database backends
 - **Middleware** - Easy integration with any HTTP router
+- **OpenAPI 3.0 Spec** - Embedded specification of all built-in endpoints with a one-line serve handler
 - **Zero Dependencies** - No external services required
 
 ## Quick Start
@@ -120,6 +121,27 @@ If `AllowUserPasswordReset` is `false` (default), the forgot password endpoint w
 ### Protected Routes
 - `GET /profile` - Get user profile
 - `GET /sessions` - Get user sessions
+
+### Two-Factor & Tokens
+- `POST /2fa/enable` - Start 2FA enablement (sends email code)
+- `POST /2fa/enable/verify` - Confirm code and activate 2FA
+- `POST /2fa/disable` - Disable 2FA
+- `POST /2fa/login` - Complete sign-in with a 2FA/backup code
+- `GET /2fa/backup-codes` - List backup codes
+- `POST /2fa/backup-codes/regenerate` - Generate new backup codes
+- `POST /refresh-token` - Exchange a refresh token for a new session
+
+## OpenAPI
+
+The library ships an OpenAPI 3.0.3 specification of its built-in endpoints, embedded in `core/openapi.json` and served by `core.OpenAPIHandler()`:
+
+```go
+mux.Handle("GET /swagger/doc.json", core.OpenAPIHandler())
+```
+
+The handler is a plain `http.Handler` — it works with any router. The spec documents the endpoints at the canonical paths listed above; wire the handlers to those paths so the spec matches your server, then point any OpenAPI viewer (Swagger UI, Redoc, Scalar) at the served URL.
+
+Each operation carries an `x-handler` extension naming its `AuthService` method, and `TestSpecCoversAllHandlers` fails the build if a handler is added without documentation — the spec cannot silently drift from the code.
 
 ### Password Reset API
 

@@ -11,6 +11,7 @@ A comprehensive authentication library for Go applications with a focus on secur
 - **Password Management** - Optional user self-service password reset with admin override capability
 - **Multi-Provider OAuth2** - Built-in support for Google, GitHub, Discord, and custom OAuth providers
 - **Session Management** - Secure JWT-like session tokens with device tracking and automatic expiration
+- **OpenAPI 3.0 Specification** - Embedded spec of all built-in endpoints with a one-line serve handler
 - **Security Tracking** - Comprehensive audit logging, failed login attempt tracking, and account lockout protection
 
 ### Advanced Security
