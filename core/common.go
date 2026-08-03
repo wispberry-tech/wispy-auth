@@ -166,17 +166,24 @@ const (
 	EventSuspiciousActivity = "suspicious_activity"
 )
 
-// RateLimiter provides in-memory rate limiting functionality
-type RateLimiter struct {
+// RateLimiter defines the rate limiting contract used by AuthService.
+// Implementations must be safe for concurrent use.
+type RateLimiter interface {
+	IsAllowed(key string) bool
+	Cleanup()
+}
+
+// InMemoryRateLimiter provides in-memory rate limiting functionality
+type InMemoryRateLimiter struct {
 	requests    map[string][]time.Time
 	maxRequests int
 	window      time.Duration
 	mu          sync.RWMutex
 }
 
-// NewRateLimiter creates a new rate limiter
-func NewRateLimiter(maxRequests int, window time.Duration) *RateLimiter {
-	return &RateLimiter{
+// NewRateLimiter creates a new in-memory rate limiter
+func NewRateLimiter(maxRequests int, window time.Duration) *InMemoryRateLimiter {
+	return &InMemoryRateLimiter{
 		requests:    make(map[string][]time.Time),
 		maxRequests: maxRequests,
 		window:      window,
@@ -184,7 +191,7 @@ func NewRateLimiter(maxRequests int, window time.Duration) *RateLimiter {
 }
 
 // IsAllowed checks if a request from the given key (IP address) is allowed
-func (rl *RateLimiter) IsAllowed(key string) bool {
+func (rl *InMemoryRateLimiter) IsAllowed(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -211,7 +218,7 @@ func (rl *RateLimiter) IsAllowed(key string) bool {
 }
 
 // Cleanup removes old entries to prevent memory leaks
-func (rl *RateLimiter) Cleanup() {
+func (rl *InMemoryRateLimiter) Cleanup() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 

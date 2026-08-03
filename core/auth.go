@@ -362,6 +362,7 @@ type Config struct {
 	SecurityConfig SecurityConfig                 // Security configuration
 	OAuthProviders map[string]OAuthProviderConfig // OAuth provider configurations
 	EmailService   EmailService                   // Email service (optional, for 2FA)
+	RateLimiter    RateLimiter                    // Custom rate limiter (optional; defaults to in-memory when rate limiting is enabled)
 }
 
 // AuthService is the main service for handling authentication operations.
@@ -389,7 +390,7 @@ type AuthService struct {
 	oauthConfigs    map[string]*oauth2.Config
 	securityConfig  SecurityConfig
 	validator       *validator.Validate
-	rateLimiter     *RateLimiter
+	rateLimiter     RateLimiter
 	emailService    EmailService
 	cleanupInterval time.Duration
 	cleanupDone     chan struct{}
@@ -601,8 +602,10 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 		oauthUserParsers: maps.Clone(defaultOAuthUserParsers),
 	}
 
-	// Initialize rate limiter if enabled
-	if *securityConfig.EnableRateLimiting {
+	// Initialize rate limiter: explicit injection wins, else default in-memory when enabled
+	if cfg.RateLimiter != nil {
+		service.rateLimiter = cfg.RateLimiter
+	} else if *securityConfig.EnableRateLimiting {
 		service.rateLimiter = NewRateLimiter(securityConfig.RateLimitRequests, securityConfig.RateLimitWindow)
 	}
 
