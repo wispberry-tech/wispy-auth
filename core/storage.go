@@ -159,8 +159,8 @@ type RefreshToken struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
-// Storage defines the contract for core authentication data storage operations
-type Storage interface {
+// UserStore defines core user identity and security operations.
+type UserStore interface {
 	// User operations - core identity only
 	CreateUser(ctx context.Context, user *User) error
 	GetUserByEmail(ctx context.Context, email, provider string) (*User, error)
@@ -184,8 +184,10 @@ type Storage interface {
 	// Transactional operations for complex multi-table operations
 	CreateUserWithSecurity(ctx context.Context, user *User, security *UserSecurity) error
 	HandleFailedLogin(ctx context.Context, userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) // returns (wasLocked, error)
+}
 
-	// Session operations
+// SessionStore defines session lifecycle operations.
+type SessionStore interface {
 	CreateSession(ctx context.Context, session *Session) error
 	GetSession(ctx context.Context, token string) (*Session, error)
 	GetUserSessions(ctx context.Context, userID uint) ([]*Session, error)
@@ -194,24 +196,33 @@ type Storage interface {
 	DeleteUserSessions(ctx context.Context, userID uint) error
 	CleanupExpiredSessions(ctx context.Context) error
 	CountActiveSessions(ctx context.Context, userID uint) (int, error)
+}
 
-	// OAuth state operations
+// OAuthStateStore defines OAuth state lifecycle operations.
+type OAuthStateStore interface {
 	StoreOAuthState(ctx context.Context, state *OAuthState) error
 	GetOAuthState(ctx context.Context, state string) (*OAuthState, error)
 	DeleteOAuthState(ctx context.Context, state string) error
 	CleanupExpiredOAuthStates(ctx context.Context) error
+}
 
-	// Security Event operations
+// SecurityEventStore defines security audit log operations.
+type SecurityEventStore interface {
 	CreateSecurityEvent(ctx context.Context, event *SecurityEvent) error
 	GetSecurityEvents(ctx context.Context, userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error)
 	GetSecurityEventsByUser(ctx context.Context, userID uint, limit int, offset int) ([]*SecurityEvent, error)
+}
 
-	// Password Reset Token operations
+// PasswordResetTokenStore defines password reset token operations.
+type PasswordResetTokenStore interface {
 	CreatePasswordResetToken(ctx context.Context, token *PasswordResetToken) error
 	GetPasswordResetToken(ctx context.Context, token string) (*PasswordResetToken, error)
 	UsePasswordResetToken(ctx context.Context, token string) error
 	CleanupExpiredPasswordResetTokens(ctx context.Context) error
+}
 
+// TwoFactorStore defines 2FA code and backup code operations.
+type TwoFactorStore interface {
 	// 2FA Code operations
 	Create2FACode(ctx context.Context, code *TwoFactorCode) error
 	Get2FACode(ctx context.Context, userID uint, code string, codeType string) (*TwoFactorCode, error)
@@ -225,14 +236,27 @@ type Storage interface {
 	GetBackupCodeByCode(ctx context.Context, code string) (*TwoFactorBackupCode, error)
 	Use2FABackupCode(ctx context.Context, userID uint, code string) error
 	Regenerate2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error)
+}
 
-	// Refresh Token operations
+// RefreshTokenStore defines refresh token lifecycle operations.
+type RefreshTokenStore interface {
 	CreateRefreshToken(ctx context.Context, token *RefreshToken) error
 	GetRefreshToken(ctx context.Context, token string) (*RefreshToken, error)
 	UpdateRefreshToken(ctx context.Context, token *RefreshToken) error
 	DeleteRefreshToken(ctx context.Context, token string) error
 	DeleteUserRefreshTokens(ctx context.Context, userID uint) error
 	CleanupExpiredRefreshTokens(ctx context.Context) error
+}
+
+// Storage defines the contract for core authentication data storage operations.
+type Storage interface {
+	UserStore
+	SessionStore
+	OAuthStateStore
+	SecurityEventStore
+	PasswordResetTokenStore
+	TwoFactorStore
+	RefreshTokenStore
 
 	// Health check
 	Ping() error
