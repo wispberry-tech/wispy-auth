@@ -789,6 +789,7 @@ func (p *PostgresStorage) GetSecurityEvents(ctx context.Context, userID *uint, e
 	args = append(args, limit)
 
 	argCount++
+	// #nosec G202 -- $%d is the parameter index; the value goes through args
 	query += fmt.Sprintf(` OFFSET $%d`, argCount)
 	args = append(args, offset)
 

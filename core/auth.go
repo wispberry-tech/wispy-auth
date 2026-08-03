@@ -909,7 +909,7 @@ func (a *AuthService) Close() error {
 	}
 
 	if a.emailService != nil {
-		a.emailService.Close()
+		_ = a.emailService.Close()
 	}
 
 	return a.storage.Close()

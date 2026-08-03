@@ -2,6 +2,7 @@ package core
 
 import (
 	_ "embed"
+	"log/slog"
 	"net/http"
 )
 
@@ -24,6 +25,8 @@ var openAPISpec []byte
 func OpenAPIHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(openAPISpec)
+		if _, err := w.Write(openAPISpec); err != nil {
+			slog.Debug("Failed to write OpenAPI spec", "error", err)
+		}
 	})
 }
