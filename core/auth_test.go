@@ -748,28 +748,29 @@ func boolPtr(b bool) *bool {
 
 // mockStorage implements the Storage interface for testing
 type mockStorage struct {
-	mu                  sync.RWMutex
-	users               map[string]*User
-	userSecurity        map[uint]*UserSecurity
-	sessions            map[string]*Session
-	securityEvents      []*SecurityEvent
-	oauthStates         map[string]*OAuthState
-	passwordResetTokens map[string]*PasswordResetToken
-	twoFactorCodes      map[string]*TwoFactorCode
+	mu                   sync.RWMutex
+	users                map[string]*User
+	userSecurity         map[uint]*UserSecurity
+	sessions             map[string]*Session
+	securityEvents       []*SecurityEvent
+	oauthStates          map[string]*OAuthState
+	passwordResetTokens  map[string]*PasswordResetToken
+	twoFactorCodes       map[string]*TwoFactorCode
 	twoFactorBackupCodes map[string][]*TwoFactorBackupCode
-	nextUserID          uint
+	nextUserID           uint
 }
+
 func newMockStorage() *mockStorage {
 	return &mockStorage{
-		users:               make(map[string]*User),
-		userSecurity:        make(map[uint]*UserSecurity),
-		sessions:            make(map[string]*Session),
-		securityEvents:      make([]*SecurityEvent, 0),
-		oauthStates:         make(map[string]*OAuthState),
-		passwordResetTokens: make(map[string]*PasswordResetToken),
-		twoFactorCodes:      make(map[string]*TwoFactorCode),
+		users:                make(map[string]*User),
+		userSecurity:         make(map[uint]*UserSecurity),
+		sessions:             make(map[string]*Session),
+		securityEvents:       make([]*SecurityEvent, 0),
+		oauthStates:          make(map[string]*OAuthState),
+		passwordResetTokens:  make(map[string]*PasswordResetToken),
+		twoFactorCodes:       make(map[string]*TwoFactorCode),
 		twoFactorBackupCodes: make(map[string][]*TwoFactorBackupCode),
-		nextUserID:          1,
+		nextUserID:           1,
 	}
 }
 
@@ -1240,6 +1241,7 @@ func (m *mockStorage) Ping() error {
 	defer m.mu.Unlock()
 	return nil
 }
+
 // 2FA Code operations
 func (m *mockStorage) Create2FACode(ctx context.Context, code *TwoFactorCode) error {
 	m.mu.Lock()
@@ -1340,7 +1342,6 @@ func (m *mockStorage) Regenerate2FABackupCodes(ctx context.Context, userID uint)
 	}
 	return codes, nil
 }
-
 
 // Refresh Token operations
 func (m *mockStorage) CreateRefreshToken(ctx context.Context, token *RefreshToken) error {

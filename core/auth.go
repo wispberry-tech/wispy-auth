@@ -95,7 +95,7 @@ type SecurityConfig struct {
 	PasswordRequireLower   bool
 	PasswordRequireNumber  bool
 	PasswordRequireSpecial bool
-	AllowUserPasswordReset *bool  // Whether users can reset their own passwords
+	AllowUserPasswordReset *bool // Whether users can reset their own passwords
 
 	// Login security
 	MaxLoginAttempts int           // Maximum failed login attempts before lockout
@@ -112,7 +112,7 @@ type SecurityConfig struct {
 	TwoFactorLockoutDuration time.Duration // How long to lock 2FA after max failures (default: 15 minutes)
 
 	// Rate Limiting
-	EnableRateLimiting *bool        // Whether to enable rate limiting
+	EnableRateLimiting *bool         // Whether to enable rate limiting
 	RateLimitRequests  int           // Maximum requests per window
 	RateLimitWindow    time.Duration // Time window for rate limiting
 
@@ -125,7 +125,7 @@ type SecurityConfig struct {
 
 	// Cleanup Configuration
 	CleanupInterval time.Duration // How often to run cleanup jobs (default: 1 hour)
-	DebugMode       *bool          // Enable debug features (returns tokens in response)
+	DebugMode       *bool         // Enable debug features (returns tokens in response)
 }
 
 // DefaultSecurityConfig returns a secure default configuration suitable for most applications.
@@ -386,14 +386,14 @@ type Config struct {
 //
 // Thread safety: AuthService is safe for concurrent use across multiple goroutines.
 type AuthService struct {
-	storage         Storage
-	oauthConfigs    map[string]*oauth2.Config
-	securityConfig  SecurityConfig
-	validator       *validator.Validate
-	rateLimiter     RateLimiter
-	emailService    EmailService
-	cleanupInterval time.Duration
-	cleanupDone     chan struct{}
+	storage          Storage
+	oauthConfigs     map[string]*oauth2.Config
+	securityConfig   SecurityConfig
+	validator        *validator.Validate
+	rateLimiter      RateLimiter
+	emailService     EmailService
+	cleanupInterval  time.Duration
+	cleanupDone      chan struct{}
 	oauthUserParsers map[string]OAuthUserParser
 }
 
@@ -555,7 +555,8 @@ func mergeConfig(base, override SecurityConfig) SecurityConfig {
 //	if err != nil {
 //		log.Fatal("Failed to create auth service:", err)
 //	}
-//	defer authService.Close()
+//
+// defer authService.Close()
 func NewAuthService(cfg Config) (*AuthService, error) {
 	if cfg.Storage == nil {
 		return nil, fmt.Errorf("storage is required")
@@ -592,13 +593,13 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 	validator := validator.New()
 
 	service := &AuthService{
-		storage:         cfg.Storage,
-		oauthConfigs:    oauthConfigs,
-		securityConfig:  securityConfig,
-		validator:       validator,
-		emailService:    cfg.EmailService,
-		cleanupInterval: securityConfig.CleanupInterval,
-		cleanupDone:     make(chan struct{}),
+		storage:          cfg.Storage,
+		oauthConfigs:     oauthConfigs,
+		securityConfig:   securityConfig,
+		validator:        validator,
+		emailService:     cfg.EmailService,
+		cleanupInterval:  securityConfig.CleanupInterval,
+		cleanupDone:      make(chan struct{}),
 		oauthUserParsers: maps.Clone(defaultOAuthUserParsers),
 	}
 

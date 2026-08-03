@@ -45,9 +45,9 @@ type UserSecurity struct {
 	ForcePasswordChange bool       `json:"force_password_change"`
 
 	// 2FA Settings
-	TwoFactorEnabled     bool       `json:"two_factor_enabled"`
-	TwoFactorSecret      string     `json:"-"` // Hidden from JSON
-	TwoFactorVerifiedAt  *time.Time `json:"two_factor_verified_at,omitempty"`
+	TwoFactorEnabled    bool       `json:"two_factor_enabled"`
+	TwoFactorSecret     string     `json:"-"` // Hidden from JSON
+	TwoFactorVerifiedAt *time.Time `json:"two_factor_verified_at,omitempty"`
 
 	// Session Security
 	ConcurrentSessions int    `json:"concurrent_sessions"`

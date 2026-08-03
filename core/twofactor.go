@@ -132,4 +132,3 @@ func (a *AuthService) generateBackupCodes(userID uint) ([]*TwoFactorBackupCode, 
 
 	return backupCodes, nil
 }
-

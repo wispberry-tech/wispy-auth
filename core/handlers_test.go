@@ -24,9 +24,9 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		authService.SignUpHandler(rec1, req1)
 		var resp1 SignUpResponse
 		json.NewDecoder(rec1.Body).Decode(&resp1)
-			if rec1.Code != http.StatusCreated {
-				t.Fatalf("First signup should succeed: %+v", resp1)
-			}
+		if rec1.Code != http.StatusCreated {
+			t.Fatalf("First signup should succeed: %+v", resp1)
+		}
 
 		// Try to create duplicate user
 		req2 := createTestRequest(t, "POST", "/signup", map[string]interface{}{
@@ -38,9 +38,9 @@ func TestHandlers_ErrorScenarios(t *testing.T) {
 		var resp2 SignUpResponse
 		json.NewDecoder(rec2.Body).Decode(&resp2)
 
-			if rec2.Code != http.StatusConflict {
-				t.Errorf("Expected 409 for duplicate user, got %d", rec2.Code)
-			}
+		if rec2.Code != http.StatusConflict {
+			t.Errorf("Expected 409 for duplicate user, got %d", rec2.Code)
+		}
 		if resp2.Error == "" {
 			t.Error("Expected error message for duplicate user")
 		}

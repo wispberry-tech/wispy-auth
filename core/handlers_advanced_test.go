@@ -626,7 +626,6 @@ func TestRaceCondition_ConcurrentPasswordChange(t *testing.T) {
 
 	signupUser, _ := mustCreateTestUserWithToken(t, authService)
 	mockStore := authService.storage.(*mockStorage)
-	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 	const numConcurrentChanges = 3
 	var wg sync.WaitGroup
@@ -636,6 +635,11 @@ func TestRaceCondition_ConcurrentPasswordChange(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
+
+			// Fetch a fresh user copy per request, as AuthMiddleware does in
+			// production — sharing one pointer across goroutines would race on
+			// the handler's in-place mutations.
+			user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
 
 			changeReq := createTestRequest(t, "POST", "/change-password", map[string]interface{}{
 				"current_password": "TestPassword123!",

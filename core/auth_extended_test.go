@@ -253,19 +253,19 @@ func TestAuthService_ConcurrentAccess(t *testing.T) {
 			go func(userNum int) {
 				defer func() { done <- true }()
 
-		req := createTestRequest(t, "POST", "/signup", map[string]interface{}{
-				"email":      fmt.Sprintf("user%d@example.com", userNum),
-				"password":   "TestPassword123!",
-				"first_name": fmt.Sprintf("User%d", userNum),
-			})
+				req := createTestRequest(t, "POST", "/signup", map[string]interface{}{
+					"email":      fmt.Sprintf("user%d@example.com", userNum),
+					"password":   "TestPassword123!",
+					"first_name": fmt.Sprintf("User%d", userNum),
+				})
 
-			rec := httptest.NewRecorder()
-			authService.SignUpHandler(rec, req)
-			var response SignUpResponse
-			json.NewDecoder(rec.Body).Decode(&response)
-			if rec.Code != http.StatusCreated {
-				t.Errorf("Concurrent signup failed for user %d: %+v", userNum, response)
-			}
+				rec := httptest.NewRecorder()
+				authService.SignUpHandler(rec, req)
+				var response SignUpResponse
+				json.NewDecoder(rec.Body).Decode(&response)
+				if rec.Code != http.StatusCreated {
+					t.Errorf("Concurrent signup failed for user %d: %+v", userNum, response)
+				}
 			}(i)
 		}
 

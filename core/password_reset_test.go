@@ -369,10 +369,10 @@ func TestPasswordReset_ResetPassword_PasswordStrength(t *testing.T) {
 			}
 			mockStore.CreatePasswordResetToken(context.Background(), resetTok)
 
-		req := createTestRequest(t, "POST", "/reset-password", map[string]interface{}{
-			"token":    resetTok.Token,
-			"password": tt.password,
-		})
+			req := createTestRequest(t, "POST", "/reset-password", map[string]interface{}{
+				"token":    resetTok.Token,
+				"password": tt.password,
+			})
 
 			rec := httptest.NewRecorder()
 			authService.ResetPasswordHandler(rec, req)
