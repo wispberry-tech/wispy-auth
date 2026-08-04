@@ -158,6 +158,20 @@ func GetSessionFromContext(r *http.Request) *Session {
 	return nil
 }
 
+// WithUser returns a new context with the given user attached, readable by
+// GetUserFromContext. Useful for embedding applications and test harnesses
+// that need to construct an authenticated request context without running
+// the middleware.
+func WithUser(ctx context.Context, user *User) context.Context {
+	return context.WithValue(ctx, ctxKeyUser, user)
+}
+
+// WithSession returns a new context with the given session attached, readable
+// by GetSessionFromContext.
+func WithSession(ctx context.Context, session *Session) context.Context {
+	return context.WithValue(ctx, ctxKeySession, session)
+}
+
 // RateLimitMiddleware provides rate limiting middleware for HTTP handlers
 func (a *AuthService) RateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

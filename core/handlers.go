@@ -661,6 +661,10 @@ func (a *AuthService) ResetPasswordHandler(w http.ResponseWriter, r *http.Reques
 	now := time.Now()
 	security.PasswordChangedAt = &now
 	security.ForcePasswordChange = false
+	// A successful reset proves identity, so clear any lockout state rather
+	// than making the user wait out the remaining lockout window.
+	security.LoginAttempts = 0
+	security.LockedUntil = nil
 	if err := a.storage.UpdateUserSecurity(r.Context(), security); err != nil {
 		slog.Error("Failed to update user security", "error", err)
 		writeJSON(w, http.StatusInternalServerError, ResetPasswordResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to update user security"})
