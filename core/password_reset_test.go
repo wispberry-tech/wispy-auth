@@ -423,9 +423,9 @@ func TestPasswordReset_ChangePassword_ValidFlow(t *testing.T) {
 	}
 
 	// Set user and session in context (simulating AuthMiddleware)
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 	if currentSession != nil {
-		ctx = context.WithValue(ctx, "session", currentSession)
+		ctx = context.WithValue(ctx, ctxKeySession, currentSession)
 	}
 	req = req.WithContext(ctx)
 
@@ -463,7 +463,7 @@ func TestPasswordReset_ChangePassword_InvalidCurrentPassword(t *testing.T) {
 		"new_password":     "NewPassword456!",
 	})
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -531,8 +531,8 @@ func TestPasswordReset_ChangePassword_SessionsPreserved(t *testing.T) {
 	})
 
 	currentSession, _ := mockStore.GetSession(context.Background(), currentToken)
-	ctx := context.WithValue(req.Context(), "user", user)
-	ctx = context.WithValue(ctx, "session", currentSession)
+	ctx := context.WithValue(req.Context(), ctxKeyUser, user)
+	ctx = context.WithValue(ctx, ctxKeySession, currentSession)
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()

@@ -131,7 +131,7 @@ func TestAuthFlow_SignupToLogout_Complete(t *testing.T) {
 	// Step 2: Validate token immediately after signup
 	validateReq := createTestRequest(t, "GET", "/validate", nil)
 	validateReq.Header.Set("Authorization", "Bearer "+signupToken)
-	ctx := context.WithValue(validateReq.Context(), "user", signupResp.User)
+	ctx := context.WithValue(validateReq.Context(), ctxKeyUser, signupResp.User)
 	validateReq = validateReq.WithContext(ctx)
 	rec = httptest.NewRecorder()
 	authService.ValidateHandler(rec, validateReq)
@@ -147,8 +147,8 @@ func TestAuthFlow_SignupToLogout_Complete(t *testing.T) {
 	session, _ := mockStore.GetSession(context.Background(), signupToken)
 	logoutReq := createTestRequest(t, "POST", "/logout", nil)
 	logoutReq.Header.Set("Authorization", "Bearer "+signupToken)
-	ctx2 := context.WithValue(logoutReq.Context(), "user", signupResp.User)
-	ctx2 = context.WithValue(ctx2, "session", session)
+	ctx2 := context.WithValue(logoutReq.Context(), ctxKeyUser, signupResp.User)
+	ctx2 = context.WithValue(ctx2, ctxKeySession, session)
 	logoutReq = logoutReq.WithContext(ctx2)
 	rec = httptest.NewRecorder()
 	authService.LogoutHandler(rec, logoutReq)
@@ -653,9 +653,9 @@ func TestRaceCondition_ConcurrentPasswordChange(t *testing.T) {
 				currentSession = sessions[0]
 			}
 
-			ctx := context.WithValue(changeReq.Context(), "user", user)
+			ctx := context.WithValue(changeReq.Context(), ctxKeyUser, user)
 			if currentSession != nil {
-				ctx = context.WithValue(ctx, "session", currentSession)
+				ctx = context.WithValue(ctx, ctxKeySession, currentSession)
 			}
 			changeReq = changeReq.WithContext(ctx)
 

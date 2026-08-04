@@ -24,7 +24,7 @@ We welcome contributions to Wispy Auth! This document provides guidelines and in
 
 4. **Run the example**
    ```bash
-   cd examples/core
+   cd examples/admin-password-reset
    go run main.go
    ```
 

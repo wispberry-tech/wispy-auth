@@ -20,7 +20,7 @@ A comprehensive authentication library for Go applications with a focus on secur
 - **Device Fingerprinting** - Track user sessions across different devices and browsers
 - **Security Event Logging** - Detailed audit trails for all authentication events
 - **Password Security** - Bcrypt hashing with configurable complexity requirements
-- **CSRF Protection** - Built-in OAuth state validation and CSRF token management
+- **OAuth State Validation** - Single-use state tokens against CSRF
 
 ### Database Support
 - **SQLite** - Perfect for development, testing, and small deployments
@@ -215,8 +215,6 @@ config := core.Config{
         // Two-factor authentication
         RequireTwoFactor:         false,
         TwoFactorCodeExpiry:      5 * time.Minute,
-        Max2FAAttempts:           3,
-        TwoFactorLockoutDuration: 15 * time.Minute,
 
         // Rate limiting
         EnableRateLimiting: true,
@@ -296,7 +294,7 @@ The library requires **9 database tables** to be created before use. Both SQLite
 | `user_security` | Login attempt tracking, lockout state, 2FA settings |
 | `sessions` | Session tokens with device and IP tracking |
 | `security_events` | Full security audit log |
-| `oauth_states` | OAuth CSRF protection state tokens |
+| `oauth_states` | Single-use OAuth state tokens |
 | `password_reset_tokens` | Password reset flow tokens |
 | `two_factor_codes` | Temporary 2FA verification codes |
 | `two_factor_backup_codes` | One-time use 2FA backup codes |

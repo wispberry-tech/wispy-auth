@@ -5,7 +5,7 @@
 **Status**: Under active development, not yet production-ready.
 
 ## Rules!
-- when creating a plan include a concise but complete TLDR at the top for easy scanning (include bullet points).
+- when creating a plan include a concise but complete TLDR at the top for easy scanning use bullet points for taks/issues etc.
 - never commit or push changes unless told to!
 
 ## Architecture Overview
@@ -15,7 +15,7 @@
 **AuthService** (`core/auth.go`)
 - Central service implementing all authentication logic
 - Configured with `Config` struct (security, storage, OAuth providers)
-- Handler-based API: each endpoint has a `*Handler` method returning `*AuthResponse`
+- Handler-based API: each endpoint has a `*Handler` method writing JSON responses directly
 - Manages sessions, OAuth flows, password management, and security events
 
 **Storage Layer** (`core/storage/`)
@@ -25,8 +25,8 @@
 - Encapsulates all database operations; no direct SQL in core logic
 
 **Handler System** (`core/handlers.go`, `core/oauth_handlers.go`)
-- Return-based design: `SignUpHandler(r *http.Request) *AuthResponse` (not middleware-style)
-- Handlers decode JSON, validate, call AuthService methods, return response with HTTP status code
+- Handler-based API: `SignUpHandler(w http.ResponseWriter, r *http.Request)` decodes JSON, validates, calls the AuthService, and writes a JSON response
+- Handlers decode JSON, validate, call AuthService methods, and write JSON responses with HTTP status codes
 - Allows maximum control over HTTP responses; works with any HTTP router
 
 **Middleware** (`core/middleware.go`)
@@ -45,10 +45,10 @@
 Five core tables (all backends share the same schema):
 
 1. **users** — Core user identity: email, username, name, password hash, OAuth provider info, verification status
-2. **user_security** — Sensitive security tracking: login attempts, lockout status, password change dates, 2FA settings, device fingerprints, risk scores
+2. **user_security** — Sensitive security tracking: login attempts, lockout status, password change dates, 2FA settings
 3. **sessions** — Session tokens with device/IP tracking, expiration, device fingerprints
 4. **security_events** — Audit log: all auth events (sign-up, login, lockout, password reset, OAuth, etc.) with timestamps, IPs, event types, and metadata
-5. **oauth_states** — OAuth CSRF protection: state tokens tied to providers and expiration times
+5. **oauth_states** — Single-use OAuth state tokens tied to providers and expiration times
 
 All databases initialize schema automatically on first connection (idempotent SQL in `core/sql/`).
 
@@ -73,14 +73,10 @@ core/
 ├── auth_extended_test.go    # Extended test suite
 ├── handlers.go              # HTTP handler functions (signup, signin, logout, validate, password reset)
 ├── handlers_test.go         # Handler tests
-├── handlers.go.backup       # Previous version (backup)
-├── oauth.go                 # OAuth2 constants and helper setup
 ├── oauth_handlers.go        # OAuth initialization and callback handlers
 ├── middleware.go            # AuthMiddleware, GetUserFromContext
 ├── common.go                # Utility functions and constants
-├── email_service.go         # EmailService interface
-├── email_service_mock.go    # Mock email service for testing
-├── email_service_smtp.go    # SMTP email service implementation
+├── notifications.go         # Notification types and handler hook
 ├── twofactor.go             # Two-factor authentication (partial implementation)
 ├── storage.go               # Storage interface and data types
 ├── storage/
@@ -92,8 +88,9 @@ core/
 └── README.md                # Core module documentation
 
 examples/
-├── core/main.go             # Full example HTTP server with all auth endpoints
-└── admin-password-reset.md  # Documentation on admin-side password reset flow
+└── admin-password-reset/
+    ├── main.go              # Runnable example server (admin password reset flow on :8080)
+    └── readme.md            # Documentation on admin-side password reset flow
 
 .github/workflows/
 ├── ci.yml                   # CI: tests, code formatting, security scan (gosec)
@@ -157,9 +154,9 @@ Both automatically initialize schema on first connection.
 
 ### Running the Example Server
 ```bash
-cd examples/core && go run main.go
+cd examples/admin-password-reset && go run main.go
 # Server on http://localhost:8080
-# Includes signup, signin, logout, OAuth, password reset endpoints
+# Admin-side password reset flow (login, OAuth, password reset endpoints)
 ```
 
 ### Adding a New OAuth Provider
@@ -179,6 +176,6 @@ cd examples/core && go run main.go
 ## Notes
 - **Dependency-Light**: Minimal external dependencies (validator, pgx, go-sqlite3, oauth2, crypto)
 - **Multi-Database**: Same codebase works with SQLite or PostgreSQL; storage interface abstracts differences
-- **No External Services**: OAuth only requires client credentials; email is pluggable (mock or SMTP)
+- **No External Services**: OAuth only requires client credentials; email is pluggable (notification handler)
 - **Active Development**: Not yet production-ready; breaking changes possible
-- **Return-Based Handlers**: Core design philosophy—return responses, don't write HTTP directly; max flexibility
+- **Handler-Based API**: handlers write JSON responses directly; works with any HTTP router

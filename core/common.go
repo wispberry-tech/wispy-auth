@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"regexp"
@@ -36,6 +37,20 @@ func GenerateSecureToken(length int) (string, error) {
 	return base64.URLEncoding.EncodeToString(bytes), nil
 }
 
+// GenerateNumericCode returns a random decimal code of the given length.
+func GenerateNumericCode(length int) (string, error) {
+	const digits = "0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		n, err := rand.Int(rand.Reader, big.NewInt(10))
+		if err != nil {
+			return "", err
+		}
+		b[i] = digits[n.Int64()]
+	}
+	return string(b), nil
+}
+
 // Device fingerprinting
 func generateDeviceFingerprint(userAgent, ip string) string {
 	combined := fmt.Sprintf("%s|%s|%d", userAgent, ip, time.Now().Unix()/3600) // Changes every hour
@@ -44,24 +59,31 @@ func generateDeviceFingerprint(userAgent, ip string) string {
 }
 
 // Password validation
+var (
+	reUpper   = regexp.MustCompile(`[A-Z]`)
+	reLower   = regexp.MustCompile(`[a-z]`)
+	reNumber  = regexp.MustCompile(`[0-9]`)
+	reSpecial = regexp.MustCompile(`[^a-zA-Z0-9]`)
+)
+
 func validatePasswordStrength(password string, config SecurityConfig) error {
 	if len(password) < config.PasswordMinLength {
 		return fmt.Errorf("password must be at least %d characters long", config.PasswordMinLength)
 	}
 
-	if config.PasswordRequireUpper && !regexp.MustCompile(`[A-Z]`).MatchString(password) {
+	if config.PasswordRequireUpper && !reUpper.MatchString(password) {
 		return fmt.Errorf("password must contain at least one uppercase letter")
 	}
 
-	if config.PasswordRequireLower && !regexp.MustCompile(`[a-z]`).MatchString(password) {
+	if config.PasswordRequireLower && !reLower.MatchString(password) {
 		return fmt.Errorf("password must contain at least one lowercase letter")
 	}
 
-	if config.PasswordRequireNumber && !regexp.MustCompile(`[0-9]`).MatchString(password) {
+	if config.PasswordRequireNumber && !reNumber.MatchString(password) {
 		return fmt.Errorf("password must contain at least one number")
 	}
 
-	if config.PasswordRequireSpecial && !regexp.MustCompile(`[^a-zA-Z0-9]`).MatchString(password) {
+	if config.PasswordRequireSpecial && !reSpecial.MatchString(password) {
 		return fmt.Errorf("password must contain at least one special character")
 	}
 

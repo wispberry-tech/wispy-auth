@@ -88,7 +88,6 @@ func TestAuthService_OAuthCallbackHandler(t *testing.T) {
 	mockStore := authService.storage.(*mockStorage)
 	oauthState := &OAuthState{
 		State:       "test-state-123",
-		CSRF:        "test-csrf-456",
 		Provider:    "google",
 		RedirectURL: "http://localhost/callback",
 		ExpiresAt:   time.Now().Add(10 * time.Minute),

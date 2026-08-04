@@ -51,11 +51,6 @@ func TestAvatarURLRoundTrip(t *testing.T) {
 	if err != nil || byAny == nil || byAny.AvatarURL != "https://example.com/avatar.png" {
 		t.Errorf("GetUserByEmailAnyProvider avatar = %q, err %v", byAny.AvatarURL, err)
 	}
-	byUUID, err := store.GetUserByUUID(context.Background(), user.UUID)
-	if err != nil || byUUID == nil || byUUID.AvatarURL != "https://example.com/avatar.png" {
-		t.Errorf("GetUserByUUID avatar = %q, err %v", byUUID.AvatarURL, err)
-	}
-
 	// UPDATE path
 	user.AvatarURL = "https://example.com/new.png"
 	user.UpdatedAt = time.Now()

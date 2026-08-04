@@ -49,19 +49,6 @@ type UserSecurity struct {
 	TwoFactorSecret     string     `json:"-"` // Hidden from JSON
 	TwoFactorVerifiedAt *time.Time `json:"two_factor_verified_at,omitempty"`
 
-	// Session Security
-	ConcurrentSessions int    `json:"concurrent_sessions"`
-	LastSessionToken   string `json:"last_session_token"`
-
-	// Device Tracking
-	DeviceFingerprint string `json:"device_fingerprint"`
-	KnownDevices      string `json:"known_devices"` // JSON string
-
-	// Security Metadata
-	SecurityVersion         int `json:"security_version"`
-	RiskScore               int `json:"risk_score"`
-	SuspiciousActivityCount int `json:"suspicious_activity_count"`
-
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -107,11 +94,10 @@ type SecurityEvent struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// OAuthState represents OAuth state for CSRF protection
+// OAuthState represents a single-use OAuth state token used to prevent CSRF.
 type OAuthState struct {
 	ID          uint      `json:"id"`
 	State       string    `json:"state"`
-	CSRF        string    `json:"csrf"`
 	Provider    string    `json:"provider"`
 	RedirectURL string    `json:"redirect_url"`
 	ExpiresAt   time.Time `json:"expires_at"`
@@ -167,7 +153,6 @@ type UserStore interface {
 	GetUserByEmailAnyProvider(ctx context.Context, email string) (*User, error)
 	GetUserByProviderID(ctx context.Context, provider, providerID string) (*User, error)
 	GetUserByID(ctx context.Context, id uint) (*User, error)
-	GetUserByUUID(ctx context.Context, uuid string) (*User, error)
 	UpdateUser(ctx context.Context, user *User) error
 
 	// User Security operations - separate and explicit
@@ -176,9 +161,7 @@ type UserStore interface {
 	UpdateUserSecurity(ctx context.Context, security *UserSecurity) error
 
 	// Optimized methods for common security operations
-	IncrementLoginAttempts(ctx context.Context, userID uint) error
 	ResetLoginAttempts(ctx context.Context, userID uint) error
-	SetUserLocked(ctx context.Context, userID uint, until time.Time) error
 	UpdateLastLogin(ctx context.Context, userID uint, ipAddress *string) error
 
 	// Transactional operations for complex multi-table operations
@@ -195,7 +178,6 @@ type SessionStore interface {
 	DeleteSession(ctx context.Context, token string) error
 	DeleteUserSessions(ctx context.Context, userID uint) error
 	CleanupExpiredSessions(ctx context.Context) error
-	CountActiveSessions(ctx context.Context, userID uint) (int, error)
 }
 
 // OAuthStateStore defines OAuth state lifecycle operations.
@@ -209,8 +191,6 @@ type OAuthStateStore interface {
 // SecurityEventStore defines security audit log operations.
 type SecurityEventStore interface {
 	CreateSecurityEvent(ctx context.Context, event *SecurityEvent) error
-	GetSecurityEvents(ctx context.Context, userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error)
-	GetSecurityEventsByUser(ctx context.Context, userID uint, limit int, offset int) ([]*SecurityEvent, error)
 }
 
 // PasswordResetTokenStore defines password reset token operations.

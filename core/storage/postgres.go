@@ -165,28 +165,6 @@ func (p *PostgresStorage) GetUserByID(ctx context.Context, id uint) (*User, erro
 	return user, nil
 }
 
-func (p *PostgresStorage) GetUserByUUID(ctx context.Context, uuid string) (*User, error) {
-	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
-			  provider, provider_id, email_verified, is_active, is_suspended,
-			  created_at, updated_at
-			  FROM users WHERE uuid = $1`
-
-	err := p.db.QueryRowContext(ctx, query, uuid).Scan(
-		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
-		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
-		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to get user by UUID: %w", err)
-	}
-
-	return user, nil
-}
-
 func (p *PostgresStorage) UpdateUser(ctx context.Context, user *User) error {
 	query := `UPDATE users SET email = $1, username = $2, first_name = $3, last_name = $4,
 			  password_hash = $5, avatar_url = $6, provider = $7, provider_id = $8, email_verified = $9,
@@ -241,9 +219,8 @@ func (p *PostgresStorage) CreateUserWithSecurity(ctx context.Context, user *User
 	// Create user security record
 	securityQuery := `INSERT INTO user_security (user_id, login_attempts, last_login_ip,
 					  password_changed_at, force_password_change, two_factor_enabled,
-					  concurrent_sessions, security_version, risk_score, suspicious_activity_count,
 					  created_at, updated_at)
-					  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+					  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	// Convert string IP to sql.NullString to handle NULL properly
 	var lastLoginIP sql.NullString
@@ -255,8 +232,7 @@ func (p *PostgresStorage) CreateUserWithSecurity(ctx context.Context, user *User
 	_, err = tx.ExecContext(ctx, securityQuery,
 		security.UserID, security.LoginAttempts, lastLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
-		security.ConcurrentSessions, security.SecurityVersion, security.RiskScore,
-		security.SuspiciousActivityCount, time.Now(), time.Now())
+		time.Now(), time.Now())
 
 	if err != nil {
 		return fmt.Errorf("failed to create user security in transaction: %w", err)
@@ -321,9 +297,8 @@ func (p *PostgresStorage) HandleFailedLogin(ctx context.Context, userID uint, ma
 func (p *PostgresStorage) CreateUserSecurity(ctx context.Context, security *UserSecurity) error {
 	query := `INSERT INTO user_security (user_id, login_attempts, last_login_ip,
 			  password_changed_at, force_password_change, two_factor_enabled,
-			  concurrent_sessions, security_version, risk_score, suspicious_activity_count,
 			  created_at, updated_at)
-			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	// Convert string IP to sql.NullString to handle NULL properly
 	var lastLoginIP sql.NullString
@@ -335,8 +310,7 @@ func (p *PostgresStorage) CreateUserSecurity(ctx context.Context, security *User
 	_, err := p.db.ExecContext(ctx, query,
 		security.UserID, security.LoginAttempts, lastLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
-		security.ConcurrentSessions, security.SecurityVersion, security.RiskScore,
-		security.SuspiciousActivityCount, time.Now(), time.Now())
+		time.Now(), time.Now())
 
 	if err != nil {
 		return fmt.Errorf("failed to create user security: %w", err)
@@ -350,24 +324,18 @@ func (p *PostgresStorage) GetUserSecurity(ctx context.Context, userID uint) (*Us
 	query := `SELECT user_id, login_attempts, locked_until, last_login_at, last_login_ip,
 			  last_failed_login_at, last_failed_login_ip, password_changed_at,
 			  force_password_change, two_factor_enabled, two_factor_secret,
-			  two_factor_verified_at, concurrent_sessions,
-			  last_session_token, device_fingerprint, known_devices,
-			  security_version, risk_score, suspicious_activity_count,
-			  created_at, updated_at
+			  two_factor_verified_at, created_at, updated_at
 			  FROM user_security WHERE user_id = $1`
 
 	// Use sql.NullString for nullable string fields to handle NULL values
 	var lastLoginIP, lastFailedLoginIP, twoFactorSecret sql.NullString
-	var lastSessionToken, deviceFingerprint, knownDevices sql.NullString
 
 	err := p.db.QueryRowContext(ctx, query, userID).Scan(
 		&security.UserID, &security.LoginAttempts, &security.LockedUntil,
 		&security.LastLoginAt, &lastLoginIP, &security.LastFailedLoginAt,
 		&lastFailedLoginIP, &security.PasswordChangedAt, &security.ForcePasswordChange,
 		&security.TwoFactorEnabled, &twoFactorSecret,
-		&security.TwoFactorVerifiedAt, &security.ConcurrentSessions, &lastSessionToken,
-		&deviceFingerprint, &knownDevices, &security.SecurityVersion,
-		&security.RiskScore, &security.SuspiciousActivityCount, &security.CreatedAt, &security.UpdatedAt)
+		&security.TwoFactorVerifiedAt, &security.CreatedAt, &security.UpdatedAt)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -386,15 +354,6 @@ func (p *PostgresStorage) GetUserSecurity(ctx context.Context, userID uint) (*Us
 	if twoFactorSecret.Valid {
 		security.TwoFactorSecret = twoFactorSecret.String
 	}
-	if lastSessionToken.Valid {
-		security.LastSessionToken = lastSessionToken.String
-	}
-	if deviceFingerprint.Valid {
-		security.DeviceFingerprint = deviceFingerprint.String
-	}
-	if knownDevices.Valid {
-		security.KnownDevices = knownDevices.String
-	}
 
 	return security, nil
 }
@@ -404,10 +363,8 @@ func (p *PostgresStorage) UpdateUserSecurity(ctx context.Context, security *User
 			  last_login_at = $3, last_login_ip = $4, last_failed_login_at = $5,
 			  last_failed_login_ip = $6, password_changed_at = $7, force_password_change = $8,
 			  two_factor_enabled = $9, two_factor_secret = $10,
-			  two_factor_verified_at = $11, concurrent_sessions = $12, last_session_token = $13,
-			  device_fingerprint = $14, known_devices = $15, security_version = $16,
-			  risk_score = $17, suspicious_activity_count = $18, updated_at = $19
-			  WHERE user_id = $20`
+			  two_factor_verified_at = $11, updated_at = $12
+			  WHERE user_id = $13`
 
 	// Convert string IP pointers to sql.NullString to handle NULL properly
 	var lastLoginIP, lastFailedLoginIP sql.NullString
@@ -425,9 +382,7 @@ func (p *PostgresStorage) UpdateUserSecurity(ctx context.Context, security *User
 		lastLoginIP, security.LastFailedLoginAt, lastFailedLoginIP,
 		security.PasswordChangedAt, security.ForcePasswordChange, security.TwoFactorEnabled,
 		security.TwoFactorSecret, security.TwoFactorVerifiedAt,
-		security.ConcurrentSessions, security.LastSessionToken, security.DeviceFingerprint,
-		security.KnownDevices, security.SecurityVersion, security.RiskScore,
-		security.SuspiciousActivityCount, time.Now(), security.UserID)
+		time.Now(), security.UserID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update user security: %w", err)
@@ -437,32 +392,12 @@ func (p *PostgresStorage) UpdateUserSecurity(ctx context.Context, security *User
 }
 
 // Optimized security operations
-func (p *PostgresStorage) IncrementLoginAttempts(ctx context.Context, userID uint) error {
-	query := `UPDATE user_security SET login_attempts = login_attempts + 1, updated_at = $1
-			  WHERE user_id = $2`
-	_, err := p.db.ExecContext(ctx, query, time.Now(), userID)
-	if err != nil {
-		return fmt.Errorf("failed to increment login attempts: %w", err)
-	}
-	return nil
-}
-
 func (p *PostgresStorage) ResetLoginAttempts(ctx context.Context, userID uint) error {
 	query := `UPDATE user_security SET login_attempts = 0, locked_until = NULL, updated_at = $1
 			  WHERE user_id = $2`
 	_, err := p.db.ExecContext(ctx, query, time.Now(), userID)
 	if err != nil {
 		return fmt.Errorf("failed to reset login attempts: %w", err)
-	}
-	return nil
-}
-
-func (p *PostgresStorage) SetUserLocked(ctx context.Context, userID uint, until time.Time) error {
-	query := `UPDATE user_security SET locked_until = $1, updated_at = $2
-			  WHERE user_id = $3`
-	_, err := p.db.ExecContext(ctx, query, until, time.Now(), userID)
-	if err != nil {
-		return fmt.Errorf("failed to set user locked: %w", err)
 	}
 	return nil
 }
@@ -654,20 +589,10 @@ func (p *PostgresStorage) CleanupExpiredSessions(ctx context.Context) error {
 	return nil
 }
 
-func (p *PostgresStorage) CountActiveSessions(ctx context.Context, userID uint) (int, error) {
-	var count int
-	query := `SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND is_active = true AND expires_at > $2`
-	err := p.db.QueryRowContext(ctx, query, userID, time.Now()).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count active sessions: %w", err)
-	}
-	return count, nil
-}
-
 // OAuth state operations
 func (p *PostgresStorage) StoreOAuthState(ctx context.Context, state *OAuthState) error {
-	query := `INSERT INTO oauth_states (state, csrf, provider, redirect_url, expires_at, created_at)
-			  VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
+	query := `INSERT INTO oauth_states (state, provider, redirect_url, expires_at, created_at)
+			  VALUES ($1, $2, $3, $4, $5) RETURNING id`
 
 	// Convert string to sql.NullString to handle NULL properly
 	var redirectURL sql.NullString
@@ -677,7 +602,7 @@ func (p *PostgresStorage) StoreOAuthState(ctx context.Context, state *OAuthState
 	}
 
 	err := p.db.QueryRowContext(ctx, query,
-		state.State, state.CSRF, state.Provider, redirectURL,
+		state.State, state.Provider, redirectURL,
 		state.ExpiresAt, time.Now()).Scan(&state.ID)
 
 	if err != nil {
@@ -689,14 +614,14 @@ func (p *PostgresStorage) StoreOAuthState(ctx context.Context, state *OAuthState
 
 func (p *PostgresStorage) GetOAuthState(ctx context.Context, state string) (*OAuthState, error) {
 	oauthState := &OAuthState{}
-	query := `SELECT id, state, csrf, provider, redirect_url, expires_at, created_at
+	query := `SELECT id, state, provider, redirect_url, expires_at, created_at
 			  FROM oauth_states WHERE state = $1`
 
 	// Use sql.NullString for redirect_url to handle NULL values
 	var redirectURL sql.NullString
 
 	err := p.db.QueryRowContext(ctx, query, state).Scan(
-		&oauthState.ID, &oauthState.State, &oauthState.CSRF, &oauthState.Provider,
+		&oauthState.ID, &oauthState.State, &oauthState.Provider,
 		&redirectURL, &oauthState.ExpiresAt, &oauthState.CreatedAt)
 
 	if err != nil {
@@ -763,82 +688,6 @@ func (p *PostgresStorage) CreateSecurityEvent(ctx context.Context, event *Securi
 	}
 
 	return nil
-}
-
-func (p *PostgresStorage) GetSecurityEvents(ctx context.Context, userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error) {
-	query := `SELECT id, user_id, event_type, description, ip_address,
-			  user_agent, device_fingerprint, severity, success, metadata, created_at
-			  FROM security_events WHERE true`
-	args := []interface{}{}
-	argCount := 0
-
-	if userID != nil {
-		argCount++
-		query += fmt.Sprintf(` AND user_id = $%d`, argCount)
-		args = append(args, *userID)
-	}
-
-	if eventType != "" {
-		argCount++
-		query += fmt.Sprintf(` AND event_type = $%d`, argCount)
-		args = append(args, eventType)
-	}
-
-	argCount++
-	query += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d`, argCount)
-	args = append(args, limit)
-
-	argCount++
-	// #nosec G202 -- $%d is the parameter index; the value goes through args
-	query += fmt.Sprintf(` OFFSET $%d`, argCount)
-	args = append(args, offset)
-
-	rows, err := p.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get security events: %w", err)
-	}
-	defer rows.Close()
-
-	var events []*SecurityEvent
-	for rows.Next() {
-		event := &SecurityEvent{}
-		// Use sql.NullString for nullable fields to handle NULL values
-		var ipAddress, description, userAgent, deviceFingerprint, metadata sql.NullString
-
-		err := rows.Scan(
-			&event.ID, &event.UserID, &event.EventType, &description,
-			&ipAddress, &userAgent, &deviceFingerprint,
-			&event.Severity, &event.Success, &metadata, &event.CreatedAt)
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan security event: %w", err)
-		}
-
-		// Convert sql.NullString back to string
-		if ipAddress.Valid {
-			event.IPAddress = ipAddress.String
-		}
-		if description.Valid {
-			event.Description = description.String
-		}
-		if userAgent.Valid {
-			event.UserAgent = userAgent.String
-		}
-		if deviceFingerprint.Valid {
-			event.DeviceFingerprint = deviceFingerprint.String
-		}
-		if metadata.Valid {
-			event.Metadata = metadata.String
-		}
-
-		events = append(events, event)
-	}
-
-	return events, nil
-}
-
-func (p *PostgresStorage) GetSecurityEventsByUser(ctx context.Context, userID uint, limit int, offset int) ([]*SecurityEvent, error) {
-	return p.GetSecurityEvents(ctx, &userID, "", limit, offset)
 }
 
 // Password Reset Token operations
@@ -1123,7 +972,10 @@ func (p *PostgresStorage) Regenerate2FABackupCodes(ctx context.Context, userID u
 	// Create new backup codes
 	backupCodes := make([]*TwoFactorBackupCode, 0, 10)
 	for i := 0; i < 10; i++ {
-		code, _ := GenerateSecureToken(3)
+		code, err := GenerateNumericCode(12)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate 2FA backup code: %w", err)
+		}
 
 		backupCode := &TwoFactorBackupCode{
 			UserID:    userID,

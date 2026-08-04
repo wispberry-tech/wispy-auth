@@ -1,10 +1,5 @@
-examples/core/.env
-examples/core/wispy-auth-example
-examples/core/auth_test.db
-examples/core/auth_test.db-shm
-examples/core/auth_test.db-wal
+examples/admin-password-reset/.env
 *.exe
 coverage
 coverage.out
-examples/core/core
 /admin-password-reset

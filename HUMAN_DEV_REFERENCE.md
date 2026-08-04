@@ -19,7 +19,7 @@ gosec ./...              # Run security scan
 ### Building & Running
 ```bash
 go build ./...           # Build the library
-cd examples/core && go run main.go  # Run the example application (starts on :8080)
+cd examples/admin-password-reset && go run main.go  # Run the example application (starts on :8080)
 ```
 
 ### Releasing

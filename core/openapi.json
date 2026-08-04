@@ -314,7 +314,7 @@
             "in": "query",
             "required": true,
             "schema": { "type": "string" },
-            "description": "CSRF state token returned by the provider"
+            "description": "OAuth state token returned by the provider"
           }
         ],
         "responses": {
@@ -454,12 +454,26 @@
       }
     },
     "/2fa/backup-codes": {
-      "get": {
+      "post": {
         "tags": ["Two-Factor"],
         "summary": "List the current user's backup codes",
         "operationId": "GetBackupCodes",
         "x-handler": "GetBackupCodesHandler",
         "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["password"],
+                "properties": {
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Backup codes",
@@ -469,6 +483,7 @@
               }
             }
           },
+          "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }

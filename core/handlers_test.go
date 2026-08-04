@@ -239,7 +239,7 @@ func TestHandlers_SuccessScenarios(t *testing.T) {
 		// Validate token
 		validateReq := httptest.NewRequest("GET", "/validate", nil)
 		validateReq.Header.Set("Authorization", "Bearer "+signinResp.Token)
-		ctx := context.WithValue(validateReq.Context(), "user", signinResp.User)
+		ctx := context.WithValue(validateReq.Context(), ctxKeyUser, signinResp.User)
 		validateReq = validateReq.WithContext(ctx)
 
 		rec3 := httptest.NewRecorder()
@@ -259,8 +259,8 @@ func TestHandlers_SuccessScenarios(t *testing.T) {
 		session, _ := mockStore.GetSession(context.Background(), signinResp.Token)
 		logoutReq := httptest.NewRequest("POST", "/logout", nil)
 		logoutReq.Header.Set("Authorization", "Bearer "+signinResp.Token)
-		ctx2 := context.WithValue(logoutReq.Context(), "user", signinResp.User)
-		ctx2 = context.WithValue(ctx2, "session", session)
+		ctx2 := context.WithValue(logoutReq.Context(), ctxKeyUser, signinResp.User)
+		ctx2 = context.WithValue(ctx2, ctxKeySession, session)
 		logoutReq = logoutReq.WithContext(ctx2)
 
 		rec4 := httptest.NewRecorder()
@@ -288,7 +288,7 @@ func TestHandlers_SuccessScenarios(t *testing.T) {
 
 		// Add user to context manually for testing
 		ctx := req.Context()
-		ctx = context.WithValue(ctx, "user", user)
+		ctx = context.WithValue(ctx, ctxKeyUser, user)
 		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
@@ -428,7 +428,7 @@ func TestHandlers_TokenExtraction(t *testing.T) {
 	t.Run("token_from_authorization_header", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/validate", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
-		ctx := context.WithValue(req.Context(), "user", user)
+		ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
@@ -446,7 +446,7 @@ func TestHandlers_TokenExtraction(t *testing.T) {
 			Name:  "auth_token",
 			Value: token,
 		})
-		ctx := context.WithValue(req.Context(), "user", user)
+		ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -14,11 +15,6 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v) // Client may be gone; nothing to do
-}
-
-// writeError writes a JSON error response
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
 }
 
 // Request and Response Types
@@ -132,8 +128,8 @@ type OAuthResponse struct {
 
 // 2FA Request and Response Types
 
-// Enable2FARequest represents 2FA enablement request
-type Enable2FARequest struct {
+// PasswordRequest verifies the current password for sensitive operations.
+type PasswordRequest struct {
 	Password string `json:"password" validate:"required"`
 }
 
@@ -157,11 +153,6 @@ type VerifyEnable2FAResponse struct {
 	Error       string   `json:"error,omitempty"`
 }
 
-// Disable2FARequest represents 2FA disablement request
-type Disable2FARequest struct {
-	Password string `json:"password" validate:"required"`
-}
-
 // Disable2FAResponse represents 2FA disablement response
 type Disable2FAResponse struct {
 	Message    string `json:"message"`
@@ -183,21 +174,11 @@ type VerifyLogin2FAResponse struct {
 	Error      string `json:"error,omitempty"`
 }
 
-// GetBackupCodesRequest represents get backup codes request
-type GetBackupCodesRequest struct {
-	Password string `json:"password" validate:"required"`
-}
-
 // GetBackupCodesResponse represents get backup codes response
 type GetBackupCodesResponse struct {
 	Codes      []string `json:"codes"`
 	StatusCode int      `json:"-"`
 	Error      string   `json:"error,omitempty"`
-}
-
-// RegenerateBackupCodesRequest represents regenerate backup codes request
-type RegenerateBackupCodesRequest struct {
-	Password string `json:"password" validate:"required"`
 }
 
 // RegenerateBackupCodesResponse represents regenerate backup codes response
@@ -275,14 +256,10 @@ func (a *AuthService) SignUpHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Create user security record
 	userSecurity := &UserSecurity{
-		LoginAttempts:           0,
-		TwoFactorEnabled:        false,
-		ConcurrentSessions:      0,
-		SecurityVersion:         1,
-		RiskScore:               0,
-		SuspiciousActivityCount: 0,
-		CreatedAt:               time.Now(),
-		UpdatedAt:               time.Now(),
+		LoginAttempts:    0,
+		TwoFactorEnabled: false,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
 	}
 
 	// Create user and security record atomically in a transaction
@@ -298,27 +275,13 @@ func (a *AuthService) SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create session
-	sessionToken, err := GenerateSecureToken(32)
+	session, err := a.newSession(user.ID, ip, userAgent)
 	if err != nil {
 		slog.Error("Failed to generate session token", "error", err)
 		writeJSON(w, http.StatusInternalServerError, SignUpResponse{StatusCode: http.StatusInternalServerError, Error: "Session token generation failed"})
 		return
 	}
-
-	deviceFingerprint := generateDeviceFingerprint(userAgent, ip)
-	expiresAt := calculateSessionExpiry(a.securityConfig)
-
-	session := &Session{
-		Token:             sessionToken,
-		UserID:            user.ID,
-		ExpiresAt:         expiresAt,
-		DeviceFingerprint: deviceFingerprint,
-		UserAgent:         userAgent,
-		IPAddress:         ip,
-		IsActive:          true,
-		LastAccessedAt:    time.Now(),
-		CreatedAt:         time.Now(),
-	}
+	sessionToken := session.Token
 
 	if err := a.storage.CreateSession(r.Context(), session); err != nil {
 		slog.Error("Failed to create session", "error", err)
@@ -432,27 +395,13 @@ func (a *AuthService) SignInHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create session
-	sessionToken, err := GenerateSecureToken(32)
+	session, err := a.newSession(user.ID, ip, userAgent)
 	if err != nil {
 		slog.Error("Failed to generate session token", "error", err)
 		writeJSON(w, http.StatusInternalServerError, SignInResponse{StatusCode: http.StatusInternalServerError, Error: "Session token generation failed"})
 		return
 	}
-
-	deviceFingerprint := generateDeviceFingerprint(userAgent, ip)
-	expiresAt := calculateSessionExpiry(a.securityConfig)
-
-	session := &Session{
-		Token:             sessionToken,
-		UserID:            user.ID,
-		ExpiresAt:         expiresAt,
-		DeviceFingerprint: deviceFingerprint,
-		UserAgent:         userAgent,
-		IPAddress:         ip,
-		IsActive:          true,
-		LastAccessedAt:    time.Now(),
-		CreatedAt:         time.Now(),
-	}
+	sessionToken := session.Token
 
 	if err := a.storage.CreateSession(r.Context(), session); err != nil {
 		slog.Error("Failed to create session", "error", err)
@@ -492,7 +441,7 @@ func (a *AuthService) SignInHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, SignInResponse{StatusCode: http.StatusOK, Token: sessionToken,
 		User:             user,
 		SessionID:        session.ID,
-		SessionExpiresAt: expiresAt,
+		SessionExpiresAt: session.ExpiresAt,
 		RefreshToken:     refreshToken})
 	return
 }
@@ -621,6 +570,12 @@ func (a *AuthService) ForgotPasswordHandler(w http.ResponseWriter, r *http.Reque
 
 	a.logSecurityEvent(&user.ID, "password_reset", "Password reset requested",
 		extractIP(r), r.Header.Get("User-Agent"), true)
+
+	if a.notifications != nil {
+		if err := a.notifications(r.Context(), PasswordResetNotification{Email: user.Email, Token: token}); err != nil {
+			slog.Error("Failed to deliver password reset notification", "error", err)
+		}
+	}
 
 	response := ForgotPasswordResponse{
 		StatusCode: http.StatusOK,
@@ -830,7 +785,7 @@ func (a *AuthService) Enable2FAHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req Enable2FARequest
+	var req PasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, Enable2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
 		return
@@ -841,8 +796,8 @@ func (a *AuthService) Enable2FAHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if a.emailService == nil {
-		writeJSON(w, http.StatusInternalServerError, Enable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Email service not configured"})
+	if a.notifications == nil {
+		writeJSON(w, http.StatusInternalServerError, Enable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Notification handler not configured"})
 		return
 	}
 
@@ -948,7 +903,7 @@ func (a *AuthService) Disable2FAHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req Disable2FARequest
+	var req PasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, Disable2FAResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
 		return
@@ -1000,11 +955,6 @@ func (a *AuthService) VerifyLogin2FAHandler(w http.ResponseWriter, r *http.Reque
 
 	if err := a.validator.Struct(req); err != nil {
 		writeJSON(w, http.StatusBadRequest, VerifyLogin2FAResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
-		return
-	}
-
-	if a.emailService == nil {
-		writeJSON(w, http.StatusInternalServerError, VerifyLogin2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Email service not configured"})
 		return
 	}
 
@@ -1081,30 +1031,35 @@ func (a *AuthService) VerifyLogin2FAHandler(w http.ResponseWriter, r *http.Reque
 	return
 }
 
+// newSession builds a session for the given user and request context.
+func (a *AuthService) newSession(userID uint, ip, userAgent string) (*Session, error) {
+	token, err := GenerateSecureToken(32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate session token: %w", err)
+	}
+	return &Session{
+		Token:             token,
+		UserID:            userID,
+		ExpiresAt:         calculateSessionExpiry(a.securityConfig),
+		DeviceFingerprint: generateDeviceFingerprint(userAgent, ip),
+		UserAgent:         userAgent,
+		IPAddress:         ip,
+		IsActive:          true,
+		LastAccessedAt:    time.Now(),
+		CreatedAt:         time.Now(),
+	}, nil
+}
+
 // createSessionAndResponse is a helper to create a session and return response
 func (a *AuthService) createSessionAndResponse(ctx context.Context, user *User, ip, userAgent string) VerifyLogin2FAResponse {
-	sessionToken, err := GenerateSecureToken(32)
+	session, err := a.newSession(user.ID, ip, userAgent)
 	if err != nil {
 		return VerifyLogin2FAResponse{
 			StatusCode: http.StatusInternalServerError,
 			Error:      "Failed to create session",
 		}
 	}
-
-	deviceFingerprint := generateDeviceFingerprint(userAgent, ip)
-	expiresAt := calculateSessionExpiry(a.securityConfig)
-
-	session := &Session{
-		Token:             sessionToken,
-		UserID:            user.ID,
-		ExpiresAt:         expiresAt,
-		DeviceFingerprint: deviceFingerprint,
-		UserAgent:         userAgent,
-		IPAddress:         ip,
-		IsActive:          true,
-		LastAccessedAt:    time.Now(),
-		CreatedAt:         time.Now(),
-	}
+	sessionToken := session.Token
 
 	if err := a.storage.CreateSession(ctx, session); err != nil {
 		return VerifyLogin2FAResponse{
@@ -1127,6 +1082,23 @@ func (a *AuthService) GetBackupCodesHandler(w http.ResponseWriter, r *http.Reque
 	user := GetUserFromContext(r)
 	if user == nil {
 		writeJSON(w, http.StatusUnauthorized, GetBackupCodesResponse{StatusCode: http.StatusUnauthorized, Error: "User not authenticated"})
+		return
+	}
+
+	// Verify password first
+	var req PasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, GetBackupCodesResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
+		return
+	}
+
+	if err := a.validator.Struct(req); err != nil {
+		writeJSON(w, http.StatusBadRequest, GetBackupCodesResponse{StatusCode: http.StatusBadRequest, Error: formatValidationErrors(err)})
+		return
+	}
+
+	if !checkPasswordHash(req.Password, user.PasswordHash) {
+		writeJSON(w, http.StatusUnauthorized, GetBackupCodesResponse{StatusCode: http.StatusUnauthorized, Error: "Invalid password"})
 		return
 	}
 
@@ -1155,7 +1127,7 @@ func (a *AuthService) RegenerateBackupCodesHandler(w http.ResponseWriter, r *htt
 	}
 
 	// Verify password first
-	var req RegenerateBackupCodesRequest
+	var req PasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, RegenerateBackupCodesResponse{StatusCode: http.StatusBadRequest, Error: "Invalid request format"})
 		return
@@ -1224,35 +1196,16 @@ func (a *AuthService) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	sessionToken, err := GenerateSecureToken(32)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, RefreshTokenResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to generate session token"})
-		return
-	}
-
-	// Create new session
-	sessionToken, err = GenerateSecureToken(32)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, RefreshTokenResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to generate session token"})
-		return
-	}
-
 	ip := extractIP(r)
 	userAgent := r.UserAgent()
-	deviceFingerprint := generateDeviceFingerprint(userAgent, ip)
-	expiresAt := calculateSessionExpiry(a.securityConfig)
 
-	session := &Session{
-		Token:             sessionToken,
-		UserID:            refreshToken.UserID,
-		ExpiresAt:         expiresAt,
-		DeviceFingerprint: deviceFingerprint,
-		UserAgent:         userAgent,
-		IPAddress:         ip,
-		IsActive:          true,
-		LastAccessedAt:    time.Now(),
-		CreatedAt:         time.Now(),
+	// Create new session
+	session, err := a.newSession(refreshToken.UserID, ip, userAgent)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, RefreshTokenResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to generate session token"})
+		return
 	}
+	sessionToken := session.Token
 
 	if err := a.storage.CreateSession(r.Context(), session); err != nil {
 		writeJSON(w, http.StatusInternalServerError, RefreshTokenResponse{StatusCode: http.StatusInternalServerError, Error: "Session creation failed"})

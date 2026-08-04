@@ -45,19 +45,6 @@ CREATE TABLE IF NOT EXISTS user_security (
     two_factor_secret VARCHAR(255),
     two_factor_verified_at DATETIME,
 
-    -- Session Security
-    concurrent_sessions INTEGER DEFAULT 0,
-    last_session_token VARCHAR(255),
-
-    -- Device Tracking
-    device_fingerprint VARCHAR(255),
-    known_devices TEXT,
-
-    -- Security Metadata
-    security_version INTEGER DEFAULT 1,
-    risk_score INTEGER DEFAULT 0,
-    suspicious_activity_count INTEGER DEFAULT 0,
-
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
@@ -111,11 +98,10 @@ CREATE TABLE IF NOT EXISTS security_events (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- OAuth States table - OAuth CSRF protection
+-- OAuth States table - single-use state tokens against CSRF
 CREATE TABLE IF NOT EXISTS oauth_states (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     state VARCHAR(64) UNIQUE NOT NULL,
-    csrf VARCHAR(64) NOT NULL,
     provider VARCHAR(50) NOT NULL,
     redirect_url TEXT,
     expires_at DATETIME NOT NULL,

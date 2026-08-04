@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+type ctxKey int
+
+const (
+	ctxKeyUser ctxKey = iota
+	ctxKeySession
+)
+
 // AuthMiddleware provides authentication middleware for HTTP handlers
 func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,8 +81,8 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 		user.PasswordHash = ""
 
 		// Add user to request context
-		ctx := context.WithValue(r.Context(), "user", user)
-		ctx = context.WithValue(ctx, "session", session)
+		ctx := context.WithValue(r.Context(), ctxKeyUser, user)
+		ctx = context.WithValue(ctx, ctxKeySession, session)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -137,15 +144,15 @@ func (a *AuthService) OptionalAuthMiddleware(next http.Handler) http.Handler {
 		user.PasswordHash = ""
 
 		// Add user to request context
-		ctx := context.WithValue(r.Context(), "user", user)
-		ctx = context.WithValue(ctx, "session", session)
+		ctx := context.WithValue(r.Context(), ctxKeyUser, user)
+		ctx = context.WithValue(ctx, ctxKeySession, session)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 // GetSessionFromContext retrieves the current session from the request context
 func GetSessionFromContext(r *http.Request) *Session {
-	if session, ok := r.Context().Value("session").(*Session); ok {
+	if session, ok := r.Context().Value(ctxKeySession).(*Session); ok {
 		return session
 	}
 	return nil

@@ -54,23 +54,8 @@ func main() {
     mux := http.NewServeMux()
 
     // Authentication endpoints
-    mux.HandleFunc("POST /signup", func(w http.ResponseWriter, r *http.Request) {
-        result := authService.SignUpHandler(r)
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(result.StatusCode)
-        if err := json.NewEncoder(w).Encode(result); err != nil {
-            slog.Error("Failed to encode signup response", "error", err)
-        }
-    })
-
-    mux.HandleFunc("POST /signin", func(w http.ResponseWriter, r *http.Request) {
-        result := authService.SignInHandler(r)
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(result.StatusCode)
-        if err := json.NewEncoder(w).Encode(result); err != nil {
-            slog.Error("Failed to encode signin response", "error", err)
-        }
-    })
+    mux.HandleFunc("POST /signup", authService.SignUpHandler)
+    mux.HandleFunc("POST /signin", authService.SignInHandler)
 
     // Protected routes
     mux.Handle("GET /profile", authService.AuthMiddleware(
@@ -127,7 +112,7 @@ If `AllowUserPasswordReset` is `false` (default), the forgot password endpoint w
 - `POST /2fa/enable/verify` - Confirm code and activate 2FA
 - `POST /2fa/disable` - Disable 2FA
 - `POST /2fa/login` - Complete sign-in with a 2FA/backup code
-- `GET /2fa/backup-codes` - List backup codes
+- `POST /2fa/backup-codes` - List backup codes (requires current password)
 - `POST /2fa/backup-codes/regenerate` - Generate new backup codes
 - `POST /refresh-token` - Exchange a refresh token for a new session
 
@@ -255,14 +240,14 @@ The core module uses a simplified schema with only essential tables:
 - `user_security` - Security tracking and sensitive data
 - `sessions` - Session management with device tracking
 - `security_events` - Comprehensive security audit log
-- `oauth_states` - OAuth CSRF protection
+- `oauth_states` - Single-use OAuth state tokens
 
 ## Example Application
 
 Run the example application:
 
 ```bash
-cd examples/core
+cd examples/admin-password-reset
 go run main.go
 ```
 
@@ -274,7 +259,6 @@ The core module provides the same essential authentication features as the full 
 
 - Multi-tenant support
 - Role-based access control (RBAC)
-- Email service integration
 - Referral system
 - Complex middleware
 

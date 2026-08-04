@@ -22,7 +22,7 @@ func TestTwoFactor_Enable2FA_ValidFlow(t *testing.T) {
 	req := createTestRequest(t, "POST", "/2fa/enable", map[string]interface{}{
 		"password": "TestPassword123!",
 	})
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -47,7 +47,7 @@ func TestTwoFactor_Enable2FA_InvalidPassword(t *testing.T) {
 	req := createTestRequest(t, "POST", "/2fa/enable", map[string]interface{}{
 		"password": "WrongPassword!",
 	})
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -92,7 +92,7 @@ func TestTwoFactor_VerifyEnable2FA_ValidCode(t *testing.T) {
 	enableReq := createTestRequest(t, "POST", "/2fa/enable", map[string]interface{}{
 		"password": "TestPassword123!",
 	})
-	ctx := context.WithValue(enableReq.Context(), "user", user)
+	ctx := context.WithValue(enableReq.Context(), ctxKeyUser, user)
 	enableReq = enableReq.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -107,21 +107,32 @@ func TestTwoFactor_VerifyEnable2FA_ValidCode(t *testing.T) {
 		t.Logf("No backup codes found yet, this is expected during enable flow")
 	}
 
-	// For this test, we'll create a code manually since Enable2FAHandler creates it
-	testCode := "123456"
-	twoFACode := &TwoFactorCode{
-		UserID:    user.ID,
-		Code:      testCode,
-		CodeType:  "enable",
-		ExpiresAt: time.Now().Add(5 * time.Minute),
-		CreatedAt: time.Now(),
+	// Fetch the code Enable2FAHandler actually stored and verify with it
+	var realCode string
+	mockStore.mu.Lock()
+	for _, c := range mockStore.twoFactorCodes {
+		if c.UserID == user.ID && c.CodeType == "enable" {
+			realCode = c.Code
+			break
+		}
 	}
-	mockStore.Create2FACode(context.Background(), twoFACode)
+	mockStore.mu.Unlock()
+	if realCode == "" {
+		t.Fatal("no 2FA code stored after enable")
+	}
+	if len(realCode) != 6 {
+		t.Fatalf("2FA code length = %d, want 6", len(realCode))
+	}
+	for _, r := range realCode {
+		if r < '0' || r > '9' {
+			t.Fatalf("2FA code %q is not numeric", realCode)
+		}
+	}
 
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-enable", map[string]interface{}{
-		"code": testCode,
+		"code": realCode,
 	})
-	ctx = context.WithValue(verifyReq.Context(), "user", user)
+	ctx = context.WithValue(verifyReq.Context(), ctxKeyUser, user)
 	verifyReq = verifyReq.WithContext(ctx)
 
 	rec2 := httptest.NewRecorder()
@@ -155,7 +166,7 @@ func TestTwoFactor_VerifyEnable2FA_InvalidCode(t *testing.T) {
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-enable", map[string]interface{}{
 		"code": "000000",
 	})
-	ctx := context.WithValue(verifyReq.Context(), "user", user)
+	ctx := context.WithValue(verifyReq.Context(), ctxKeyUser, user)
 	verifyReq = verifyReq.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -190,7 +201,7 @@ func TestTwoFactor_VerifyEnable2FA_ExpiredCode(t *testing.T) {
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-enable", map[string]interface{}{
 		"code": "111111",
 	})
-	ctx := context.WithValue(verifyReq.Context(), "user", user)
+	ctx := context.WithValue(verifyReq.Context(), ctxKeyUser, user)
 	verifyReq = verifyReq.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -221,7 +232,7 @@ func TestTwoFactor_Disable2FA_ValidFlow(t *testing.T) {
 	disableReq := createTestRequest(t, "POST", "/2fa/disable", map[string]interface{}{
 		"password": "TestPassword123!",
 	})
-	ctx := context.WithValue(disableReq.Context(), "user", user)
+	ctx := context.WithValue(disableReq.Context(), ctxKeyUser, user)
 	disableReq = disableReq.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -257,7 +268,7 @@ func TestTwoFactor_Disable2FA_InvalidPassword(t *testing.T) {
 	disableReq := createTestRequest(t, "POST", "/2fa/disable", map[string]interface{}{
 		"password": "WrongPassword!",
 	})
-	ctx := context.WithValue(disableReq.Context(), "user", user)
+	ctx := context.WithValue(disableReq.Context(), ctxKeyUser, user)
 	disableReq = disableReq.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -423,7 +434,7 @@ func TestTwoFactor_GetBackupCodes_ValidFlow(t *testing.T) {
 	req := createTestRequest(t, "POST", "/2fa/backup-codes", map[string]interface{}{
 		"password": "TestPassword123!",
 	})
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -436,6 +447,31 @@ func TestTwoFactor_GetBackupCodes_ValidFlow(t *testing.T) {
 	}
 	if len(resp.Codes) < 5 {
 		t.Errorf("Expected at least 5 backup codes, got %d", len(resp.Codes))
+	}
+}
+
+// TestTwoFactor_GetBackupCodes_InvalidPassword tests wrong password
+func TestTwoFactor_GetBackupCodes_InvalidPassword(t *testing.T) {
+	authService := mustCreateTestAuthService(t)
+	defer authService.Close()
+
+	signupUser, _ := mustCreateTestUserWithToken(t, authService)
+	mockStore := authService.storage.(*mockStorage)
+	user, _ := mockStore.GetUserByID(context.Background(), signupUser.ID)
+
+	req := createTestRequest(t, "POST", "/2fa/backup-codes", map[string]interface{}{
+		"password": "WrongPassword!",
+	})
+	ctx := context.WithValue(req.Context(), ctxKeyUser, user)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	authService.GetBackupCodesHandler(rec, req)
+	var resp GetBackupCodesResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("GetBackupCodesHandler() status = %d, expected %d: %s", rec.Code, http.StatusUnauthorized, resp.Error)
 	}
 }
 
@@ -482,7 +518,7 @@ func TestTwoFactor_RegenerateBackupCodes_ValidFlow(t *testing.T) {
 	regReq := createTestRequest(t, "POST", "/2fa/regenerate-backup-codes", map[string]interface{}{
 		"password": "TestPassword123!",
 	})
-	ctx := context.WithValue(regReq.Context(), "user", user)
+	ctx := context.WithValue(regReq.Context(), ctxKeyUser, user)
 	regReq = regReq.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -522,7 +558,7 @@ func TestTwoFactor_RegenerateBackupCodes_InvalidPassword(t *testing.T) {
 	regReq := createTestRequest(t, "POST", "/2fa/regenerate-backup-codes", map[string]interface{}{
 		"password": "WrongPassword!",
 	})
-	ctx := context.WithValue(regReq.Context(), "user", user)
+	ctx := context.WithValue(regReq.Context(), ctxKeyUser, user)
 	regReq = regReq.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -548,7 +584,7 @@ func TestTwoFactor_CompleteFlow(t *testing.T) {
 	enableReq := createTestRequest(t, "POST", "/2fa/enable", map[string]interface{}{
 		"password": "TestPassword123!",
 	})
-	ctx := context.WithValue(enableReq.Context(), "user", user)
+	ctx := context.WithValue(enableReq.Context(), ctxKeyUser, user)
 	enableReq = enableReq.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -572,7 +608,7 @@ func TestTwoFactor_CompleteFlow(t *testing.T) {
 	verifyReq := createTestRequest(t, "POST", "/2fa/verify-enable", map[string]interface{}{
 		"code": "444444",
 	})
-	ctx = context.WithValue(verifyReq.Context(), "user", user)
+	ctx = context.WithValue(verifyReq.Context(), ctxKeyUser, user)
 	verifyReq = verifyReq.WithContext(ctx)
 
 	rec = httptest.NewRecorder()
@@ -593,7 +629,7 @@ func TestTwoFactor_CompleteFlow(t *testing.T) {
 	disableReq := createTestRequest(t, "POST", "/2fa/disable", map[string]interface{}{
 		"password": "TestPassword123!",
 	})
-	ctx = context.WithValue(disableReq.Context(), "user", user)
+	ctx = context.WithValue(disableReq.Context(), ctxKeyUser, user)
 	disableReq = disableReq.WithContext(ctx)
 
 	rec = httptest.NewRecorder()

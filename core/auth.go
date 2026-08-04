@@ -9,7 +9,7 @@
 //
 // ## Key Features:
 //   - Built-in security with detailed tracking
-//   - Return-based handlers - maximum control over HTTP responses
+//   - Handler-based API - handlers write JSON responses directly; works with any HTTP router
 //   - Works with any HTTP router (Chi, Gorilla Mux, stdlib, etc.)
 //
 // ## Quick Start:
@@ -29,12 +29,10 @@
 //		log.Fatal(err)
 //	}
 //
-//	// Mount routes with maximum simplicity and control
-//	r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
-//		result := authService.SignUpHandler(r)  // Single API!
-//		w.WriteHeader(result.StatusCode)
-//		json.NewEncoder(w).Encode(result)
-//	})
+//	// Mount routes with any HTTP router
+//	mux := http.NewServeMux()
+//	mux.HandleFunc("POST /signup", authService.SignUpHandler)
+//	mux.HandleFunc("POST /signin", authService.SignInHandler)
 package core
 
 import (
@@ -42,7 +40,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/http"
 	"time"
 
@@ -87,7 +84,7 @@ var (
 //
 // Two-Factor Authentication:
 //   - Optional 2FA enforcement for enhanced security
-//   - Configurable code expiry and attempt limits
+//   - Configurable code expiry
 type SecurityConfig struct {
 	// Password security
 	PasswordMinLength      int
@@ -107,9 +104,7 @@ type SecurityConfig struct {
 	RefreshTokenLifetime time.Duration // How long refresh tokens remain valid (default: 30 days)
 
 	// 2FA Security Settings
-	TwoFactorCodeExpiry      time.Duration // How long 2FA codes remain valid (default: 5 minutes)
-	Max2FAAttempts           int           // Maximum failed 2FA attempts before lockout (default: 3)
-	TwoFactorLockoutDuration time.Duration // How long to lock 2FA after max failures (default: 15 minutes)
+	TwoFactorCodeExpiry time.Duration // How long 2FA codes remain valid (default: 5 minutes)
 
 	// Rate Limiting
 	EnableRateLimiting *bool         // Whether to enable rate limiting
@@ -117,11 +112,8 @@ type SecurityConfig struct {
 	RateLimitWindow    time.Duration // Time window for rate limiting
 
 	// Token Management
-	OAuthStateExpiry        time.Duration // How long OAuth states remain valid (default: 15 minutes)
-	PasswordResetExpiry     time.Duration // How long password reset tokens remain valid (default: 1 hour)
-	DeviceFingerprintWindow time.Duration // Time window for device fingerprint (default: 1 hour)
-	TokenLength             int           // Session token length in bytes (default: 32)
-	BackupCodeCount         int           // Number of 2FA backup codes (default: 10)
+	OAuthStateExpiry    time.Duration // How long OAuth states remain valid (default: 15 minutes)
+	PasswordResetExpiry time.Duration // How long password reset tokens remain valid (default: 1 hour)
 
 	// Cleanup Configuration
 	CleanupInterval time.Duration // How often to run cleanup jobs (default: 1 hour)
@@ -142,8 +134,6 @@ type SecurityConfig struct {
 //   - SessionLifetime: 24 hours
 //   - RequireTwoFactor: false (2FA not mandatory)
 //   - TwoFactorCodeExpiry: 5 minutes
-//   - Max2FAAttempts: 3 failed attempts before lockout
-//   - TwoFactorLockoutDuration: 15 minutes
 //   - EnableRateLimiting: true (rate limiting enabled)
 //   - RateLimitRequests: 10 (10 requests per window)
 //   - RateLimitWindow: 1 minute
@@ -160,30 +150,25 @@ func DefaultSecurityConfig() SecurityConfig {
 	enableRateLimit := true
 	debugMode := false
 	return SecurityConfig{
-		PasswordMinLength:        8,
-		PasswordRequireUpper:     true,
-		PasswordRequireLower:     true,
-		PasswordRequireNumber:    true,
-		PasswordRequireSpecial:   true,
-		AllowUserPasswordReset:   &allowReset,
-		MaxLoginAttempts:         5,
-		RefreshTokenLifetime:     30 * 24 * time.Hour,
-		LockoutDuration:          15 * time.Minute,
-		SessionLifetime:          24 * time.Hour,
-		RequireTwoFactor:         &require2FA,
-		TwoFactorCodeExpiry:      5 * time.Minute,
-		Max2FAAttempts:           3,
-		TwoFactorLockoutDuration: 15 * time.Minute,
-		EnableRateLimiting:       &enableRateLimit,
-		RateLimitRequests:        10,
-		RateLimitWindow:          1 * time.Minute,
-		OAuthStateExpiry:         15 * time.Minute,
-		PasswordResetExpiry:      1 * time.Hour,
-		DeviceFingerprintWindow:  1 * time.Hour,
-		TokenLength:              32,
-		BackupCodeCount:          10,
-		CleanupInterval:          1 * time.Hour,
-		DebugMode:                &debugMode,
+		PasswordMinLength:      8,
+		PasswordRequireUpper:   true,
+		PasswordRequireLower:   true,
+		PasswordRequireNumber:  true,
+		PasswordRequireSpecial: true,
+		AllowUserPasswordReset: &allowReset,
+		MaxLoginAttempts:       5,
+		RefreshTokenLifetime:   30 * 24 * time.Hour,
+		LockoutDuration:        15 * time.Minute,
+		SessionLifetime:        24 * time.Hour,
+		RequireTwoFactor:       &require2FA,
+		TwoFactorCodeExpiry:    5 * time.Minute,
+		EnableRateLimiting:     &enableRateLimit,
+		RateLimitRequests:      10,
+		RateLimitWindow:        1 * time.Minute,
+		OAuthStateExpiry:       15 * time.Minute,
+		PasswordResetExpiry:    1 * time.Hour,
+		CleanupInterval:        1 * time.Hour,
+		DebugMode:              &debugMode,
 	}
 }
 
@@ -353,7 +338,7 @@ func NewCustomOAuthProvider(clientID, clientSecret, redirectURL, authURL, tokenU
 // Optional fields:
 //   - SecurityConfig: Uses DefaultSecurityConfig() if not provided
 //   - OAuthProviders: OAuth2 providers, can be empty map if not using OAuth
-//   - EmailService: Email service for sending 2FA codes and password reset emails
+//   - Notifications: handler for user notifications (2FA codes, password reset tokens)
 //
 // The Storage field must be a valid implementation of the Storage interface.
 // Multiple implementations are available including SQLite and PostgreSQL.
@@ -361,7 +346,7 @@ type Config struct {
 	Storage        Storage                        // Storage implementation (required)
 	SecurityConfig SecurityConfig                 // Security configuration
 	OAuthProviders map[string]OAuthProviderConfig // OAuth provider configurations
-	EmailService   EmailService                   // Email service (optional, for 2FA)
+	Notifications  NotificationHandler            // Notification handler (optional; enables 2FA code delivery)
 	RateLimiter    RateLimiter                    // Custom rate limiter (optional; defaults to in-memory when rate limiting is enabled)
 }
 
@@ -386,15 +371,14 @@ type Config struct {
 //
 // Thread safety: AuthService is safe for concurrent use across multiple goroutines.
 type AuthService struct {
-	storage          Storage
-	oauthConfigs     map[string]*oauth2.Config
-	securityConfig   SecurityConfig
-	validator        *validator.Validate
-	rateLimiter      RateLimiter
-	emailService     EmailService
-	cleanupInterval  time.Duration
-	cleanupDone      chan struct{}
-	oauthUserParsers map[string]OAuthUserParser
+	storage         Storage
+	oauthConfigs    map[string]*oauth2.Config
+	securityConfig  SecurityConfig
+	validator       *validator.Validate
+	rateLimiter     RateLimiter
+	notifications   NotificationHandler
+	cleanupInterval time.Duration
+	cleanupDone     chan struct{}
 }
 
 // validateSecurityConfig validates that the security configuration is sensible
@@ -420,26 +404,11 @@ func validateSecurityConfig(cfg SecurityConfig) error {
 	if cfg.TwoFactorCodeExpiry < time.Minute || cfg.TwoFactorCodeExpiry > 1*time.Hour {
 		return fmt.Errorf("TwoFactorCodeExpiry must be between 1 minute and 1 hour")
 	}
-	if cfg.Max2FAAttempts < 1 || cfg.Max2FAAttempts > 10 {
-		return fmt.Errorf("Max2FAAttempts must be between 1 and 10")
-	}
-	if cfg.TwoFactorLockoutDuration < time.Minute || cfg.TwoFactorLockoutDuration > 24*time.Hour {
-		return fmt.Errorf("TwoFactorLockoutDuration must be between 1 minute and 24 hours")
-	}
-	if cfg.TokenLength < 16 || cfg.TokenLength > 64 {
-		return fmt.Errorf("TokenLength must be between 16 and 64")
-	}
-	if cfg.BackupCodeCount < 5 || cfg.BackupCodeCount > 20 {
-		return fmt.Errorf("BackupCodeCount must be between 5 and 20")
-	}
 	if cfg.OAuthStateExpiry < time.Minute || cfg.OAuthStateExpiry > 1*time.Hour {
 		return fmt.Errorf("OAuthStateExpiry must be between 1 minute and 1 hour")
 	}
 	if cfg.PasswordResetExpiry < time.Minute || cfg.PasswordResetExpiry > 24*time.Hour {
 		return fmt.Errorf("PasswordResetExpiry must be between 1 minute and 24 hours")
-	}
-	if cfg.DeviceFingerprintWindow < time.Minute || cfg.DeviceFingerprintWindow > 24*time.Hour {
-		return fmt.Errorf("DeviceFingerprintWindow must be between 1 minute and 24 hours")
 	}
 	if cfg.CleanupInterval < 1*time.Minute || cfg.CleanupInterval > 24*time.Hour {
 		return fmt.Errorf("CleanupInterval must be between 1 minute and 24 hours")
@@ -509,17 +478,8 @@ func mergeConfig(base, override SecurityConfig) SecurityConfig {
 	if override.RefreshTokenLifetime != 0 {
 		base.RefreshTokenLifetime = override.RefreshTokenLifetime
 	}
-	if override.Max2FAAttempts != 0 {
-		base.Max2FAAttempts = override.Max2FAAttempts
-	}
 	if override.RateLimitRequests != 0 {
 		base.RateLimitRequests = override.RateLimitRequests
-	}
-	if override.TokenLength != 0 {
-		base.TokenLength = override.TokenLength
-	}
-	if override.BackupCodeCount != 0 {
-		base.BackupCodeCount = override.BackupCodeCount
 	}
 	// time.Duration fields — replace when non-zero
 	if override.LockoutDuration != 0 {
@@ -531,9 +491,6 @@ func mergeConfig(base, override SecurityConfig) SecurityConfig {
 	if override.TwoFactorCodeExpiry != 0 {
 		base.TwoFactorCodeExpiry = override.TwoFactorCodeExpiry
 	}
-	if override.TwoFactorLockoutDuration != 0 {
-		base.TwoFactorLockoutDuration = override.TwoFactorLockoutDuration
-	}
 	if override.RateLimitWindow != 0 {
 		base.RateLimitWindow = override.RateLimitWindow
 	}
@@ -542,9 +499,6 @@ func mergeConfig(base, override SecurityConfig) SecurityConfig {
 	}
 	if override.PasswordResetExpiry != 0 {
 		base.PasswordResetExpiry = override.PasswordResetExpiry
-	}
-	if override.DeviceFingerprintWindow != 0 {
-		base.DeviceFingerprintWindow = override.DeviceFingerprintWindow
 	}
 	if override.CleanupInterval != 0 {
 		base.CleanupInterval = override.CleanupInterval
@@ -593,14 +547,13 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 	validator := validator.New()
 
 	service := &AuthService{
-		storage:          cfg.Storage,
-		oauthConfigs:     oauthConfigs,
-		securityConfig:   securityConfig,
-		validator:        validator,
-		emailService:     cfg.EmailService,
-		cleanupInterval:  securityConfig.CleanupInterval,
-		cleanupDone:      make(chan struct{}),
-		oauthUserParsers: maps.Clone(defaultOAuthUserParsers),
+		storage:         cfg.Storage,
+		oauthConfigs:    oauthConfigs,
+		securityConfig:  securityConfig,
+		validator:       validator,
+		notifications:   cfg.Notifications,
+		cleanupInterval: securityConfig.CleanupInterval,
+		cleanupDone:     make(chan struct{}),
 	}
 
 	// Initialize rate limiter: explicit injection wins, else default in-memory when enabled
@@ -625,7 +578,6 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 // Usage patterns:
 //   - Use in protected route handlers to access current user
 //   - Check return value for nil to handle unauthenticated requests
-//   - Prefer this over MustGetUserFromContext for optional authentication
 //
 // Parameters:
 //   - r: HTTP request with context potentially containing user information
@@ -645,52 +597,10 @@ func NewAuthService(cfg Config) (*AuthService, error) {
 //		json.NewEncoder(w).Encode(user)
 //	}
 func GetUserFromContext(r *http.Request) *User {
-	if user, ok := r.Context().Value("user").(*User); ok {
+	if user, ok := r.Context().Value(ctxKeyUser).(*User); ok {
 		return user
 	}
 	return nil
-}
-
-// MustGetUserFromContext retrieves the authenticated user from context and panics if not found.
-//
-// This function is a convenience method for handlers that require authentication
-// and should only be used when you are certain that authentication middleware
-// has been properly applied to the route. If no user is found in context,
-// this function will panic with a descriptive error message.
-//
-// Use cases:
-//   - Protected endpoints where authentication is guaranteed by middleware
-//   - When you want to fail fast if authentication setup is incorrect
-//   - Avoid the need for nil checks when authentication is required
-//
-// WARNING: This function panics if no user is found in context. Only use when
-// authentication middleware is guaranteed to have run successfully.
-//
-// Parameters:
-//   - r: HTTP request with context containing authenticated user
-//
-// Returns:
-//   - *User: Authenticated user information (never nil)
-//
-// Panics:
-//   - If no user found in context (authentication middleware not applied)
-//
-// Example:
-//
-//	mux.Handle("GET /admin", authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//		user := core.MustGetUserFromContext(r) // Safe - middleware guarantees user presence
-//		if !user.IsAdmin {
-//			http.Error(w, "Admin access required", http.StatusForbidden)
-//			return
-//		}
-//		// Handle admin request...
-//	})))
-func MustGetUserFromContext(r *http.Request) *User {
-	user := GetUserFromContext(r)
-	if user == nil {
-		panic("user not found in context - ensure authentication middleware is applied")
-	}
-	return user
 }
 
 // logSecurityEvent logs a security event to the database
@@ -906,10 +816,6 @@ func (a *AuthService) Close() error {
 
 	if a.rateLimiter != nil {
 		a.rateLimiter.Cleanup()
-	}
-
-	if a.emailService != nil {
-		_ = a.emailService.Close()
 	}
 
 	return a.storage.Close()

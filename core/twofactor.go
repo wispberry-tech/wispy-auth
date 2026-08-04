@@ -14,8 +14,8 @@ const (
 
 // Enable2FA sends a 2FA verification code to enable 2FA
 func (a *AuthService) Enable2FA(userID uint, ip string) error {
-	if a.emailService == nil {
-		return fmt.Errorf("email service not configured")
+	if a.notifications == nil {
+		return fmt.Errorf("notification handler not configured")
 	}
 
 	user, err := a.storage.GetUserByID(context.Background(), userID)
@@ -32,7 +32,7 @@ func (a *AuthService) Enable2FA(userID uint, ip string) error {
 		return fmt.Errorf("2FA already enabled")
 	}
 
-	code, err := GenerateSecureToken(3)
+	code, err := GenerateNumericCode(TwoFactorCodeLength)
 	if err != nil {
 		return fmt.Errorf("failed to generate 2FA code: %w", err)
 	}
@@ -49,7 +49,7 @@ func (a *AuthService) Enable2FA(userID uint, ip string) error {
 		return err
 	}
 
-	if err := a.emailService.Send2FACode(user.Email, code); err != nil {
+	if err := a.notifications(context.Background(), TwoFactorCodeNotification{Email: user.Email, Code: code}); err != nil {
 		slog.Error("Failed to send 2FA code", "error", err)
 		return err
 	}
@@ -63,8 +63,8 @@ func (a *AuthService) Enable2FA(userID uint, ip string) error {
 
 // SendLogin2FACode sends a new 2FA code for login
 func (a *AuthService) SendLogin2FACode(userID uint) error {
-	if a.emailService == nil {
-		return fmt.Errorf("email service not configured")
+	if a.notifications == nil {
+		return fmt.Errorf("notification handler not configured")
 	}
 
 	user, err := a.storage.GetUserByID(context.Background(), userID)
@@ -72,7 +72,7 @@ func (a *AuthService) SendLogin2FACode(userID uint) error {
 		return fmt.Errorf("user not found")
 	}
 
-	code, err := GenerateSecureToken(3)
+	code, err := GenerateNumericCode(TwoFactorCodeLength)
 	if err != nil {
 		return fmt.Errorf("failed to generate 2FA code: %w", err)
 	}
@@ -89,7 +89,7 @@ func (a *AuthService) SendLogin2FACode(userID uint) error {
 		return err
 	}
 
-	if err := a.emailService.Send2FACode(user.Email, code); err != nil {
+	if err := a.notifications(context.Background(), TwoFactorCodeNotification{Email: user.Email, Code: code}); err != nil {
 		slog.Error("Failed to send 2FA code", "error", err)
 		return err
 	}
@@ -112,7 +112,7 @@ func (a *AuthService) generateBackupCodes(userID uint) ([]*TwoFactorBackupCode, 
 	backupCodes := make([]*TwoFactorBackupCode, 0, BackupCodeCount)
 
 	for i := 0; i < BackupCodeCount; i++ {
-		code, err := GenerateSecureToken(3)
+		code, err := GenerateNumericCode(12)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate backup code: %w", err)
 		}

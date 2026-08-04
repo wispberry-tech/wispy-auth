@@ -339,7 +339,7 @@ func TestAuthService_ValidateHandler(t *testing.T) {
 			setupRequest: func() *http.Request {
 				req := httptest.NewRequest("GET", "/validate", nil)
 				req.Header.Set("Authorization", "Bearer "+token)
-				ctx := context.WithValue(req.Context(), "user", user)
+				ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 				return req.WithContext(ctx)
 			},
 			expectedStatus: http.StatusOK,
@@ -361,7 +361,7 @@ func TestAuthService_ValidateHandler(t *testing.T) {
 					Name:  "auth_token",
 					Value: token,
 				})
-				ctx := context.WithValue(req.Context(), "user", user)
+				ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 				return req.WithContext(ctx)
 			},
 			expectedStatus: http.StatusOK,
@@ -445,8 +445,8 @@ func TestAuthService_LogoutHandler(t *testing.T) {
 			setupRequest: func() *http.Request {
 				req := httptest.NewRequest("POST", "/logout", nil)
 				req.Header.Set("Authorization", "Bearer "+token)
-				ctx := context.WithValue(req.Context(), "user", user)
-				ctx = context.WithValue(ctx, "session", session)
+				ctx := context.WithValue(req.Context(), ctxKeyUser, user)
+				ctx = context.WithValue(ctx, ctxKeySession, session)
 				return req.WithContext(ctx)
 			},
 			expectedStatus: http.StatusOK,
@@ -518,7 +518,7 @@ func TestAuthService_GetSessionsHandler(t *testing.T) {
 				req := httptest.NewRequest("GET", "/sessions", nil)
 				req.Header.Set("Authorization", "Bearer "+token)
 				// Add user to context (normally done by middleware)
-				ctx := context.WithValue(req.Context(), "user", user)
+				ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 				return req.WithContext(ctx)
 			},
 			expectedStatus: http.StatusOK,
@@ -576,7 +576,7 @@ func TestGetUserFromContext(t *testing.T) {
 					Email: "test@example.com",
 				}
 				req := httptest.NewRequest("GET", "/", nil)
-				ctx := context.WithValue(req.Context(), "user", user)
+				ctx := context.WithValue(req.Context(), ctxKeyUser, user)
 				return req.WithContext(ctx)
 			},
 			expected: &User{
@@ -595,7 +595,7 @@ func TestGetUserFromContext(t *testing.T) {
 			name: "wrong_type_in_context",
 			setup: func() *http.Request {
 				req := httptest.NewRequest("GET", "/", nil)
-				ctx := context.WithValue(req.Context(), "user", "not-a-user")
+				ctx := context.WithValue(req.Context(), ctxKeyUser, "not-a-user")
 				return req.WithContext(ctx)
 			},
 			expected: nil,
@@ -618,32 +618,6 @@ func TestGetUserFromContext(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestMustGetUserFromContext tests context user extraction with panic
-func TestMustGetUserFromContext(t *testing.T) {
-	t.Run("user_exists", func(t *testing.T) {
-		user := &User{ID: 1, Email: "test@example.com"}
-		req := httptest.NewRequest("GET", "/", nil)
-		ctx := context.WithValue(req.Context(), "user", user)
-		req = req.WithContext(ctx)
-
-		result := MustGetUserFromContext(req)
-		if result.ID != user.ID {
-			t.Errorf("Expected user ID %d, got %d", user.ID, result.ID)
-		}
-	})
-
-	t.Run("user_not_exists_panics", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Expected panic but none occurred")
-			}
-		}()
-
-		req := httptest.NewRequest("GET", "/", nil)
-		MustGetUserFromContext(req)
-	})
 }
 
 // TestDefaultSecurityConfig tests default security configuration
@@ -854,20 +828,6 @@ func (m *mockStorage) GetUserByID(ctx context.Context, id uint) (*User, error) {
 	return nil, nil // Return nil when user not found, not an error
 }
 
-func (m *mockStorage) GetUserByUUID(ctx context.Context, uuid string) (*User, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for _, user := range m.users {
-		if user.UUID == uuid {
-			// Return a copy to avoid race conditions when handlers modify the user
-			userCopy := *user
-			return &userCopy, nil
-		}
-	}
-	return nil, nil // Return nil when user not found, not an error
-}
-
 func (m *mockStorage) UpdateUser(ctx context.Context, user *User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -913,34 +873,12 @@ func (m *mockStorage) UpdateUserSecurity(ctx context.Context, security *UserSecu
 	return nil
 }
 
-func (m *mockStorage) IncrementLoginAttempts(ctx context.Context, userID uint) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if security, exists := m.userSecurity[userID]; exists {
-		security.LoginAttempts++
-		security.UpdatedAt = time.Now()
-	}
-	return nil
-}
-
 func (m *mockStorage) ResetLoginAttempts(ctx context.Context, userID uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if security, exists := m.userSecurity[userID]; exists {
 		security.LoginAttempts = 0
-		security.UpdatedAt = time.Now()
-	}
-	return nil
-}
-
-func (m *mockStorage) SetUserLocked(ctx context.Context, userID uint, until time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if security, exists := m.userSecurity[userID]; exists {
-		security.LockedUntil = &until
 		security.UpdatedAt = time.Now()
 	}
 	return nil
@@ -1040,39 +978,6 @@ func (m *mockStorage) CreateSecurityEvent(ctx context.Context, event *SecurityEv
 	return nil
 }
 
-func (m *mockStorage) GetSecurityEvents(ctx context.Context, userID *uint, eventType string, limit int, offset int) ([]*SecurityEvent, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var events []*SecurityEvent
-	for _, event := range m.securityEvents {
-		if userID != nil && (event.UserID == nil || *event.UserID != *userID) {
-			continue
-		}
-		if eventType != "" && event.EventType != eventType {
-			continue
-		}
-		events = append(events, event)
-	}
-
-	// Apply pagination
-	start := offset
-	if start >= len(events) {
-		return []*SecurityEvent{}, nil
-	}
-
-	end := start + limit
-	if end > len(events) {
-		end = len(events)
-	}
-
-	return events[start:end], nil
-}
-
-func (m *mockStorage) GetSecurityEventsByUser(ctx context.Context, userID uint, limit int, offset int) ([]*SecurityEvent, error) {
-	return m.GetSecurityEvents(ctx, &userID, "", limit, offset)
-}
-
 func (m *mockStorage) CreateUserWithSecurity(ctx context.Context, user *User, security *UserSecurity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1136,20 +1041,6 @@ func (m *mockStorage) UpdateSession(ctx context.Context, session *Session) error
 	session.LastAccessedAt = time.Now()
 	m.sessions[session.Token] = session
 	return nil
-}
-
-func (m *mockStorage) CountActiveSessions(ctx context.Context, userID uint) (int, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	count := 0
-	now := time.Now()
-	for _, session := range m.sessions {
-		if session.UserID == userID && session.ExpiresAt.After(now) {
-			count++
-		}
-	}
-	return count, nil
 }
 
 func (m *mockStorage) StoreOAuthState(ctx context.Context, state *OAuthState) error {
@@ -1330,7 +1221,7 @@ func (m *mockStorage) Regenerate2FABackupCodes(ctx context.Context, userID uint)
 	delete(m.twoFactorBackupCodes, fmt.Sprint(userID))
 	codes := make([]*TwoFactorBackupCode, 0, BackupCodeCount)
 	for range BackupCodeCount {
-		code, _ := GenerateSecureToken(3)
+		code, _ := GenerateNumericCode(12)
 		bc := &TwoFactorBackupCode{
 			ID:        uint(len(codes) + 1),
 			UserID:    userID,
@@ -1396,7 +1287,7 @@ func mustCreateTestAuthService(t *testing.T) *AuthService {
 	config := Config{
 		Storage:        mustCreateTestStorage(t),
 		SecurityConfig: DefaultSecurityConfig(),
-		EmailService:   NewMockEmailService(),
+		Notifications:  (&testNotificationRecorder{}).handler(),
 	}
 
 	authService, err := NewAuthService(config)
@@ -1405,6 +1296,21 @@ func mustCreateTestAuthService(t *testing.T) *AuthService {
 	}
 
 	return authService
+}
+
+// testNotificationRecorder records notifications for assertion in tests.
+type testNotificationRecorder struct {
+	mu   sync.Mutex
+	sent []Notification
+}
+
+func (r *testNotificationRecorder) handler() NotificationHandler {
+	return func(ctx context.Context, n Notification) error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.sent = append(r.sent, n)
+		return nil
+	}
 }
 
 // createTestRequest creates an HTTP request with JSON body for testing

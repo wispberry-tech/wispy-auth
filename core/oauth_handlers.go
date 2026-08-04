@@ -21,21 +21,6 @@ type OAuthUser struct {
 	Username  string `json:"username,omitempty"`
 }
 
-// OAuthUserParser parses a provider's user-info response into an OAuthUser.
-type OAuthUserParser func(ctx context.Context, resp *http.Response, accessToken string) (*OAuthUser, error)
-
-// defaultOAuthUserParsers maps provider names to their built-in parsers.
-var defaultOAuthUserParsers = map[string]OAuthUserParser{
-	"google":  parseGoogleUser,
-	"github":  parseGitHubUser,
-	"discord": parseDiscordUser,
-}
-
-// RegisterOAuthUserParser registers a custom parser for an OAuth provider.
-func (a *AuthService) RegisterOAuthUserParser(provider string, parser OAuthUserParser) {
-	a.oauthUserParsers[provider] = parser
-}
-
 // OAuthInitHandler initiates OAuth flow for a given provider
 func (a *AuthService) OAuthInitHandler(w http.ResponseWriter, r *http.Request, provider string) {
 	// Check if provider is supported
@@ -49,7 +34,7 @@ func (a *AuthService) OAuthInitHandler(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	// Generate state and CSRF tokens for security
+	// Generate state token for security
 	stateToken, err := GenerateSecureToken(32)
 	if err != nil {
 		slog.Error("Failed to generate state token", "error", err)
@@ -60,20 +45,9 @@ func (a *AuthService) OAuthInitHandler(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	csrfToken, err := GenerateSecureToken(32)
-	if err != nil {
-		slog.Error("Failed to generate CSRF token", "error", err)
-		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
-			StatusCode: http.StatusInternalServerError,
-			Error:      "CSRF token generation failed",
-		})
-		return
-	}
-
 	// Store OAuth state in database
 	oauthState := &OAuthState{
 		State:       stateToken,
-		CSRF:        csrfToken,
 		Provider:    provider,
 		RedirectURL: r.URL.Query().Get("redirect_url"),
 		ExpiresAt:   time.Now().Add(a.securityConfig.OAuthStateExpiry),
@@ -257,12 +231,8 @@ func (a *AuthService) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reques
 
 			// Create user security record
 			userSecurity := &UserSecurity{
-				LoginAttempts:           0,
-				TwoFactorEnabled:        false,
-				ConcurrentSessions:      0,
-				SecurityVersion:         1,
-				RiskScore:               0,
-				SuspiciousActivityCount: 0,
+				LoginAttempts:    0,
+				TwoFactorEnabled: false,
 			}
 
 			// Create user and security record atomically in a transaction
@@ -310,7 +280,7 @@ func (a *AuthService) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Create session
-	sessionToken, err := GenerateSecureToken(32)
+	session, err := a.newSession(user.ID, ip, userAgent)
 	if err != nil {
 		slog.Error("Failed to generate session token", "error", err)
 		writeJSON(w, http.StatusInternalServerError, OAuthResponse{
@@ -319,18 +289,7 @@ func (a *AuthService) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
-
-	deviceFingerprint := generateDeviceFingerprint(userAgent, ip)
-	session := &Session{
-		Token:             sessionToken,
-		UserID:            user.ID,
-		ExpiresAt:         calculateSessionExpiry(a.securityConfig),
-		DeviceFingerprint: deviceFingerprint,
-		UserAgent:         userAgent,
-		IPAddress:         ip,
-		IsActive:          true,
-		LastAccessedAt:    time.Now(),
-	}
+	sessionToken := session.Token
 
 	if err := a.storage.CreateSession(r.Context(), session); err != nil {
 		slog.Error("Failed to create session", "error", err)
@@ -396,11 +355,16 @@ func (a *AuthService) fetchOAuthUserInfo(ctx context.Context, provider, accessTo
 	}
 
 	// Parse response based on provider
-	parser, ok := a.oauthUserParsers[provider]
-	if !ok {
+	switch provider {
+	case "google":
+		return parseGoogleUser(ctx, resp, accessToken)
+	case "github":
+		return parseGitHubUser(ctx, resp, accessToken)
+	case "discord":
+		return parseDiscordUser(ctx, resp, accessToken)
+	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
-	return parser(ctx, resp, accessToken)
 }
 
 // parseGoogleUser parses Google OAuth user information

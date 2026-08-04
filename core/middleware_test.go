@@ -19,7 +19,7 @@ func TestAuthMiddleware_ValidToken_HeaderExtraction(t *testing.T) {
 	called := false
 	handler := authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		user := r.Context().Value("user")
+		user := r.Context().Value(ctxKeyUser)
 		if user == nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -95,7 +95,7 @@ func TestAuthMiddleware_ValidToken_HeaderPriority(t *testing.T) {
 
 	var contextUser *User
 	handler := authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		contextUser = r.Context().Value("user").(*User)
+		contextUser = r.Context().Value(ctxKeyUser).(*User)
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -312,8 +312,8 @@ func TestAuthMiddleware_ContextSetCorrectly(t *testing.T) {
 	var contextSession *Session
 
 	handler := authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		contextUser = r.Context().Value("user").(*User)
-		contextSession = r.Context().Value("session").(*Session)
+		contextUser = r.Context().Value(ctxKeyUser).(*User)
+		contextSession = r.Context().Value(ctxKeySession).(*Session)
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -345,7 +345,7 @@ func TestAuthMiddleware_PasswordHashCleared(t *testing.T) {
 
 	var contextUser *User
 	handler := authService.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		contextUser = r.Context().Value("user").(*User)
+		contextUser = r.Context().Value(ctxKeyUser).(*User)
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -408,7 +408,7 @@ func TestOptionalAuthMiddleware_NoToken(t *testing.T) {
 	called := false
 	handler := authService.OptionalAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		user := r.Context().Value("user")
+		user := r.Context().Value(ctxKeyUser)
 		// User should be nil when no token provided
 		if user != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -439,7 +439,7 @@ func TestOptionalAuthMiddleware_ValidToken(t *testing.T) {
 
 	var contextUser *User
 	handler := authService.OptionalAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		contextUser = r.Context().Value("user").(*User)
+		contextUser = r.Context().Value(ctxKeyUser).(*User)
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -478,7 +478,7 @@ func TestOptionalAuthMiddleware_ExpiredToken(t *testing.T) {
 	called := false
 	handler := authService.OptionalAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		_ = r.Context().Value("user")
+		_ = r.Context().Value(ctxKeyUser)
 		// Should proceed without user context
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -503,7 +503,7 @@ func TestGetUserFromContext_ValidUser(t *testing.T) {
 		ID:    1,
 		Email: "test@example.com",
 	}
-	ctx := context.WithValue(context.Background(), "user", user)
+	ctx := context.WithValue(context.Background(), ctxKeyUser, user)
 	req := httptest.NewRequest("GET", "/", nil)
 	req = req.WithContext(ctx)
 
