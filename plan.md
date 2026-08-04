@@ -14,9 +14,10 @@ This plan addresses all critical issues and implements missing functionality whi
 4. ✅ **Automated cleanup jobs** - Background goroutine for cleaning expired data
 
 ### 🔄 Phase 2: Email Service & 2FA (Days 2-3)
-1. ✅ **Email service interface** - Created `core/email_service.go`
-2. ✅ **SMTP email implementation** - Created `core/email_service_smtp.go`
-3. 📋 **Mock email service** - Need to create
+> **Superseded:** email sending was removed from the library. `core/email_service.go`, `email_service_smtp.go`, and the mock were deleted; `Config.Notifications` (see `core/notifications.go`) hands 2FA codes and reset tokens to the host application, which owns rendering and delivery.
+1. ✅ **Email service interface** - Superseded (notification hook)
+2. ✅ **SMTP email implementation** - Superseded (removed)
+3. ✅ **Mock email service** - Superseded (recording callback in tests)
 4. ✅ **2FA database schema** - Added `TwoFactorCode`, `TwoFactorBackupCode`, `RefreshToken` structs
 5. ✅ **2FA SQL tables** - Added to both SQLite and PostgreSQL schemas
 6. ✅ **Storage interface updates** - Added all 2FA and refresh token methods
@@ -45,7 +46,6 @@ This plan addresses all critical issues and implements missing functionality whi
 4. 📋 **Monitoring/metrics integration** - Need to implement
 
 ## Next Steps:
-- Create mock email service
 - Implement 2FA business logic (twofactor.go)
 - Implement 2FA handlers
 - Integrate 2FA into login flow
