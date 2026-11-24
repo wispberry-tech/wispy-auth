@@ -4,6 +4,7 @@ go 1.24.6
 
 require (
 	github.com/go-playground/validator/v10 v10.27.0
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/ncruces/go-sqlite3 v0.29.0
 	golang.org/x/crypto v0.42.0

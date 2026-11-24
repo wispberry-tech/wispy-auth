@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -46,7 +47,7 @@ type SignInRequest struct {
 type SignInResponse struct {
 	Token            string    `json:"token"`
 	User             *User     `json:"user"`
-	SessionID        uint      `json:"session_id"`
+	SessionID        uuid.UUID `json:"session_id"`
 	SessionExpiresAt time.Time `json:"session_expires_at"`
 	RefreshToken     string    `json:"refresh_token"`
 	Requires2FA      bool      `json:"requires_2fa"`
@@ -383,7 +384,7 @@ func (a *AuthService) SignInHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Send 2FA code if required
 	if requires2FA {
-		if err := a.SendLogin2FACode(user.ID); err != nil {
+		if err := a.SendLogin2FACode(r.Context(), user.ID); err != nil {
 			slog.Error("Failed to send 2FA code", "error", err)
 			writeJSON(w, http.StatusInternalServerError, SignInResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to send 2FA code"})
 			return
@@ -427,7 +428,7 @@ func (a *AuthService) SignInHandler(w http.ResponseWriter, r *http.Request) {
 	refresh := &RefreshToken{
 		Token:     refreshToken,
 		UserID:    user.ID,
-		SessionID: session.ID,
+		SessionID: &session.ID,
 		ExpiresAt: time.Now().Add(a.securityConfig.RefreshTokenLifetime),
 		CreatedAt: time.Now(),
 	}
@@ -812,7 +813,7 @@ func (a *AuthService) Enable2FAHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate and send 2FA verification code
-	if err := a.Enable2FA(user.ID, extractIP(r)); err != nil {
+	if err := a.Enable2FA(r.Context(), user.ID, extractIP(r)); err != nil {
 		writeJSON(w, http.StatusInternalServerError, Enable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to enable 2FA"})
 		return
 	}
@@ -879,7 +880,7 @@ func (a *AuthService) VerifyEnable2FAHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Generate backup codes
-	backupCodes, err := a.generateBackupCodes(user.ID)
+	backupCodes, err := a.generateBackupCodes(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("Failed to generate backup codes", "error", err)
 		writeJSON(w, http.StatusInternalServerError, VerifyEnable2FAResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to generate backup codes"})
@@ -1036,7 +1037,7 @@ func (a *AuthService) VerifyLogin2FAHandler(w http.ResponseWriter, r *http.Reque
 }
 
 // newSession builds a session for the given user and request context.
-func (a *AuthService) newSession(userID uint, ip, userAgent string) (*Session, error) {
+func (a *AuthService) newSession(userID uuid.UUID, ip, userAgent string) (*Session, error) {
 	token, err := GenerateSecureToken(32)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session token: %w", err)
@@ -1106,7 +1107,7 @@ func (a *AuthService) GetBackupCodesHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	backupCodes, err := a.GetBackupCodes(user.ID)
+	backupCodes, err := a.GetBackupCodes(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("Failed to get backup codes", "error", err)
 		writeJSON(w, http.StatusInternalServerError, GetBackupCodesResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to get backup codes"})
@@ -1149,7 +1150,7 @@ func (a *AuthService) RegenerateBackupCodesHandler(w http.ResponseWriter, r *htt
 	}
 
 	// Regenerate backup codes
-	backupCodes, err := a.RegenerateBackupCodes(user.ID)
+	backupCodes, err := a.RegenerateBackupCodes(r.Context(), user.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, RegenerateBackupCodesResponse{StatusCode: http.StatusInternalServerError, Error: "Failed to regenerate backup codes"})
 		return
@@ -1217,7 +1218,7 @@ func (a *AuthService) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Update refresh token with new session ID
-	refreshToken.SessionID = session.ID
+	refreshToken.SessionID = &session.ID
 	now := time.Now()
 	refreshToken.LastUsedAt = &now
 	if err := a.storage.UpdateRefreshToken(r.Context(), refreshToken); err != nil {

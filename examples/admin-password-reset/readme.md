@@ -1,10 +1,10 @@
 # Admin Password Reset Example
 
-This example demonstrates how to implement administrative password reset functionality using the wispy-auth library. This allows administrators to reset user passwords programmatically, which is useful for user management systems, support tools, and administrative interfaces.
+This example demonstrates how an application can authorize an administrator and use the library's user password reset operation. The application owns the administrator role and access check; the auth library handles password and session security.
 
 ## Overview
 
-The `AdminResetPassword` method allows administrators to reset any user's password. Key features:
+The `ResetUserPassword` method resets a user's password on behalf of another user. The application must authorize the actor first. Key features:
 
 - Generates a secure temporary password
 - Forces the user to change their password on next login
@@ -107,7 +107,7 @@ func adminResetPasswordHandler(authService *core.AuthService) http.HandlerFunc {
 
         // Parse request
         var req struct {
-            TargetUserID uint `json:"target_user_id"`
+            TargetUserID string `json:"target_user_id"`
         }
 
         if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -116,7 +116,7 @@ func adminResetPasswordHandler(authService *core.AuthService) http.HandlerFunc {
         }
 
         // Perform admin password reset
-        tempPassword, err := authService.AdminResetPassword(adminUser.ID, req.TargetUserID)
+        tempPassword, err := authService.ResetUserPassword(r.Context(), adminUser.ID, req.TargetUserID)
         if err != nil {
             log.Printf("Admin password reset failed: %v", err)
             http.Error(w, "Failed to reset password", http.StatusInternalServerError)
@@ -145,7 +145,7 @@ func isUserAdmin(user *core.User) bool {
     // return user.Email == "admin@yourcompany.com"
 
     // 2. Check against a list of admin user IDs
-    // adminUserIDs := []uint{1, 2, 3}
+    // adminUserIDs := []uuid.UUID{uuid.MustParse("00000000-0000-4000-8000-000000000001")}
     // for _, id := range adminUserIDs {
     //     if user.ID == id {
     //         return true
@@ -174,7 +174,7 @@ func adminResetPasswordWithEmailHandler(authService *core.AuthService) http.Hand
         }
 
         var req struct {
-            TargetUserID uint   `json:"target_user_id"`
+            TargetUserID string   `json:"target_user_id"`
             SendEmail    bool   `json:"send_email,omitempty"` // Option to send email
         }
 
@@ -184,7 +184,7 @@ func adminResetPasswordWithEmailHandler(authService *core.AuthService) http.Hand
         }
 
         // Reset the password
-        tempPassword, err := authService.AdminResetPassword(adminUser.ID, req.TargetUserID)
+        tempPassword, err := authService.ResetUserPassword(r.Context(), adminUser.ID, req.TargetUserID)
         if err != nil {
             log.Printf("Admin password reset failed: %v", err)
             http.Error(w, "Failed to reset password", http.StatusInternalServerError)
@@ -192,7 +192,7 @@ func adminResetPasswordWithEmailHandler(authService *core.AuthService) http.Hand
         }
 
         // Get target user info for email
-        targetUser, err := authService.GetStorage().GetUserByID(req.TargetUserID)
+        targetUser, err := authService.GetStorage().GetUserByID(r.Context(), req.TargetUserID)
         if err != nil || targetUser == nil {
             http.Error(w, "User not found", http.StatusNotFound)
             return
@@ -289,7 +289,7 @@ async function resetUserPassword(targetUserId) {
 ## Security Considerations
 
 ### Access Control
-- Always verify admin permissions before calling `AdminResetPassword`
+- Always verify admin permissions in the application before calling `ResetUserPassword`
 - Implement proper role-based access control (RBAC) in your application
 - Log all admin actions for audit purposes
 
@@ -310,14 +310,15 @@ async function resetUserPassword(targetUserId) {
 
 ## API Reference
 
-### AdminResetPassword Method
+### ResetUserPassword Method
 
 ```go
-func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string, error)
+func (a *AuthService) ResetUserPassword(ctx context.Context, actorUserID, targetUserID string) (string, error)
 ```
 
 **Parameters:**
-- `adminUserID`: ID of the administrator performing the reset
+- `ctx`: Context for storage operations
+- `actorUserID`: ID of the user performing the reset (for audit logging)
 - `targetUserID`: ID of the user whose password is being reset
 
 **Returns:**
@@ -330,6 +331,11 @@ func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string
 - Invalidates all existing sessions
 - Logs security events for both admin and target user
 
+If storage fails while invalidating sessions, the operation returns an error. The
+password and security-state updates may already have completed at that point, so
+the application should report the reset as incomplete and follow its recovery
+process.
+
 ## Error Handling
 
 The method may return the following errors:
@@ -340,6 +346,7 @@ The method may return the following errors:
 - `"failed to update user password"`: Database error updating password
 - `"failed to get user security"`: Database error retrieving security info
 - `"failed to update user security"`: Database error updating security settings
+- `"failed to delete user sessions after password reset"`: Database error invalidating existing sessions
 
 ## Best Practices
 
@@ -356,15 +363,15 @@ This functionality integrates well with user management dashboards:
 
 ```go
 // Example user management function
-func resetUserPassword(adminID uint, userEmail string) error {
+func resetUserPassword(ctx context.Context, adminID string, userEmail string) error {
     // Get user by email
-    user, err := authService.GetStorage().GetUserByEmail(userEmail, "email")
+    user, err := authService.GetStorage().GetUserByEmail(ctx, userEmail, "email")
     if err != nil {
         return fmt.Errorf("user not found: %w", err)
     }
 
     // Reset password
-    tempPassword, err := authService.AdminResetPassword(adminID, user.ID)
+    tempPassword, err := authService.ResetUserPassword(ctx, adminID, user.ID)
     if err != nil {
         return fmt.Errorf("password reset failed: %w", err)
     }

@@ -39,6 +39,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
 	"time"
@@ -604,7 +605,7 @@ func GetUserFromContext(r *http.Request) *User {
 }
 
 // logSecurityEvent logs a security event to the database
-func (a *AuthService) logSecurityEvent(userID *uint, eventType, description, ipAddress, userAgent string, success bool) {
+func (a *AuthService) logSecurityEvent(userID *uuid.UUID, eventType, description, ipAddress, userAgent string, success bool) {
 	event := &SecurityEvent{
 		UserID:      userID,
 		EventType:   eventType,
@@ -654,47 +655,46 @@ func (a *AuthService) GetStorage() Storage {
 	return a.storage
 }
 
-// AdminResetPassword allows an administrator to reset a user's password.
+// ResetUserPassword resets a user's password on behalf of another user.
 //
-// This method is intended for administrative use cases where an admin needs to
-// reset another user's password. It generates a temporary password and forces
-// the user to change their password on next login.
+// It generates a temporary password, forces the user to change it on next
+// login, and invalidates existing sessions. The caller is responsible for
+// authorizing the actor before calling this method.
 //
 // Parameters:
-//   - adminUserID: ID of the admin performing the reset (for logging)
+//   - ctx: Context for storage operations
+//   - actorUserID: ID of the user performing the reset (for audit logging)
 //   - targetUserID: ID of the user whose password is being reset
 //
 // Returns:
 //   - tempPassword: A temporary password the user can use to login
 //   - error: Any error encountered during the reset process
 //
-// Security considerations:
-//   - This method should only be called after verifying admin permissions
-//   - All existing sessions for the target user are invalidated
-//   - The user is forced to change their password on next login
-//   - Security events are logged for audit purposes
-//
 // Example:
 //
-//	// Check if current user is admin (application-level logic)
-//	if !isAdmin(currentUser) {
-//		return fmt.Errorf("admin access required")
-//	}
-//
-//	tempPassword, err := authService.AdminResetPassword(currentUser.ID, targetUserID)
+//	// Authorize the actor in application-level logic before this call.
+//	tempPassword, err := authService.ResetUserPassword(ctx, actor.ID, targetUserID)
 //	if err != nil {
 //		return fmt.Errorf("failed to reset password: %w", err)
 //	}
 //
 //	// Communicate tempPassword to the user securely
-func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string, error) {
+func (a *AuthService) ResetUserPassword(ctx context.Context, actorUserID, targetUserID uuid.UUID) (string, error) {
 	// Get target user
-	targetUser, err := a.storage.GetUserByID(context.Background(), targetUserID)
+	targetUser, err := a.storage.GetUserByID(ctx, targetUserID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get target user: %w", err)
 	}
 	if targetUser == nil {
 		return "", fmt.Errorf("target user not found")
+	}
+
+	security, err := a.storage.GetUserSecurity(ctx, targetUserID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get user security: %w", err)
+	}
+	if security == nil {
+		return "", fmt.Errorf("user security not found")
 	}
 
 	// Generate a secure temporary password
@@ -712,40 +712,36 @@ func (a *AuthService) AdminResetPassword(adminUserID, targetUserID uint) (string
 	// Update user password
 	targetUser.PasswordHash = hashedPassword
 	targetUser.UpdatedAt = time.Now()
-	if err := a.storage.UpdateUser(context.Background(), targetUser); err != nil {
+	if err := a.storage.UpdateUser(ctx, targetUser); err != nil {
 		return "", fmt.Errorf("failed to update user password: %w", err)
 	}
 
 	// Update user security info to force password change
-	security, err := a.storage.GetUserSecurity(context.Background(), targetUserID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get user security: %w", err)
-	}
-
 	now := time.Now()
 	security.PasswordChangedAt = &now
 	security.ForcePasswordChange = true
-	if err := a.storage.UpdateUserSecurity(context.Background(), security); err != nil {
+	security.LoginAttempts = 0
+	security.LockedUntil = nil
+	if err := a.storage.UpdateUserSecurity(ctx, security); err != nil {
 		return "", fmt.Errorf("failed to update user security: %w", err)
 	}
 
 	// Delete all user sessions for security
-	if err := a.storage.DeleteUserSessions(context.Background(), targetUserID); err != nil {
-		slog.Error("Failed to delete user sessions during admin reset", "error", err, "user_id", targetUserID)
-		// Don't fail the operation for this
+	if err := a.storage.DeleteUserSessions(ctx, targetUserID); err != nil {
+		return "", fmt.Errorf("failed to delete user sessions after password reset: %w", err)
 	}
 
 	// Log security events
-	a.logSecurityEvent(&adminUserID, EventPasswordReset,
-		fmt.Sprintf("Admin reset password for user %d", targetUserID),
+	a.logSecurityEvent(&actorUserID, EventPasswordReset,
+		fmt.Sprintf("User %s reset password for user %s", actorUserID, targetUserID),
 		"", "", true)
 
 	a.logSecurityEvent(&targetUserID, EventPasswordReset,
-		"Password reset by administrator",
+		"Password reset by another user",
 		"", "", true)
 
-	slog.Info("Admin password reset completed",
-		"admin_user_id", adminUserID,
+	slog.Info("User password reset completed",
+		"actor_user_id", actorUserID,
 		"target_user_id", targetUserID,
 		"target_email", targetUser.Email)
 

@@ -8,7 +8,7 @@ A comprehensive authentication library for Go applications with a focus on secur
 
 ### Core Authentication
 - **Email/Password Authentication** - Secure user registration and login with configurable password requirements
-- **Password Management** - Optional user self-service password reset with admin override capability
+- **Password Management** - Optional self-service reset and application-authorized resets for another user
 - **Multi-Provider OAuth2** - Built-in support for Google, GitHub, Discord, and custom OAuth providers
 - **Session Management** - Secure JWT-like session tokens with device tracking and automatic expiration
 - **OpenAPI 3.0 Specification** - Embedded spec of all built-in endpoints with a one-line serve handler
@@ -26,6 +26,62 @@ A comprehensive authentication library for Go applications with a focus on secur
 - **SQLite** - Perfect for development, testing, and small deployments
 - **PostgreSQL** - Production-ready with connection pooling and advanced features
 - **Extensible Storage** - Clean interface for adding custom database backends
+
+## 🧭 Architecture and Code Map
+
+The repository is organized around the `core` package: HTTP handlers call the
+authentication service, which uses the storage interface to reach a database
+backend.
+
+```text
+wispy-auth/
+├── core/                         # Public authentication library
+│   ├── auth.go                   # AuthService, configuration, and auth logic
+│   ├── handlers.go               # HTTP handlers for auth and password flows
+│   ├── oauth_handlers.go         # OAuth start and callback handlers
+│   ├── middleware.go             # Session middleware and request context helpers
+│   ├── twofactor.go              # Two-factor authentication
+│   ├── notifications.go          # Notification types and delivery hook
+│   ├── common.go                 # Shared helpers and constants
+│   ├── storage.go                # Storage interfaces and shared data types
+│   ├── storage/
+│   │   ├── sqlite.go             # SQLite storage implementation
+│   │   ├── postgres.go           # PostgreSQL storage implementation
+│   │   └── storage_test.go       # Storage backend tests
+│   ├── sql/                      # SQLite and PostgreSQL schema source
+│   ├── sql_files.go              # Embeds the schema files into the Go package
+│   ├── openapi.go                # Handler for the embedded API specification
+│   ├── openapi.json              # OpenAPI 3.0.3 specification
+│   └── *_test.go                 # Core, handler, middleware, OAuth, and 2FA tests
+├── examples/
+│   └── admin-password-reset/     # Runnable integration example
+├── scripts/test.sh               # Test helper script
+├── README.md                     # Project overview and setup
+├── core/README.md                # Core API and usage documentation
+└── CONTRIBUTING.md               # Contribution and code style guidance
+```
+
+The main request path is:
+
+```text
+HTTP request
+    │
+    ├── AuthMiddleware ── validates session and adds user/session to context
+    │
+    └── AuthService handler (handlers.go or oauth_handlers.go)
+            │ validates input, applies auth/security rules, writes JSON response
+            ▼
+        Storage interface (core/storage.go)
+            ├── SQLite implementation (core/storage/sqlite.go)
+            └── PostgreSQL implementation (core/storage/postgres.go)
+                    │
+                    └── Database schema embedded from core/sql/
+```
+
+`core/auth.go` owns shared service behavior and configuration. Handlers use the
+storage interface rather than issuing SQL directly, so both database backends
+follow the same core authentication flow. The OpenAPI handler serves the
+specification embedded in `core/openapi.json`.
 
 ## 📦 Installation
 
@@ -303,6 +359,14 @@ The library requires **9 database tables** to be created before use. Both SQLite
 The complete schema definitions can be found in the repository:
 - [SQLite Schema](https://github.com/wispberry-tech/wispy-auth/blob/main/core/sql/sqlite_core.sql)
 - [PostgreSQL Schema](https://github.com/wispberry-tech/wispy-auth/blob/main/core/sql/postgres_core.sql)
+
+All primary keys and foreign keys use UUIDs. SQLite stores them as `TEXT` and
+PostgreSQL uses native `UUID` columns. Storage initialization upgrades the prior
+integer-key schema while preserving existing user UUIDs and library-owned data.
+The Go API exposes identifiers as `github.com/google/uuid.UUID` values.
+Applications with their own foreign keys to Wispy Auth tables must migrate those
+references before initializing the new version; the SQLite upgrade rejects
+detected broken references.
 
 ## 🔒 Security Features
 

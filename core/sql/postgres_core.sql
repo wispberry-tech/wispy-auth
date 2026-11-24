@@ -4,8 +4,7 @@
 
 -- Users table - Core user identity and basic authentication
 CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    uuid UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
     username VARCHAR(100),
     first_name VARCHAR(100),
@@ -26,7 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- User Security table - Detailed security tracking and sensitive data
 CREATE TABLE IF NOT EXISTS user_security (
-    user_id INTEGER PRIMARY KEY,
+    user_id UUID PRIMARY KEY,
 
     -- Login Security
     login_attempts INTEGER DEFAULT 0,
@@ -53,9 +52,9 @@ CREATE TABLE IF NOT EXISTS user_security (
 
 -- Sessions table - Session management with device tracking
 CREATE TABLE IF NOT EXISTS sessions (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token VARCHAR(64) UNIQUE NOT NULL,
-    user_id INTEGER NOT NULL,
+    user_id UUID NOT NULL,
 
     -- Session Data
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -76,8 +75,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 -- Security Events table - Comprehensive security audit log
 CREATE TABLE IF NOT EXISTS security_events (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID,
 
     -- Event Details
     event_type VARCHAR(50) NOT NULL,
@@ -100,7 +99,7 @@ CREATE TABLE IF NOT EXISTS security_events (
 
 -- OAuth States table - single-use state tokens against CSRF
 CREATE TABLE IF NOT EXISTS oauth_states (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     state VARCHAR(64) UNIQUE NOT NULL,
     provider VARCHAR(50) NOT NULL,
     redirect_url TEXT,
@@ -110,8 +109,8 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 
 -- Password Reset Tokens table - Password reset functionality
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
     token VARCHAR(64) UNIQUE NOT NULL,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     used_at TIMESTAMP WITH TIME ZONE,
@@ -122,8 +121,8 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 
 -- 2FA Codes table - Temporary verification codes
 CREATE TABLE IF NOT EXISTS two_factor_codes (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
     code VARCHAR(10) NOT NULL,
     code_type VARCHAR(20) NOT NULL,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -135,8 +134,8 @@ CREATE TABLE IF NOT EXISTS two_factor_codes (
 
 -- Backup Codes table - One-time use backup codes
 CREATE TABLE IF NOT EXISTS two_factor_backup_codes (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
     code VARCHAR(10) NOT NULL,
     used_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -146,10 +145,10 @@ CREATE TABLE IF NOT EXISTS two_factor_backup_codes (
 
 -- Refresh Tokens table - Session renewal
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token VARCHAR(64) UNIQUE NOT NULL,
-    user_id INTEGER NOT NULL,
-    session_id INTEGER,
+    user_id UUID NOT NULL,
+    session_id UUID,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_used_at TIMESTAMP WITH TIME ZONE,
@@ -158,11 +157,17 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 );
 
 -- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-CREATE INDEX IF NOT EXISTS idx_users_uuid ON users(uuid);
+-- Remove redundant indexes previously duplicated by UNIQUE/PRIMARY KEY indexes.
+DROP INDEX IF EXISTS idx_users_email;
+DROP INDEX IF EXISTS idx_users_uuid;
+DROP INDEX IF EXISTS idx_sessions_token;
+DROP INDEX IF EXISTS idx_oauth_states_state;
+DROP INDEX IF EXISTS idx_password_reset_tokens_token;
+DROP INDEX IF EXISTS idx_users_id_active;
+DROP INDEX IF EXISTS idx_2fa_codes_user_expires;
+
 CREATE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
 
-CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
@@ -170,19 +175,15 @@ CREATE INDEX IF NOT EXISTS idx_security_events_user_id ON security_events(user_i
 CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at);
 
-CREATE INDEX IF NOT EXISTS idx_oauth_states_state ON oauth_states(state);
 CREATE INDEX IF NOT EXISTS idx_oauth_states_expires_at ON oauth_states(expires_at);
 
-CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
 -- Compound indexes for better query performance
-CREATE INDEX IF NOT EXISTS idx_users_id_active ON users(id, is_active);
 CREATE INDEX IF NOT EXISTS idx_password_tokens_user_expires_used ON password_reset_tokens(user_id, expires_at, used_at);
 
 -- 2FA compound indexes
 CREATE INDEX IF NOT EXISTS idx_2fa_codes_user_code ON two_factor_codes(user_id, code);
-CREATE INDEX IF NOT EXISTS idx_2fa_codes_user_expires ON two_factor_codes(user_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_2fa_codes_user_expires_used ON two_factor_codes(user_id, expires_at, used_at);
 
 -- Backup codes compound indexes

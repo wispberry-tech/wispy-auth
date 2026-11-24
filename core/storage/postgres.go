@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -38,6 +39,10 @@ func NewPostgresStorage(databaseDSN string) (*PostgresStorage, error) {
 		db.Close() // #nosec G104 - Close error can be ignored in error path
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
+	if err := migratePostgresIDs(context.Background(), db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to migrate PostgreSQL IDs to UUIDs: %w", err)
+	}
 
 	// Apply schema (idempotent)
 	if _, err := db.Exec(PostgresSchemaSQL()); err != nil {
@@ -62,13 +67,13 @@ func (p *PostgresStorage) CreateUser(ctx context.Context, user *User) error {
 	query := `INSERT INTO users (email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at)
-			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, uuid`
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`
 
 	err := p.db.QueryRowContext(ctx, query,
 		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash, user.AvatarURL,
 		user.Provider, user.ProviderID, user.EmailVerified,
 		user.IsActive, user.IsSuspended,
-		time.Now(), time.Now()).Scan(&user.ID, &user.UUID)
+		time.Now(), time.Now()).Scan(&user.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
@@ -79,13 +84,13 @@ func (p *PostgresStorage) CreateUser(ctx context.Context, user *User) error {
 
 func (p *PostgresStorage) GetUserByEmail(ctx context.Context, email, provider string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
+	query := `SELECT id, email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at
 			  FROM users WHERE email = $1 AND provider = $2`
 
 	err := p.db.QueryRowContext(ctx, query, email, provider).Scan(
-		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
+		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
 		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 
@@ -101,13 +106,13 @@ func (p *PostgresStorage) GetUserByEmail(ctx context.Context, email, provider st
 
 func (p *PostgresStorage) GetUserByEmailAnyProvider(ctx context.Context, email string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
+	query := `SELECT id, email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at
 			  FROM users WHERE email = $1 ORDER BY provider = 'email' DESC`
 
 	err := p.db.QueryRowContext(ctx, query, email).Scan(
-		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
+		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
 		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 
@@ -123,13 +128,13 @@ func (p *PostgresStorage) GetUserByEmailAnyProvider(ctx context.Context, email s
 
 func (p *PostgresStorage) GetUserByProviderID(ctx context.Context, provider, providerID string) (*User, error) {
 	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
+	query := `SELECT id, email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at
 			  FROM users WHERE provider = $1 AND provider_id = $2`
 
 	err := p.db.QueryRowContext(ctx, query, provider, providerID).Scan(
-		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
+		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
 		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 
@@ -143,15 +148,15 @@ func (p *PostgresStorage) GetUserByProviderID(ctx context.Context, provider, pro
 	return user, nil
 }
 
-func (p *PostgresStorage) GetUserByID(ctx context.Context, id uint) (*User, error) {
+func (p *PostgresStorage) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	user := &User{}
-	query := `SELECT id, uuid, email, username, first_name, last_name, password_hash, avatar_url,
+	query := `SELECT id, email, username, first_name, last_name, password_hash, avatar_url,
 			  provider, provider_id, email_verified, is_active, is_suspended,
 			  created_at, updated_at
 			  FROM users WHERE id = $1`
 
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&user.ID, &user.UUID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
+		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
 		&user.PasswordHash, &user.AvatarURL, &user.Provider, &user.ProviderID, &user.EmailVerified,
 		&user.IsActive, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 
@@ -201,13 +206,13 @@ func (p *PostgresStorage) CreateUserWithSecurity(ctx context.Context, user *User
 	userQuery := `INSERT INTO users (email, username, first_name, last_name, password_hash, avatar_url,
 				  provider, provider_id, email_verified, is_active, is_suspended,
 				  created_at, updated_at)
-				  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, uuid`
+				  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`
 
 	err = tx.QueryRowContext(ctx, userQuery,
 		user.Email, user.Username, user.FirstName, user.LastName, user.PasswordHash, user.AvatarURL,
 		user.Provider, user.ProviderID, user.EmailVerified,
 		user.IsActive, user.IsSuspended,
-		time.Now(), time.Now()).Scan(&user.ID, &user.UUID)
+		time.Now(), time.Now()).Scan(&user.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to create user in transaction: %w", err)
@@ -248,7 +253,7 @@ func (p *PostgresStorage) CreateUserWithSecurity(ctx context.Context, user *User
 }
 
 // HandleFailedLogin atomically increments login attempts and locks account if needed
-func (p *PostgresStorage) HandleFailedLogin(ctx context.Context, userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) { // Begin transaction
+func (p *PostgresStorage) HandleFailedLogin(ctx context.Context, userID uuid.UUID, maxAttempts int, lockoutDuration time.Duration) (bool, error) { // Begin transaction
 	tx, err := p.db.Begin()
 	if err != nil {
 		return false, fmt.Errorf("failed to begin transaction: %w", err)
@@ -319,7 +324,7 @@ func (p *PostgresStorage) CreateUserSecurity(ctx context.Context, security *User
 	return nil
 }
 
-func (p *PostgresStorage) GetUserSecurity(ctx context.Context, userID uint) (*UserSecurity, error) {
+func (p *PostgresStorage) GetUserSecurity(ctx context.Context, userID uuid.UUID) (*UserSecurity, error) {
 	security := &UserSecurity{}
 	query := `SELECT user_id, login_attempts, locked_until, last_login_at, last_login_ip,
 			  last_failed_login_at, last_failed_login_ip, password_changed_at,
@@ -392,7 +397,7 @@ func (p *PostgresStorage) UpdateUserSecurity(ctx context.Context, security *User
 }
 
 // Optimized security operations
-func (p *PostgresStorage) ResetLoginAttempts(ctx context.Context, userID uint) error {
+func (p *PostgresStorage) ResetLoginAttempts(ctx context.Context, userID uuid.UUID) error {
 	query := `UPDATE user_security SET login_attempts = 0, locked_until = NULL, updated_at = $1
 			  WHERE user_id = $2`
 	_, err := p.db.ExecContext(ctx, query, time.Now(), userID)
@@ -402,7 +407,7 @@ func (p *PostgresStorage) ResetLoginAttempts(ctx context.Context, userID uint) e
 	return nil
 }
 
-func (p *PostgresStorage) UpdateLastLogin(ctx context.Context, userID uint, ipAddress *string) error {
+func (p *PostgresStorage) UpdateLastLogin(ctx context.Context, userID uuid.UUID, ipAddress *string) error {
 	query := `UPDATE user_security SET last_login_at = $1, last_login_ip = $2, updated_at = $3
 			  WHERE user_id = $4`
 
@@ -488,7 +493,7 @@ func (p *PostgresStorage) GetSession(ctx context.Context, token string) (*Sessio
 	return session, nil
 }
 
-func (p *PostgresStorage) GetUserSessions(ctx context.Context, userID uint) ([]*Session, error) {
+func (p *PostgresStorage) GetUserSessions(ctx context.Context, userID uuid.UUID) ([]*Session, error) {
 	query := `SELECT id, user_id, token, expires_at, device_fingerprint,
 			  user_agent, ip_address, is_active, last_accessed_at, created_at
 			  FROM sessions WHERE user_id = $1 ORDER BY last_accessed_at DESC`
@@ -571,7 +576,7 @@ func (p *PostgresStorage) DeleteSession(ctx context.Context, token string) error
 	return nil
 }
 
-func (p *PostgresStorage) DeleteUserSessions(ctx context.Context, userID uint) error {
+func (p *PostgresStorage) DeleteUserSessions(ctx context.Context, userID uuid.UUID) error {
 	query := `DELETE FROM sessions WHERE user_id = $1`
 	_, err := p.db.ExecContext(ctx, query, userID)
 	if err != nil {
@@ -694,9 +699,9 @@ func (p *PostgresStorage) CreateSecurityEvent(ctx context.Context, event *Securi
 func (p *PostgresStorage) CreatePasswordResetToken(ctx context.Context, token *PasswordResetToken) error {
 	query := `
 		INSERT INTO password_reset_tokens (user_id, token, expires_at, created_at)
-		VALUES ($1, $2, $3, $4)`
+		VALUES ($1, $2, $3, $4) RETURNING id`
 
-	_, err := p.db.ExecContext(ctx, query, token.UserID, token.Token, token.ExpiresAt, token.CreatedAt)
+	err := p.db.QueryRowContext(ctx, query, token.UserID, token.Token, token.ExpiresAt, token.CreatedAt).Scan(&token.ID)
 	if err != nil {
 		return fmt.Errorf("failed to create password reset token: %w", err)
 	}
@@ -794,7 +799,7 @@ func (p *PostgresStorage) Create2FACode(ctx context.Context, code *TwoFactorCode
 	return nil
 }
 
-func (p *PostgresStorage) Get2FACode(ctx context.Context, userID uint, code string, codeType string) (*TwoFactorCode, error) {
+func (p *PostgresStorage) Get2FACode(ctx context.Context, userID uuid.UUID, code string, codeType string) (*TwoFactorCode, error) {
 	query := `SELECT id, user_id, code, code_type, expires_at, used_at, created_at
 			  FROM two_factor_codes
 			  WHERE user_id = $1 AND code = $2 AND code_type = $3`
@@ -860,7 +865,7 @@ func (p *PostgresStorage) GetLatestPending2FACode(ctx context.Context, code stri
 	return &twoFactorCode, nil
 }
 
-func (p *PostgresStorage) Use2FACode(ctx context.Context, userID uint, code string) error {
+func (p *PostgresStorage) Use2FACode(ctx context.Context, userID uuid.UUID, code string) error {
 	query := `UPDATE two_factor_codes SET used_at = $1 WHERE user_id = $2 AND code = $3 AND used_at IS NULL`
 
 	_, err := p.db.ExecContext(ctx, query, time.Now(), userID, code)
@@ -882,7 +887,7 @@ func (p *PostgresStorage) Create2FABackupCode(ctx context.Context, code *TwoFact
 	return nil
 }
 
-func (p *PostgresStorage) Get2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error) {
+func (p *PostgresStorage) Get2FABackupCodes(ctx context.Context, userID uuid.UUID) ([]*TwoFactorBackupCode, error) {
 	query := `SELECT id, user_id, code, used_at, created_at
 			  FROM two_factor_backup_codes
 			  WHERE user_id = $1
@@ -944,7 +949,7 @@ func (p *PostgresStorage) GetBackupCodeByCode(ctx context.Context, code string) 
 	return &backupCode, nil
 }
 
-func (p *PostgresStorage) Use2FABackupCode(ctx context.Context, userID uint, code string) error {
+func (p *PostgresStorage) Use2FABackupCode(ctx context.Context, userID uuid.UUID, code string) error {
 	query := `UPDATE two_factor_backup_codes SET used_at = $1 WHERE user_id = $2 AND code = $3 AND used_at IS NULL`
 
 	result, err := p.db.ExecContext(ctx, query, time.Now(), userID, code)
@@ -964,7 +969,7 @@ func (p *PostgresStorage) Use2FABackupCode(ctx context.Context, userID uint, cod
 	return nil
 }
 
-func (p *PostgresStorage) Regenerate2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error) { // Delete old backup codes
+func (p *PostgresStorage) Regenerate2FABackupCodes(ctx context.Context, userID uuid.UUID) ([]*TwoFactorBackupCode, error) { // Delete old backup codes
 	if _, err := p.db.ExecContext(ctx, "DELETE FROM two_factor_backup_codes WHERE user_id = $1", userID); err != nil {
 		return nil, fmt.Errorf("failed to delete old 2FA backup codes: %w", err)
 	}
@@ -1061,7 +1066,7 @@ func (p *PostgresStorage) DeleteRefreshToken(ctx context.Context, token string) 
 	return nil
 }
 
-func (p *PostgresStorage) DeleteUserRefreshTokens(ctx context.Context, userID uint) error {
+func (p *PostgresStorage) DeleteUserRefreshTokens(ctx context.Context, userID uuid.UUID) error {
 	query := `DELETE FROM refresh_tokens WHERE user_id = $1`
 
 	_, err := p.db.ExecContext(ctx, query, userID)

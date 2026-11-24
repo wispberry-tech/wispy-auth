@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -349,7 +350,7 @@ func TestAuthService_ValidateHandler(t *testing.T) {
 					return
 				}
 				if response.User.ID != user.ID {
-					t.Errorf("Expected user ID %d, got %d", user.ID, response.User.ID)
+					t.Errorf("Expected user ID %s, got %s", user.ID, response.User.ID)
 				}
 			},
 		},
@@ -371,7 +372,7 @@ func TestAuthService_ValidateHandler(t *testing.T) {
 					return
 				}
 				if response.User.ID != user.ID {
-					t.Errorf("Expected user ID %d, got %d", user.ID, response.User.ID)
+					t.Errorf("Expected user ID %s, got %s", user.ID, response.User.ID)
 				}
 			},
 		},
@@ -572,7 +573,7 @@ func TestGetUserFromContext(t *testing.T) {
 			name: "user_exists_in_context",
 			setup: func() *http.Request {
 				user := &User{
-					ID:    1,
+					ID:    testUUID(1),
 					Email: "test@example.com",
 				}
 				req := httptest.NewRequest("GET", "/", nil)
@@ -580,7 +581,7 @@ func TestGetUserFromContext(t *testing.T) {
 				return req.WithContext(ctx)
 			},
 			expected: &User{
-				ID:    1,
+				ID:    testUUID(1),
 				Email: "test@example.com",
 			},
 		},
@@ -724,20 +725,20 @@ func boolPtr(b bool) *bool {
 type mockStorage struct {
 	mu                   sync.RWMutex
 	users                map[string]*User
-	userSecurity         map[uint]*UserSecurity
+	userSecurity         map[uuid.UUID]*UserSecurity
 	sessions             map[string]*Session
 	securityEvents       []*SecurityEvent
 	oauthStates          map[string]*OAuthState
 	passwordResetTokens  map[string]*PasswordResetToken
 	twoFactorCodes       map[string]*TwoFactorCode
 	twoFactorBackupCodes map[string][]*TwoFactorBackupCode
-	nextUserID           uint
+	nextUserID           int
 }
 
 func newMockStorage() *mockStorage {
 	return &mockStorage{
 		users:                make(map[string]*User),
-		userSecurity:         make(map[uint]*UserSecurity),
+		userSecurity:         make(map[uuid.UUID]*UserSecurity),
 		sessions:             make(map[string]*Session),
 		securityEvents:       make([]*SecurityEvent, 0),
 		oauthStates:          make(map[string]*OAuthState),
@@ -746,6 +747,10 @@ func newMockStorage() *mockStorage {
 		twoFactorBackupCodes: make(map[string][]*TwoFactorBackupCode),
 		nextUserID:           1,
 	}
+}
+
+func testUUID(value int) uuid.UUID {
+	return uuid.MustParse(fmt.Sprintf("00000000-0000-4000-8000-%012x", value))
 }
 
 func (m *mockStorage) CreateUser(ctx context.Context, user *User) error {
@@ -758,15 +763,10 @@ func (m *mockStorage) CreateUser(ctx context.Context, user *User) error {
 		return fmt.Errorf("user already exists")
 	}
 
-	user.ID = m.nextUserID
+	user.ID = testUUID(m.nextUserID)
 	m.nextUserID++
 	user.CreatedAt = time.Now()
 	user.UpdatedAt = time.Now()
-	// Generate UUID if not set
-	if user.UUID == "" {
-		token, _ := GenerateSecureToken(16)
-		user.UUID = token
-	}
 	// Create a copy to avoid issues when handlers modify the original
 	userCopy := *user
 	m.users[key] = &userCopy
@@ -814,7 +814,7 @@ func (m *mockStorage) GetUserByProviderID(ctx context.Context, provider, provide
 	return nil, nil // Return nil when user not found, not an error
 }
 
-func (m *mockStorage) GetUserByID(ctx context.Context, id uint) (*User, error) {
+func (m *mockStorage) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -852,7 +852,7 @@ func (m *mockStorage) CreateUserSecurity(ctx context.Context, security *UserSecu
 	return nil
 }
 
-func (m *mockStorage) GetUserSecurity(ctx context.Context, userID uint) (*UserSecurity, error) {
+func (m *mockStorage) GetUserSecurity(ctx context.Context, userID uuid.UUID) (*UserSecurity, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -873,7 +873,7 @@ func (m *mockStorage) UpdateUserSecurity(ctx context.Context, security *UserSecu
 	return nil
 }
 
-func (m *mockStorage) ResetLoginAttempts(ctx context.Context, userID uint) error {
+func (m *mockStorage) ResetLoginAttempts(ctx context.Context, userID uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -884,7 +884,7 @@ func (m *mockStorage) ResetLoginAttempts(ctx context.Context, userID uint) error
 	return nil
 }
 
-func (m *mockStorage) UpdateLastLogin(ctx context.Context, userID uint, ipAddress *string) error {
+func (m *mockStorage) UpdateLastLogin(ctx context.Context, userID uuid.UUID, ipAddress *string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -901,6 +901,9 @@ func (m *mockStorage) CreateSession(ctx context.Context, session *Session) error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if session.ID == uuid.Nil {
+		session.ID = testUUID(len(m.sessions) + 1)
+	}
 	session.CreatedAt = time.Now()
 	session.LastAccessedAt = time.Now()
 	m.sessions[session.Token] = session
@@ -923,7 +926,7 @@ func (m *mockStorage) GetSession(ctx context.Context, token string) (*Session, e
 	return nil, nil // Return nil when session not found, not an error
 }
 
-func (m *mockStorage) GetUserSessions(ctx context.Context, userID uint) ([]*Session, error) {
+func (m *mockStorage) GetUserSessions(ctx context.Context, userID uuid.UUID) ([]*Session, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -944,7 +947,7 @@ func (m *mockStorage) DeleteSession(ctx context.Context, token string) error {
 	return nil
 }
 
-func (m *mockStorage) DeleteUserSessions(ctx context.Context, userID uint) error {
+func (m *mockStorage) DeleteUserSessions(ctx context.Context, userID uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -973,6 +976,9 @@ func (m *mockStorage) CreateSecurityEvent(ctx context.Context, event *SecurityEv
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if event.ID == uuid.Nil {
+		event.ID = testUUID(len(m.securityEvents) + 1)
+	}
 	event.CreatedAt = time.Now()
 	m.securityEvents = append(m.securityEvents, event)
 	return nil
@@ -989,15 +995,10 @@ func (m *mockStorage) CreateUserWithSecurity(ctx context.Context, user *User, se
 	}
 
 	// Create user
-	user.ID = m.nextUserID
+	user.ID = testUUID(m.nextUserID)
 	m.nextUserID++
 	user.CreatedAt = time.Now()
 	user.UpdatedAt = time.Now()
-	// Generate UUID if not set
-	if user.UUID == "" {
-		token, _ := GenerateSecureToken(16)
-		user.UUID = token
-	}
 	// Create a copy to avoid issues when handlers modify the original
 	userCopy := *user
 	m.users[key] = &userCopy
@@ -1011,7 +1012,7 @@ func (m *mockStorage) CreateUserWithSecurity(ctx context.Context, user *User, se
 	return nil
 }
 
-func (m *mockStorage) HandleFailedLogin(ctx context.Context, userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) {
+func (m *mockStorage) HandleFailedLogin(ctx context.Context, userID uuid.UUID, maxAttempts int, lockoutDuration time.Duration) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1047,6 +1048,9 @@ func (m *mockStorage) StoreOAuthState(ctx context.Context, state *OAuthState) er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if state.ID == uuid.Nil {
+		state.ID = testUUID(len(m.oauthStates) + 1)
+	}
 	state.CreatedAt = time.Now()
 	m.oauthStates[state.State] = state
 	return nil
@@ -1094,6 +1098,9 @@ func (m *mockStorage) CleanupExpiredOAuthStates(ctx context.Context) error {
 }
 
 func (m *mockStorage) CreatePasswordResetToken(ctx context.Context, token *PasswordResetToken) error {
+	if token.ID == uuid.Nil {
+		token.ID = testUUID(len(m.passwordResetTokens) + 1)
+	}
 	m.passwordResetTokens[token.Token] = token
 	return nil
 }
@@ -1137,12 +1144,12 @@ func (m *mockStorage) Ping() error {
 func (m *mockStorage) Create2FACode(ctx context.Context, code *TwoFactorCode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	code.ID = uint(len(m.twoFactorCodes) + 1)
+	code.ID = testUUID(len(m.twoFactorCodes) + 1)
 	m.twoFactorCodes[code.Code] = code
 	return nil
 }
 
-func (m *mockStorage) Get2FACode(ctx context.Context, userID uint, code string, codeType string) (*TwoFactorCode, error) {
+func (m *mockStorage) Get2FACode(ctx context.Context, userID uuid.UUID, code string, codeType string) (*TwoFactorCode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if c, ok := m.twoFactorCodes[code]; ok && c.UserID == userID && c.CodeType == codeType {
@@ -1151,7 +1158,7 @@ func (m *mockStorage) Get2FACode(ctx context.Context, userID uint, code string, 
 	return nil, nil
 }
 
-func (m *mockStorage) Use2FACode(ctx context.Context, userID uint, code string) error {
+func (m *mockStorage) Use2FACode(ctx context.Context, userID uuid.UUID, code string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil
@@ -1176,12 +1183,12 @@ func (m *mockStorage) CleanupExpired2FACodes(ctx context.Context) error {
 func (m *mockStorage) Create2FABackupCode(ctx context.Context, code *TwoFactorBackupCode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	code.ID = uint(len(m.twoFactorBackupCodes[fmt.Sprint(code.UserID)]) + 1)
+	code.ID = testUUID(len(m.twoFactorBackupCodes[fmt.Sprint(code.UserID)]) + 1)
 	m.twoFactorBackupCodes[fmt.Sprint(code.UserID)] = append(m.twoFactorBackupCodes[fmt.Sprint(code.UserID)], code)
 	return nil
 }
 
-func (m *mockStorage) Get2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error) {
+func (m *mockStorage) Get2FABackupCodes(ctx context.Context, userID uuid.UUID) ([]*TwoFactorBackupCode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.twoFactorBackupCodes[fmt.Sprint(userID)], nil
@@ -1200,7 +1207,7 @@ func (m *mockStorage) GetBackupCodeByCode(ctx context.Context, code string) (*Tw
 	return nil, nil
 }
 
-func (m *mockStorage) Use2FABackupCode(ctx context.Context, userID uint, code string) error {
+func (m *mockStorage) Use2FABackupCode(ctx context.Context, userID uuid.UUID, code string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, codes := range m.twoFactorBackupCodes {
@@ -1215,7 +1222,7 @@ func (m *mockStorage) Use2FABackupCode(ctx context.Context, userID uint, code st
 	return nil
 }
 
-func (m *mockStorage) Regenerate2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error) {
+func (m *mockStorage) Regenerate2FABackupCodes(ctx context.Context, userID uuid.UUID) ([]*TwoFactorBackupCode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.twoFactorBackupCodes, fmt.Sprint(userID))
@@ -1223,7 +1230,7 @@ func (m *mockStorage) Regenerate2FABackupCodes(ctx context.Context, userID uint)
 	for range BackupCodeCount {
 		code, _ := GenerateNumericCode(12)
 		bc := &TwoFactorBackupCode{
-			ID:        uint(len(codes) + 1),
+			ID:        testUUID(len(codes) + 1),
 			UserID:    userID,
 			Code:      code,
 			CreatedAt: time.Now(),
@@ -1238,6 +1245,9 @@ func (m *mockStorage) Regenerate2FABackupCodes(ctx context.Context, userID uint)
 func (m *mockStorage) CreateRefreshToken(ctx context.Context, token *RefreshToken) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if token.ID == uuid.Nil {
+		token.ID = testUUID(1)
+	}
 	return nil
 }
 
@@ -1259,7 +1269,7 @@ func (m *mockStorage) DeleteRefreshToken(ctx context.Context, token string) erro
 	return nil
 }
 
-func (m *mockStorage) DeleteUserRefreshTokens(ctx context.Context, userID uint) error {
+func (m *mockStorage) DeleteUserRefreshTokens(ctx context.Context, userID uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil

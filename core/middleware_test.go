@@ -211,7 +211,7 @@ func TestAuthMiddleware_UserNotFound(t *testing.T) {
 	// Create a session for a user that doesn't exist
 	fakeSession := &Session{
 		Token:     "fake-token",
-		UserID:    999, // Non-existent user
+		UserID:    testUUID(999), // Non-existent user
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
 	mockStore := authService.storage.(*mockStorage)
@@ -500,7 +500,7 @@ func TestOptionalAuthMiddleware_ExpiredToken(t *testing.T) {
 // TestGetUserFromContext_ValidUser tests user retrieval from context
 func TestGetUserFromContext_ValidUser(t *testing.T) {
 	user := &User{
-		ID:    1,
+		ID:    testUUID(1),
 		Email: "test@example.com",
 	}
 	ctx := context.WithValue(context.Background(), ctxKeyUser, user)

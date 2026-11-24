@@ -135,7 +135,7 @@ func (a *AuthService) OAuthCallbackHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Exchange code for token
-	ctx := context.Background()
+	ctx := r.Context()
 	token, err := oauthConfig.Exchange(ctx, code)
 	if err != nil {
 		slog.Error("Failed to exchange OAuth code", "error", err)

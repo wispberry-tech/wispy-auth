@@ -10,7 +10,7 @@
 - **SQLite & PostgreSQL** - Multiple database backends
 - **Middleware** - Easy integration with any HTTP router
 - **OpenAPI 3.0 Spec** - Embedded specification of all built-in endpoints with a one-line serve handler
-- **Zero Dependencies** - No external services required
+- **No Required External Services** - Email and other notifications are host-provided
 
 ## Quick Start
 
@@ -234,13 +234,25 @@ storage, err := storage.NewPostgresStorage("postgresql://user:pass@localhost/db"
 
 ## Database Schema
 
-The core module uses a simplified schema with only essential tables:
+All primary keys and foreign keys use UUIDs. SQLite stores them as `TEXT` and
+PostgreSQL stores them as native `UUID` values. Storage initialization upgrades
+the previous integer-key schema while preserving user UUIDs and library-owned
+data. Go models and storage methods use `github.com/google/uuid.UUID` for IDs.
+Applications that reference Wispy Auth IDs from their own tables must
+migrate those foreign keys before initializing the new library version; the
+upgrade rejects SQLite schemas where it detects broken references.
+
+The core module uses these tables:
 
 - `users` - Core user identity and authentication
 - `user_security` - Security tracking and sensitive data
 - `sessions` - Session management with device tracking
 - `security_events` - Comprehensive security audit log
 - `oauth_states` - Single-use OAuth state tokens
+- `password_reset_tokens` - Password reset flow tokens
+- `two_factor_codes` - Temporary 2FA verification codes
+- `two_factor_backup_codes` - One-time use 2FA backup codes
+- `refresh_tokens` - Session renewal tokens
 
 ## Example Application
 

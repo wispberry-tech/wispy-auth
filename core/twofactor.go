@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"log/slog"
 	"time"
 )
@@ -13,19 +14,22 @@ const (
 )
 
 // Enable2FA sends a 2FA verification code to enable 2FA
-func (a *AuthService) Enable2FA(userID uint, ip string) error {
+func (a *AuthService) Enable2FA(ctx context.Context, userID uuid.UUID, ip string) error {
 	if a.notifications == nil {
 		return fmt.Errorf("notification handler not configured")
 	}
 
-	user, err := a.storage.GetUserByID(context.Background(), userID)
+	user, err := a.storage.GetUserByID(ctx, userID)
 	if err != nil || user == nil {
 		return fmt.Errorf("user not found")
 	}
 
-	security, err := a.storage.GetUserSecurity(context.Background(), userID)
+	security, err := a.storage.GetUserSecurity(ctx, userID)
 	if err != nil {
 		return err
+	}
+	if security == nil {
+		return fmt.Errorf("user security not found")
 	}
 
 	if security.TwoFactorEnabled {
@@ -45,11 +49,11 @@ func (a *AuthService) Enable2FA(userID uint, ip string) error {
 		CreatedAt: time.Now(),
 	}
 
-	if err := a.storage.Create2FACode(context.Background(), twoFactorCode); err != nil {
+	if err := a.storage.Create2FACode(ctx, twoFactorCode); err != nil {
 		return err
 	}
 
-	if err := a.notifications(context.Background(), TwoFactorCodeNotification{Email: user.Email, Code: code}); err != nil {
+	if err := a.notifications(ctx, TwoFactorCodeNotification{Email: user.Email, Code: code}); err != nil {
 		slog.Error("Failed to send 2FA code", "error", err)
 		return err
 	}
@@ -62,12 +66,12 @@ func (a *AuthService) Enable2FA(userID uint, ip string) error {
 }
 
 // SendLogin2FACode sends a new 2FA code for login
-func (a *AuthService) SendLogin2FACode(userID uint) error {
+func (a *AuthService) SendLogin2FACode(ctx context.Context, userID uuid.UUID) error {
 	if a.notifications == nil {
 		return fmt.Errorf("notification handler not configured")
 	}
 
-	user, err := a.storage.GetUserByID(context.Background(), userID)
+	user, err := a.storage.GetUserByID(ctx, userID)
 	if err != nil || user == nil {
 		return fmt.Errorf("user not found")
 	}
@@ -85,11 +89,11 @@ func (a *AuthService) SendLogin2FACode(userID uint) error {
 		CreatedAt: time.Now(),
 	}
 
-	if err := a.storage.Create2FACode(context.Background(), twoFactorCode); err != nil {
+	if err := a.storage.Create2FACode(ctx, twoFactorCode); err != nil {
 		return err
 	}
 
-	if err := a.notifications(context.Background(), TwoFactorCodeNotification{Email: user.Email, Code: code}); err != nil {
+	if err := a.notifications(ctx, TwoFactorCodeNotification{Email: user.Email, Code: code}); err != nil {
 		slog.Error("Failed to send 2FA code", "error", err)
 		return err
 	}
@@ -99,16 +103,16 @@ func (a *AuthService) SendLogin2FACode(userID uint) error {
 }
 
 // GetBackupCodes retrieves all backup codes for a user
-func (a *AuthService) GetBackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
-	return a.storage.Get2FABackupCodes(context.Background(), userID)
+func (a *AuthService) GetBackupCodes(ctx context.Context, userID uuid.UUID) ([]*TwoFactorBackupCode, error) {
+	return a.storage.Get2FABackupCodes(ctx, userID)
 }
 
 // RegenerateBackupCodes generates new backup codes and invalidates old ones
-func (a *AuthService) RegenerateBackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
-	return a.storage.Regenerate2FABackupCodes(context.Background(), userID)
+func (a *AuthService) RegenerateBackupCodes(ctx context.Context, userID uuid.UUID) ([]*TwoFactorBackupCode, error) {
+	return a.storage.Regenerate2FABackupCodes(ctx, userID)
 }
 
-func (a *AuthService) generateBackupCodes(userID uint) ([]*TwoFactorBackupCode, error) {
+func (a *AuthService) generateBackupCodes(ctx context.Context, userID uuid.UUID) ([]*TwoFactorBackupCode, error) {
 	backupCodes := make([]*TwoFactorBackupCode, 0, BackupCodeCount)
 
 	for i := 0; i < BackupCodeCount; i++ {
@@ -123,7 +127,7 @@ func (a *AuthService) generateBackupCodes(userID uint) ([]*TwoFactorBackupCode, 
 			CreatedAt: time.Now(),
 		}
 
-		if err := a.storage.Create2FABackupCode(context.Background(), backupCode); err != nil {
+		if err := a.storage.Create2FABackupCode(ctx, backupCode); err != nil {
 			return nil, fmt.Errorf("failed to create 2FA backup code: %w", err)
 		}
 

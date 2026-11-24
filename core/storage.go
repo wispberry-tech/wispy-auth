@@ -3,16 +3,17 @@ package core
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // User represents core user identity and authentication information.
 type User struct {
-	ID        uint   `json:"id"`
-	UUID      string `json:"uuid"`
-	Email     string `json:"email"`
-	Username  string `json:"username"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	Username  string    `json:"username"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
 
 	PasswordHash string `json:"-"` // Hide password from JSON
 	AvatarURL    string `json:"avatar_url,omitempty"`
@@ -30,7 +31,7 @@ type User struct {
 
 // UserSecurity represents detailed security tracking and sensitive data for a user.
 type UserSecurity struct {
-	UserID uint `json:"user_id"`
+	UserID uuid.UUID `json:"user_id"`
 
 	// Login Security
 	LoginAttempts     int        `json:"login_attempts"`
@@ -55,8 +56,8 @@ type UserSecurity struct {
 
 // Session represents a user session with enhanced security tracking
 type Session struct {
-	ID        uint      `json:"id"`
-	UserID    uint      `json:"user_id"`
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 
@@ -74,8 +75,8 @@ type Session struct {
 
 // SecurityEvent represents security-related events for audit logging
 type SecurityEvent struct {
-	ID     uint  `json:"id"`
-	UserID *uint `json:"user_id,omitempty"`
+	ID     uuid.UUID  `json:"id"`
+	UserID *uuid.UUID `json:"user_id,omitempty"`
 
 	// Event Details
 	EventType   string `json:"event_type"`
@@ -96,7 +97,7 @@ type SecurityEvent struct {
 
 // OAuthState represents a single-use OAuth state token used to prevent CSRF.
 type OAuthState struct {
-	ID          uint      `json:"id"`
+	ID          uuid.UUID `json:"id"`
 	State       string    `json:"state"`
 	Provider    string    `json:"provider"`
 	RedirectURL string    `json:"redirect_url"`
@@ -106,8 +107,8 @@ type OAuthState struct {
 
 // PasswordResetToken represents a password reset token
 type PasswordResetToken struct {
-	ID        uint       `json:"id"`
-	UserID    uint       `json:"user_id"`
+	ID        uuid.UUID  `json:"id"`
+	UserID    uuid.UUID  `json:"user_id"`
 	Token     string     `json:"token"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	UsedAt    *time.Time `json:"used_at,omitempty"`
@@ -116,8 +117,8 @@ type PasswordResetToken struct {
 
 // TwoFactorCode represents a temporary 2FA verification code
 type TwoFactorCode struct {
-	ID        uint       `json:"id"`
-	UserID    uint       `json:"user_id"`
+	ID        uuid.UUID  `json:"id"`
+	UserID    uuid.UUID  `json:"user_id"`
 	Code      string     `json:"code"`      // 6-digit code
 	CodeType  string     `json:"code_type"` // "enable", "login", "disable"
 	ExpiresAt time.Time  `json:"expires_at"`
@@ -127,8 +128,8 @@ type TwoFactorCode struct {
 
 // TwoFactorBackupCode represents a backup 2FA code
 type TwoFactorBackupCode struct {
-	ID        uint       `json:"id"`
-	UserID    uint       `json:"user_id"`
+	ID        uuid.UUID  `json:"id"`
+	UserID    uuid.UUID  `json:"user_id"`
 	Code      string     `json:"code"`
 	UsedAt    *time.Time `json:"used_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
@@ -136,10 +137,10 @@ type TwoFactorBackupCode struct {
 
 // RefreshToken represents a refresh token for session renewal
 type RefreshToken struct {
-	ID         uint       `json:"id"`
+	ID         uuid.UUID  `json:"id"`
 	Token      string     `json:"token"`
-	UserID     uint       `json:"user_id"`
-	SessionID  uint       `json:"session_id"`
+	UserID     uuid.UUID  `json:"user_id"`
+	SessionID  *uuid.UUID `json:"session_id,omitempty"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
@@ -152,31 +153,31 @@ type UserStore interface {
 	GetUserByEmail(ctx context.Context, email, provider string) (*User, error)
 	GetUserByEmailAnyProvider(ctx context.Context, email string) (*User, error)
 	GetUserByProviderID(ctx context.Context, provider, providerID string) (*User, error)
-	GetUserByID(ctx context.Context, id uint) (*User, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (*User, error)
 	UpdateUser(ctx context.Context, user *User) error
 
 	// User Security operations - separate and explicit
 	CreateUserSecurity(ctx context.Context, security *UserSecurity) error
-	GetUserSecurity(ctx context.Context, userID uint) (*UserSecurity, error)
+	GetUserSecurity(ctx context.Context, userID uuid.UUID) (*UserSecurity, error)
 	UpdateUserSecurity(ctx context.Context, security *UserSecurity) error
 
 	// Optimized methods for common security operations
-	ResetLoginAttempts(ctx context.Context, userID uint) error
-	UpdateLastLogin(ctx context.Context, userID uint, ipAddress *string) error
+	ResetLoginAttempts(ctx context.Context, userID uuid.UUID) error
+	UpdateLastLogin(ctx context.Context, userID uuid.UUID, ipAddress *string) error
 
 	// Transactional operations for complex multi-table operations
 	CreateUserWithSecurity(ctx context.Context, user *User, security *UserSecurity) error
-	HandleFailedLogin(ctx context.Context, userID uint, maxAttempts int, lockoutDuration time.Duration) (bool, error) // returns (wasLocked, error)
+	HandleFailedLogin(ctx context.Context, userID uuid.UUID, maxAttempts int, lockoutDuration time.Duration) (bool, error) // returns (wasLocked, error)
 }
 
 // SessionStore defines session lifecycle operations.
 type SessionStore interface {
 	CreateSession(ctx context.Context, session *Session) error
 	GetSession(ctx context.Context, token string) (*Session, error)
-	GetUserSessions(ctx context.Context, userID uint) ([]*Session, error)
+	GetUserSessions(ctx context.Context, userID uuid.UUID) ([]*Session, error)
 	UpdateSession(ctx context.Context, session *Session) error
 	DeleteSession(ctx context.Context, token string) error
-	DeleteUserSessions(ctx context.Context, userID uint) error
+	DeleteUserSessions(ctx context.Context, userID uuid.UUID) error
 	CleanupExpiredSessions(ctx context.Context) error
 }
 
@@ -205,17 +206,17 @@ type PasswordResetTokenStore interface {
 type TwoFactorStore interface {
 	// 2FA Code operations
 	Create2FACode(ctx context.Context, code *TwoFactorCode) error
-	Get2FACode(ctx context.Context, userID uint, code string, codeType string) (*TwoFactorCode, error)
+	Get2FACode(ctx context.Context, userID uuid.UUID, code string, codeType string) (*TwoFactorCode, error)
 	GetLatestPending2FACode(ctx context.Context, code string, codeType string) (*TwoFactorCode, error)
-	Use2FACode(ctx context.Context, userID uint, code string) error
+	Use2FACode(ctx context.Context, userID uuid.UUID, code string) error
 	CleanupExpired2FACodes(ctx context.Context) error
 
 	// Backup Code operations
 	Create2FABackupCode(ctx context.Context, code *TwoFactorBackupCode) error
-	Get2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error)
+	Get2FABackupCodes(ctx context.Context, userID uuid.UUID) ([]*TwoFactorBackupCode, error)
 	GetBackupCodeByCode(ctx context.Context, code string) (*TwoFactorBackupCode, error)
-	Use2FABackupCode(ctx context.Context, userID uint, code string) error
-	Regenerate2FABackupCodes(ctx context.Context, userID uint) ([]*TwoFactorBackupCode, error)
+	Use2FABackupCode(ctx context.Context, userID uuid.UUID, code string) error
+	Regenerate2FABackupCodes(ctx context.Context, userID uuid.UUID) ([]*TwoFactorBackupCode, error)
 }
 
 // RefreshTokenStore defines refresh token lifecycle operations.
@@ -224,7 +225,7 @@ type RefreshTokenStore interface {
 	GetRefreshToken(ctx context.Context, token string) (*RefreshToken, error)
 	UpdateRefreshToken(ctx context.Context, token *RefreshToken) error
 	DeleteRefreshToken(ctx context.Context, token string) error
-	DeleteUserRefreshTokens(ctx context.Context, userID uint) error
+	DeleteUserRefreshTokens(ctx context.Context, userID uuid.UUID) error
 	CleanupExpiredRefreshTokens(ctx context.Context) error
 }
 
